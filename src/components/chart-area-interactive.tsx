@@ -47,8 +47,54 @@ type ChartBodyProps = {
   range: DashboardTimeRange
 }
 
-function formatTick(value: number, range: DashboardTimeRange) {
-  const date = new Date(value)
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
+}
+
+function resolveTimestampMs(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value
+  }
+  if (typeof value === "string") {
+    const numeric = Number(value)
+    if (Number.isFinite(numeric)) {
+      return numeric
+    }
+    const parsed = Date.parse(value)
+    if (!Number.isNaN(parsed)) {
+      return parsed
+    }
+  }
+  return null
+}
+
+function resolveTooltipTimestamp(payload: unknown) {
+  if (!Array.isArray(payload) || payload.length === 0) {
+    return null
+  }
+  const first = payload[0]
+  if (!isRecord(first)) {
+    return null
+  }
+  const inner = first.payload
+  if (!isRecord(inner)) {
+    return null
+  }
+  // Recharts tooltip label 可能缺失或被格式化，优先使用原始 payload 的时间戳。
+  return resolveTimestampMs(inner.tsMs)
+}
+
+function formatTick(value: unknown, range: DashboardTimeRange) {
+  const tsMs = resolveTimestampMs(value)
+  if (tsMs === null) {
+    return "—"
+  }
+
+  const date = new Date(tsMs)
+  if (Number.isNaN(date.getTime())) {
+    return "—"
+  }
+
   if (range === "today") {
     return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
   }
@@ -90,13 +136,15 @@ function ChartCanvas({ data, range }: ChartBodyProps) {
           axisLine={false}
           tickMargin={8}
           minTickGap={24}
-          tickFormatter={(value) => formatTick(Number(value), range)}
+          tickFormatter={(value) => formatTick(value, range)}
         />
         <ChartTooltip
           cursor={false}
           content={
             <ChartTooltipContent
-              labelFormatter={(value) => formatTick(Number(value), range)}
+              labelFormatter={(value, payload) =>
+                formatTick(resolveTooltipTimestamp(payload) ?? value, range)
+              }
               formatter={(value, name) => {
                 const label = chartConfig[name as keyof typeof chartConfig]?.label ?? name
                 return (
