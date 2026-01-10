@@ -3,6 +3,7 @@ use serde_json::Value;
 use sqlx::SqlitePool;
 use std::{
     path::PathBuf,
+    sync::Arc,
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::{io::AsyncWriteExt, sync::Mutex};
@@ -75,6 +76,13 @@ impl LogWriter {
             file,
             sqlite,
         })
+    }
+
+    // Fire-and-forget logging to avoid blocking the request path.
+    pub(crate) fn write_detached(self: Arc<Self>, entry: LogEntry) {
+        tokio::spawn(async move {
+            self.write(&entry).await;
+        });
     }
 
     pub(crate) async fn write(&self, entry: &LogEntry) {
