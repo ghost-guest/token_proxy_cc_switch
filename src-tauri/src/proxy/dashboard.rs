@@ -81,7 +81,7 @@ pub(crate) async fn read_snapshot(
 ) -> Result<DashboardSnapshot, String> {
     let offset = offset.unwrap_or(0);
 
-    let pool = sqlite::open_pool(&app).await?;
+    let pool = sqlite::open_read_pool(&app).await?;
     let from_ts_ms = range.from_ts_ms.map(|value| value as i64);
     let to_ts_ms = range.to_ts_ms.map(|value| value as i64);
     let bucket_ms = resolve_bucket_ms(&pool, from_ts_ms, to_ts_ms).await?;

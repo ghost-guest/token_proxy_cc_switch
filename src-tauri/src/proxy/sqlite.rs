@@ -1,43 +1,71 @@
+use sqlx::Row;
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
     SqlitePool,
 };
 use std::path::PathBuf;
-use sqlx::Row;
-use tauri::AppHandle;
 use std::time::Duration;
+use tauri::AppHandle;
+use tokio::sync::OnceCell;
 
 use super::config;
 
 const DB_FILE_NAME: &str = "data.db";
 
-pub(crate) async fn open_pool(app: &AppHandle) -> Result<SqlitePool, String> {
-    let path = usage_db_path(app)?;
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|err| format!("Failed to create db directory: {err}"))?;
-    }
+struct SqlitePools {
+    read: SqlitePool,
+    write: SqlitePool,
+}
 
+// 只初始化一次，避免每次刷新重复建池与 schema/index 检查。
+static SQLITE_POOLS: OnceCell<SqlitePools> = OnceCell::const_new();
+
+pub(crate) async fn open_read_pool(app: &AppHandle) -> Result<SqlitePool, String> {
+    let pools = open_pools(app).await?;
+    Ok(pools.read.clone())
+}
+
+pub(crate) async fn open_write_pool(app: &AppHandle) -> Result<SqlitePool, String> {
+    let pools = open_pools(app).await?;
+    Ok(pools.write.clone())
+}
+
+async fn open_pools(app: &AppHandle) -> Result<&'static SqlitePools, String> {
+    let app = app.clone();
+    SQLITE_POOLS
+        .get_or_try_init(|| async move {
+            let path = usage_db_path(&app)?;
+            if let Some(parent) = path.parent() {
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .map_err(|err| format!("Failed to create db directory: {err}"))?;
+            }
+            let read = connect_pool(&path).await?;
+            init_schema(&read).await?;
+            let write = connect_pool(&path).await?;
+            init_schema(&write).await?;
+            Ok(SqlitePools { read, write })
+        })
+        .await
+}
+
+fn usage_db_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(config::config_dir_path(app)?.join(DB_FILE_NAME))
+}
+
+async fn connect_pool(path: &PathBuf) -> Result<SqlitePool, String> {
     let options = SqliteConnectOptions::new()
-        .filename(&path)
+        .filename(path)
         .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal)
         .synchronous(SqliteSynchronous::Normal)
         .busy_timeout(Duration::from_secs(5));
 
-    let pool = SqlitePoolOptions::new()
+    SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options)
         .await
-        .map_err(|err| format!("Failed to connect sqlite: {err}"))?;
-
-    init_schema(&pool).await?;
-    Ok(pool)
-}
-
-fn usage_db_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(config::config_dir_path(app)?.join(DB_FILE_NAME))
+        .map_err(|err| format!("Failed to connect sqlite: {err}"))
 }
 
 async fn init_schema(pool: &SqlitePool) -> Result<(), String> {
