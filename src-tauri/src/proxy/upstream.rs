@@ -582,8 +582,11 @@ fn is_retryable_error(err: &reqwest::Error) -> bool {
 }
 
 fn is_retryable_status(status: StatusCode) -> bool {
-    // 对齐 new-api 的重试策略：429/307/5xx（排除 504/524）。
-    if status == StatusCode::TOO_MANY_REQUESTS || status == StatusCode::TEMPORARY_REDIRECT {
+    // 对齐 new-api 的重试策略：429/307/5xx（排除 504/524）；额外允许 403 触发 fallback。
+    if status == StatusCode::FORBIDDEN
+        || status == StatusCode::TOO_MANY_REQUESTS
+        || status == StatusCode::TEMPORARY_REDIRECT
+    {
         return true;
     }
     if status == StatusCode::GATEWAY_TIMEOUT {
