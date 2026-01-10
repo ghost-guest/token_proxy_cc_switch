@@ -196,7 +196,6 @@ export function DashboardPanel() {
       <div className="px-4 lg:px-6">
         <ChartAreaInteractive
           series={snapshot?.series ?? []}
-          range={rangePreset}
         />
       </div>
 

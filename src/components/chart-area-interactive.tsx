@@ -15,9 +15,13 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart"
-import { formatInteger } from "@/features/dashboard/format"
-import type { DashboardTimeRange } from "@/features/dashboard/range"
+import {
+  createDashboardTimeFormatter,
+  formatDashboardTimestamp,
+  formatInteger,
+} from "@/features/dashboard/format"
 import type { DashboardSeriesPoint } from "@/features/dashboard/types"
+import { useI18n } from "@/lib/i18n"
 import { m } from "@/paraglide/messages.js"
 
 type ChartPoint = {
@@ -28,23 +32,22 @@ type ChartPoint = {
 
 const chartConfig = {
   inputTokens: {
-    label: "Input",
+    label: m.dashboard_chart_input_tokens(),
     color: "var(--chart-1)",
   },
   outputTokens: {
-    label: "Output",
+    label: m.dashboard_chart_output_tokens(),
     color: "var(--chart-2)",
   },
 } satisfies ChartConfig
 
 type ChartAreaInteractiveProps = {
   series: DashboardSeriesPoint[]
-  range: DashboardTimeRange
 }
 
 type ChartBodyProps = {
   data: ChartPoint[]
-  range: DashboardTimeRange
+  timeFormatter: Intl.DateTimeFormat
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -84,21 +87,12 @@ function resolveTooltipTimestamp(payload: unknown) {
   return resolveTimestampMs(inner.tsMs)
 }
 
-function formatTick(value: unknown, range: DashboardTimeRange) {
+function formatTick(value: unknown, formatter: Intl.DateTimeFormat) {
   const tsMs = resolveTimestampMs(value)
   if (tsMs === null) {
     return "—"
   }
-
-  const date = new Date(tsMs)
-  if (Number.isNaN(date.getTime())) {
-    return "—"
-  }
-
-  if (range === "today") {
-    return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
-  }
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" })
+  return formatDashboardTimestamp(tsMs, formatter)
 }
 
 function ChartHeader() {
@@ -124,7 +118,7 @@ function ChartDefs() {
   )
 }
 
-function ChartCanvas({ data, range }: ChartBodyProps) {
+function ChartCanvas({ data, timeFormatter }: ChartBodyProps) {
   return (
     <ChartContainer config={chartConfig} className="aspect-auto h-[250px] w-full">
       <AreaChart data={data}>
@@ -136,14 +130,14 @@ function ChartCanvas({ data, range }: ChartBodyProps) {
           axisLine={false}
           tickMargin={8}
           minTickGap={24}
-          tickFormatter={(value) => formatTick(value, range)}
+          tickFormatter={(value) => formatTick(value, timeFormatter)}
         />
         <ChartTooltip
           cursor={false}
           content={
             <ChartTooltipContent
               labelFormatter={(value, payload) =>
-                formatTick(resolveTooltipTimestamp(payload) ?? value, range)
+                formatTick(resolveTooltipTimestamp(payload) ?? value, timeFormatter)
               }
               formatter={(value, name) => {
                 const label = chartConfig[name as keyof typeof chartConfig]?.label ?? name
@@ -179,11 +173,11 @@ function ChartCanvas({ data, range }: ChartBodyProps) {
   )
 }
 
-function ChartBody({ data, range }: ChartBodyProps) {
+function ChartBody({ data, timeFormatter }: ChartBodyProps) {
   return (
     <CardContent className="px-2 pt-4 sm:px-6 sm:pt-6">
       {data.length ? (
-        <ChartCanvas data={data} range={range} />
+        <ChartCanvas data={data} timeFormatter={timeFormatter} />
       ) : (
         <div className="flex h-[250px] items-center justify-center text-sm text-muted-foreground">
           {m.dashboard_no_data()}
@@ -193,7 +187,12 @@ function ChartBody({ data, range }: ChartBodyProps) {
   )
 }
 
-export function ChartAreaInteractive({ series, range }: ChartAreaInteractiveProps) {
+export function ChartAreaInteractive({ series }: ChartAreaInteractiveProps) {
+  const { locale } = useI18n()
+  const timeFormatter = React.useMemo(
+    () => createDashboardTimeFormatter(locale),
+    [locale]
+  )
   const chartData = React.useMemo(
     () =>
       series.map((item) => ({
@@ -207,7 +206,7 @@ export function ChartAreaInteractive({ series, range }: ChartAreaInteractiveProp
   return (
     <Card className="@container/card">
       <ChartHeader />
-      <ChartBody data={chartData} range={range} />
+      <ChartBody data={chartData} timeFormatter={timeFormatter} />
     </Card>
   )
 }
