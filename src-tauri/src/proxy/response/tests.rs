@@ -9,6 +9,7 @@ use std::{
 };
 
 use super::super::log::{LogContext, LogWriter};
+use tokio::time::{sleep, Instant as TokioInstant};
 
 fn run_async<T>(future: impl std::future::Future<Output = T>) -> T {
     tokio::runtime::Runtime::new()
@@ -36,26 +37,63 @@ fn parse_sse_json(bytes: &Bytes) -> Option<Value> {
     Some(serde_json::from_str::<Value>(data).expect("parse SSE JSON"))
 }
 
+async fn setup_responses_stream(prefix: &str) -> (Arc<LogWriter>, LogContext, PathBuf) {
+    let log_path = unique_log_path(prefix);
+    let log = Arc::new(
+        LogWriter::new(&log_path, None)
+            .await
+            .expect("create log writer"),
+    );
+    let context = LogContext {
+        path: "/v1/responses".to_string(),
+        provider: "openai-response".to_string(),
+        upstream_id: "unit-test".to_string(),
+        model: Some("unit-model".to_string()),
+        mapped_model: Some("unit-model".to_string()),
+        stream: true,
+        status: 200,
+        upstream_request_id: None,
+        start: Instant::now(),
+    };
+    (log, context, log_path)
+}
+
+async fn collect_responses_to_chat_chunks(
+    upstream: impl futures_util::stream::Stream<Item = Result<Bytes, reqwest::Error>>
+        + Unpin
+        + Send
+        + 'static,
+    context: LogContext,
+    log: Arc<LogWriter>,
+) -> Vec<Bytes> {
+    let token_tracker = super::super::token_rate::TokenRateTracker::new()
+        .register(None, None)
+        .await;
+    super::responses_to_chat::stream_responses_to_chat(upstream, context, log, token_tracker)
+        .map(|item| item.expect("stream item"))
+        .collect()
+        .await
+}
+
+async fn read_first_log_line(path: &PathBuf) -> String {
+    let deadline = TokioInstant::now() + std::time::Duration::from_secs(2);
+    loop {
+        if let Ok(contents) = tokio::fs::read_to_string(path).await {
+            if let Some(line) = contents.lines().next() {
+                return line.to_string();
+            }
+        }
+        if TokioInstant::now() >= deadline {
+            panic!("log line");
+        }
+        sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
 #[test]
 fn stream_responses_to_chat_emits_role_delta_and_done_and_logs_usage() {
     run_async(async {
-        let log_path = unique_log_path("responses_to_chat");
-        let log = Arc::new(
-            LogWriter::new(&log_path, None)
-                .await
-                .expect("create log writer"),
-        );
-        let context = LogContext {
-            path: "/v1/responses".to_string(),
-            provider: "openai-response".to_string(),
-            upstream_id: "unit-test".to_string(),
-            model: Some("unit-model".to_string()),
-            mapped_model: Some("unit-model".to_string()),
-            stream: true,
-            status: 200,
-            upstream_request_id: None,
-            start: Instant::now(),
-        };
+        let (log, context, log_path) = setup_responses_stream("responses_to_chat").await;
 
         let upstream = futures_util::stream::iter(vec![
             Ok(Bytes::from(
@@ -71,19 +109,7 @@ fn stream_responses_to_chat_emits_role_delta_and_done_and_logs_usage() {
             Ok(Bytes::from("data: [DONE]\n\n")),
         ]);
 
-        let token_tracker = super::super::token_rate::TokenRateTracker::new()
-            .register(None, None)
-            .await;
-        let chunks: Vec<Bytes> =
-            super::responses_to_chat::stream_responses_to_chat(
-                upstream,
-                context,
-                log.clone(),
-                token_tracker,
-            )
-            .map(|item| item.expect("stream item"))
-            .collect()
-            .await;
+        let chunks = collect_responses_to_chat_chunks(upstream, context, log.clone()).await;
 
         assert_eq!(chunks.len(), 5);
 
@@ -108,14 +134,104 @@ fn stream_responses_to_chat_emits_role_delta_and_done_and_logs_usage() {
 
         assert_eq!(String::from_utf8_lossy(&chunks[4]), "data: [DONE]\n\n");
 
-        let contents = tokio::fs::read_to_string(&log_path)
-            .await
-            .expect("read log");
-        let line = contents.lines().next().expect("log line");
-        let entry: Value = serde_json::from_str(line).expect("parse log entry");
+        let line = read_first_log_line(&log_path).await;
+        let entry: Value = serde_json::from_str(&line).expect("parse log entry");
         assert_eq!(entry["usage"]["input_tokens"], json!(1));
         assert_eq!(entry["usage"]["output_tokens"], json!(2));
         assert_eq!(entry["usage"]["total_tokens"], json!(3));
+    });
+}
+
+#[test]
+fn stream_responses_to_chat_emits_tool_call_deltas_and_finish_reason() {
+    run_async(async {
+        let (log, context, _log_path) =
+            setup_responses_stream("responses_to_chat_tool_calls").await;
+
+        let upstream = futures_util::stream::iter(vec![
+            Ok(Bytes::from(
+                "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"status\":\"in_progress\",\"call_id\":\"call_foo\",\"name\":\"getRandomNumber\",\"arguments\":\"\"}}\n\n",
+            )),
+            Ok(Bytes::from(
+                "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"output_index\":0,\"delta\":\"{\\\"a\\\":\\\"0\\\"\"}\n\n",
+            )),
+            Ok(Bytes::from(
+                "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"output_index\":0,\"delta\":\",\\\"b\\\":\\\"100\\\"}\"}\n\n",
+            )),
+            Ok(Bytes::from("data: [DONE]\n\n")),
+        ]);
+
+        let chunks = collect_responses_to_chat_chunks(upstream, context, log.clone()).await;
+
+        assert_eq!(chunks.len(), 6);
+
+        let first = parse_sse_json(&chunks[0]).expect("json");
+        assert_eq!(first["choices"][0]["delta"]["role"], json!("assistant"));
+
+        let initial = parse_sse_json(&chunks[1]).expect("json");
+        assert_eq!(initial["choices"][0]["delta"]["tool_calls"][0]["id"], json!("call_foo"));
+        assert_eq!(
+            initial["choices"][0]["delta"]["tool_calls"][0]["function"]["name"],
+            json!("getRandomNumber")
+        );
+        assert_eq!(
+            initial["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"],
+            json!("")
+        );
+
+        let delta_1 = parse_sse_json(&chunks[2]).expect("json");
+        assert_eq!(
+            delta_1["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"],
+            json!("{\"a\":\"0\"")
+        );
+
+        let delta_2 = parse_sse_json(&chunks[3]).expect("json");
+        assert_eq!(
+            delta_2["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"],
+            json!(",\"b\":\"100\"}")
+        );
+
+        let done = parse_sse_json(&chunks[4]).expect("json");
+        assert_eq!(done["choices"][0]["finish_reason"], json!("tool_calls"));
+
+        assert_eq!(String::from_utf8_lossy(&chunks[5]), "data: [DONE]\n\n");
+    });
+}
+
+#[test]
+fn stream_responses_to_chat_emits_content_parts_for_non_text() {
+    run_async(async {
+        let (log, context, _log_path) =
+            setup_responses_stream("responses_to_chat_content_parts").await;
+
+        let upstream = futures_util::stream::iter(vec![
+            Ok(Bytes::from(
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello\"}\n\n",
+            )),
+            Ok(Bytes::from(
+                "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"msg_1\",\"type\":\"message\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Hello\",\"annotations\":[]},{\"type\":\"output_image\",\"image_url\":{\"url\":\"https://example.com/a.png\"}}]}}\n\n",
+            )),
+            Ok(Bytes::from("data: [DONE]\n\n")),
+        ]);
+
+        let chunks = collect_responses_to_chat_chunks(upstream, context, log.clone()).await;
+
+        assert_eq!(chunks.len(), 5);
+
+        let first = parse_sse_json(&chunks[0]).expect("json");
+        assert_eq!(first["choices"][0]["delta"]["role"], json!("assistant"));
+
+        let text_delta = parse_sse_json(&chunks[1]).expect("json");
+        assert_eq!(text_delta["choices"][0]["delta"]["content"], json!("Hello"));
+
+        let parts_delta = parse_sse_json(&chunks[2]).expect("json");
+        assert_eq!(parts_delta["choices"][0]["delta"]["content_parts"][0]["type"], json!("output_text"));
+        assert_eq!(parts_delta["choices"][0]["delta"]["content_parts"][1]["type"], json!("output_image"));
+
+        let done = parse_sse_json(&chunks[3]).expect("json");
+        assert_eq!(done["choices"][0]["finish_reason"], json!("stop"));
+
+        assert_eq!(String::from_utf8_lossy(&chunks[4]), "data: [DONE]\n\n");
     });
 }
 
@@ -226,11 +342,8 @@ fn stream_chat_to_responses_handles_chunk_boundaries_and_emits_created_delta_don
 
         assert_eq!(String::from_utf8_lossy(&chunks[9]), "data: [DONE]\n\n");
 
-        let contents = tokio::fs::read_to_string(&log_path)
-            .await
-            .expect("read log");
-        let line = contents.lines().next().expect("log line");
-        let entry: Value = serde_json::from_str(line).expect("parse log entry");
+        let line = read_first_log_line(&log_path).await;
+        let entry: Value = serde_json::from_str(&line).expect("parse log entry");
         assert_eq!(entry["usage"]["input_tokens"], json!(1));
         assert_eq!(entry["usage"]["output_tokens"], json!(2));
         assert_eq!(entry["usage"]["total_tokens"], json!(3));
@@ -340,11 +453,8 @@ fn stream_chat_to_responses_emits_function_call_events_and_includes_them_in_comp
 
         assert_eq!(String::from_utf8_lossy(&chunks[7]), "data: [DONE]\n\n");
 
-        let contents = tokio::fs::read_to_string(&log_path)
-            .await
-            .expect("read log");
-        let line = contents.lines().next().expect("log line");
-        let entry: Value = serde_json::from_str(line).expect("parse log entry");
+        let line = read_first_log_line(&log_path).await;
+        let entry: Value = serde_json::from_str(&line).expect("parse log entry");
         assert_eq!(entry["usage"]["input_tokens"], json!(1));
         assert_eq!(entry["usage"]["output_tokens"], json!(2));
         assert_eq!(entry["usage"]["total_tokens"], json!(3));

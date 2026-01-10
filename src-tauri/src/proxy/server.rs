@@ -570,6 +570,7 @@ mod tests {
             port: 9208,
             local_api_key: None,
             log_path: PathBuf::from("proxy.log"),
+            max_request_body_bytes: 20 * 1024 * 1024,
             enable_api_format_conversion,
             upstream_strategy: UpstreamStrategy::PriorityRoundRobin,
             upstreams,

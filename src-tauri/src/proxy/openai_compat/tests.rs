@@ -200,9 +200,49 @@ fn responses_response_to_chat_extracts_output_text_and_maps_usage() {
     assert_eq!(value["model"], json!("gpt-4.1"));
     assert_eq!(value["choices"][0]["message"]["role"], json!("assistant"));
     assert_eq!(value["choices"][0]["message"]["content"], json!("Hello world"));
+    assert_eq!(value["choices"][0]["finish_reason"], json!("stop"));
     assert_eq!(value["usage"]["prompt_tokens"], json!(1));
     assert_eq!(value["usage"]["completion_tokens"], json!(2));
     assert_eq!(value["usage"]["total_tokens"], json!(3));
+}
+
+#[test]
+fn responses_response_to_chat_includes_tool_calls_and_content_parts() {
+    let input = bytes_from_json(json!({
+        "id": "resp_456",
+        "created_at": 1700000001,
+        "model": "gpt-4.1",
+        "output": [
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    { "type": "output_text", "text": "Hello", "annotations": [] },
+                    { "type": "output_image", "image_url": { "url": "https://example.com/a.png" } }
+                ]
+            },
+            {
+                "type": "function_call",
+                "call_id": "call_foo",
+                "name": "doThing",
+                "arguments": "{\"a\":1}"
+            }
+        ],
+        "usage": { "input_tokens": 1, "output_tokens": 2, "total_tokens": 3 }
+    }));
+
+    let output = transform_response_body(FormatTransform::ResponsesToChat, &input, None).expect("transform");
+    let value = json_from_bytes(output);
+
+    let message = &value["choices"][0]["message"];
+    assert_eq!(message["role"], json!("assistant"));
+    assert_eq!(message["content"], json!("Hello"));
+    assert_eq!(message["tool_calls"][0]["id"], json!("call_foo"));
+    assert_eq!(message["tool_calls"][0]["function"]["name"], json!("doThing"));
+    assert_eq!(message["tool_calls"][0]["function"]["arguments"], json!("{\"a\":1}"));
+    assert_eq!(message["content_parts"][0]["type"], json!("output_text"));
+    assert_eq!(message["content_parts"][1]["type"], json!("output_image"));
+    assert_eq!(value["choices"][0]["finish_reason"], json!("tool_calls"));
 }
 
 #[test]
