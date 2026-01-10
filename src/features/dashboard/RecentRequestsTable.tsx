@@ -37,13 +37,18 @@ function statusToVariant(status: number): BadgeVariant {
   return "outline";
 }
 
+function formatTimestamp(value: number) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+}
+
 function timeColumn(): ColumnDef<DashboardRequestItem> {
   return {
     id: "time",
     header: m.dashboard_table_time(),
     cell: ({ row }) => (
       <span className="whitespace-nowrap text-xs text-muted-foreground">
-        {new Date(row.original.tsMs).toLocaleString()}
+        {formatTimestamp(row.original.tsMs)}
       </span>
     ),
   };
