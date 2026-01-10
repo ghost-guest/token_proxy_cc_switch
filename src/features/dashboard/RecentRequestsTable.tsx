@@ -21,6 +21,10 @@ const ROW_HEIGHT_PX = 44;
 const OVERSCAN = 6;
 
 const GRID_COLS = "grid-cols-[170px_1fr_1fr_90px_140px_90px]";
+const RECENT_REQUEST_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
 
 type BadgeVariant = "default" | "secondary" | "destructive" | "outline";
 
@@ -39,7 +43,7 @@ function statusToVariant(status: number): BadgeVariant {
 
 function formatTimestamp(value: number) {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? "—" : RECENT_REQUEST_TIME_FORMATTER.format(date);
 }
 
 function timeColumn(): ColumnDef<DashboardRequestItem> {
