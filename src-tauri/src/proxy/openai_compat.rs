@@ -161,7 +161,7 @@ fn responses_response_to_chat(bytes: &Bytes, model_hint: Option<&str>) -> Result
         return Err("Upstream response must be a JSON object.".to_string());
     };
 
-    let content = extract::extract_responses_output_text(&value).unwrap_or_default();
+    let extracted = extract::extract_responses_output(&value);
     let id = object
         .get("id")
         .and_then(Value::as_str)
@@ -177,6 +177,27 @@ fn responses_response_to_chat(bytes: &Bytes, model_hint: Option<&str>) -> Result
         .get("usage")
         .and_then(|usage| usage::map_usage_responses_to_chat(usage));
 
+    let finish_reason = if extracted.tool_calls.is_empty() {
+        "stop"
+    } else {
+        "tool_calls"
+    };
+
+    let mut message = json!({
+        "role": "assistant",
+        "content": extracted.content
+    });
+    if let Some(parts) = extracted.content_parts {
+        if let Some(message) = message.as_object_mut() {
+            message.insert("content_parts".to_string(), Value::Array(parts));
+        }
+    }
+    if !extracted.tool_calls.is_empty() {
+        if let Some(message) = message.as_object_mut() {
+            message.insert("tool_calls".to_string(), Value::Array(extracted.tool_calls));
+        }
+    }
+
     let output = json!({
         "id": id,
         "object": "chat.completion",
@@ -185,8 +206,8 @@ fn responses_response_to_chat(bytes: &Bytes, model_hint: Option<&str>) -> Result
         "choices": [
             {
                 "index": 0,
-                "message": { "role": "assistant", "content": content },
-                "finish_reason": "stop"
+                "message": message,
+                "finish_reason": finish_reason
             }
         ],
         "usage": usage

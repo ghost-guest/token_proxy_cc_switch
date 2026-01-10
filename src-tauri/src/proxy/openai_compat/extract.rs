@@ -1,10 +1,16 @@
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 
 pub(super) struct ChatToolCall {
     pub(super) item_id: String,
     pub(super) call_id: String,
     pub(super) name: String,
     pub(super) arguments: String,
+}
+
+pub(super) struct ResponsesOutput {
+    pub(super) content: String,
+    pub(super) content_parts: Option<Vec<Value>>,
+    pub(super) tool_calls: Vec<Value>,
 }
 
 pub(super) fn extract_chat_choice_text(value: &Value) -> Option<String> {
@@ -89,37 +95,90 @@ fn extract_chat_message_legacy_function_call(function_call: &Map<String, Value>)
     })
 }
 
-pub(super) fn extract_responses_output_text(value: &Value) -> Option<String> {
-    let output = value.get("output")?.as_array()?;
+pub(super) fn extract_responses_output(value: &Value) -> ResponsesOutput {
+    let Some(output) = value.get("output").and_then(Value::as_array) else {
+        return ResponsesOutput {
+            content: String::new(),
+            content_parts: None,
+            tool_calls: Vec::new(),
+        };
+    };
+
     let mut combined = String::new();
+    let mut content_parts = Vec::new();
+    let mut has_non_text = false;
+    let mut tool_calls = Vec::new();
+
     for item in output {
         let Some(item) = item.as_object() else {
             continue;
         };
-        if item.get("type").and_then(Value::as_str) != Some("message") {
-            continue;
-        }
-        if item.get("role").and_then(Value::as_str) != Some("assistant") {
-            continue;
-        }
-        let Some(content) = item.get("content").and_then(Value::as_array) else {
-            continue;
-        };
-        for part in content {
-            let Some(part) = part.as_object() else {
-                continue;
-            };
-            if part.get("type").and_then(Value::as_str) != Some("output_text") {
-                continue;
+        match item.get("type").and_then(Value::as_str) {
+            Some("message") => {
+                if item.get("role").and_then(Value::as_str) != Some("assistant") {
+                    continue;
+                }
+                let Some(content) = item.get("content").and_then(Value::as_array) else {
+                    continue;
+                };
+                for part in content {
+                    if let Some(part_obj) = part.as_object() {
+                        let part_type = part_obj.get("type").and_then(Value::as_str);
+                        if part_type != Some("output_text") {
+                            has_non_text = true;
+                        }
+                        if part_type == Some("output_text") {
+                            if let Some(text) = part_obj.get("text").and_then(Value::as_str) {
+                                combined.push_str(text);
+                            }
+                        }
+                    }
+                    content_parts.push(part.clone());
+                }
             }
-            if let Some(text) = part.get("text").and_then(Value::as_str) {
-                combined.push_str(text);
+            Some("function_call") => {
+                if let Some(tool_call) = extract_responses_tool_call(item) {
+                    tool_calls.push(tool_call);
+                }
             }
+            _ => {}
         }
     }
-    if combined.is_empty() {
-        None
+
+    let content_parts = if has_non_text {
+        Some(content_parts)
     } else {
-        Some(combined)
+        None
+    };
+
+    ResponsesOutput {
+        content: combined,
+        content_parts,
+        tool_calls,
     }
+}
+
+fn extract_responses_tool_call(item: &Map<String, Value>) -> Option<Value> {
+    let call_id = item.get("call_id").and_then(Value::as_str).unwrap_or("");
+    let item_id = item.get("id").and_then(Value::as_str).unwrap_or("");
+    let name = item.get("name").and_then(Value::as_str).unwrap_or("");
+    let arguments = item.get("arguments").and_then(Value::as_str).unwrap_or("");
+    let id = if !call_id.is_empty() {
+        call_id.to_string()
+    } else if !item_id.is_empty() {
+        item_id.to_string()
+    } else {
+        "call_proxy".to_string()
+    };
+    if name.is_empty() && arguments.is_empty() && id == "call_proxy" {
+        return None;
+    }
+    Some(json!({
+        "id": id,
+        "type": "function",
+        "function": {
+            "name": name,
+            "arguments": arguments
+        }
+    }))
 }
