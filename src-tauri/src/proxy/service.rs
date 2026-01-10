@@ -245,6 +245,20 @@ impl ProxyServiceInner {
             );
             return self.restart(app).await;
         }
+        let current_max_request_body_bytes = if let Some(running) = self.running.as_ref() {
+            let guard = running.state_handle.read().await;
+            guard.config.max_request_body_bytes
+        } else {
+            loaded_config.max_request_body_bytes
+        };
+        if loaded_config.max_request_body_bytes != current_max_request_body_bytes {
+            tracing::info!(
+                new_max_request_body_bytes = loaded_config.max_request_body_bytes,
+                current_max_request_body_bytes = current_max_request_body_bytes,
+                "proxy reload detected body limit change, restarting"
+            );
+            return self.restart(app).await;
+        }
 
         let sqlite_pool = self.sqlite_pool.clone();
         let new_state = build_proxy_state(&app, loaded_config, sqlite_pool).await?;
@@ -301,8 +315,12 @@ async fn build_router_state(
     sqlite_pool: Option<SqlitePool>,
 ) -> Result<(ProxyStateHandle, ProxyRouter), String> {
     let state = build_proxy_state(app, config, sqlite_pool).await?;
+    let max_request_body_bytes = state.config.max_request_body_bytes;
     let state_handle = Arc::new(RwLock::new(state));
-    let router = server::build_router(state_handle.clone()).with_state::<()>(state_handle.clone());
+    let router =
+        server::build_router(state_handle.clone(), max_request_body_bytes).with_state::<()>(
+            state_handle.clone(),
+        );
     Ok((state_handle.clone(), router))
 }
 

@@ -87,6 +87,8 @@ pub(crate) struct ProxyConfigFile {
     pub(crate) port: u16,
     pub(crate) local_api_key: Option<String>,
     pub(crate) log_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) max_request_body_bytes: Option<u64>,
     #[serde(default)]
     pub(crate) tray_token_rate: TrayTokenRateConfig,
     /// 是否允许在 OpenAI Chat Completions 与 Responses API 之间自动互转。
@@ -106,6 +108,7 @@ impl Default for ProxyConfigFile {
             port: default_proxy_port(),
             local_api_key: None,
             log_path: "proxy.log".to_string(),
+            max_request_body_bytes: None,
             tray_token_rate: TrayTokenRateConfig::default(),
             enable_api_format_conversion: false,
             upstream_strategy: UpstreamStrategy::PriorityRoundRobin,
@@ -161,6 +164,7 @@ pub(crate) struct ProxyConfig {
     pub(crate) port: u16,
     pub(crate) local_api_key: Option<String>,
     pub(crate) log_path: PathBuf,
+    pub(crate) max_request_body_bytes: usize,
     pub(crate) enable_api_format_conversion: bool,
     pub(crate) upstream_strategy: UpstreamStrategy,
     pub(crate) upstreams: HashMap<String, ProviderUpstreams>,

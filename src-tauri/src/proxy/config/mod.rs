@@ -5,6 +5,8 @@ mod types;
 
 use tauri::AppHandle;
 
+const DEFAULT_MAX_REQUEST_BODY_BYTES: u64 = 20 * 1024 * 1024;
+
 pub(crate) use io::config_dir_path;
 pub(crate) use types::{
     ConfigResponse,
@@ -54,6 +56,7 @@ impl ProxyConfig {
 
 fn build_runtime_config(app: &AppHandle, config: ProxyConfigFile) -> Result<ProxyConfig, String> {
     let log_path = io::resolve_log_path(app, &config.log_path)?;
+    let max_request_body_bytes = resolve_max_request_body_bytes(config.max_request_body_bytes);
     let normalized_upstreams = normalize::normalize_upstreams(&config.upstreams)?;
     let upstreams = normalize::build_provider_upstreams(normalized_upstreams)?;
     Ok(ProxyConfig {
@@ -61,8 +64,19 @@ fn build_runtime_config(app: &AppHandle, config: ProxyConfigFile) -> Result<Prox
         port: config.port,
         local_api_key: config.local_api_key,
         log_path,
+        max_request_body_bytes,
         enable_api_format_conversion: config.enable_api_format_conversion,
         upstream_strategy: config.upstream_strategy,
         upstreams,
     })
+}
+
+fn resolve_max_request_body_bytes(value: Option<u64>) -> usize {
+    let value = value.unwrap_or(DEFAULT_MAX_REQUEST_BODY_BYTES);
+    let value = if value == 0 {
+        DEFAULT_MAX_REQUEST_BODY_BYTES
+    } else {
+        value
+    };
+    usize::try_from(value).unwrap_or(usize::MAX)
 }

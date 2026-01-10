@@ -181,10 +181,14 @@ pub(crate) fn build_upstream_cursors(config: &ProxyConfig) -> HashMap<String, Ve
     cursors
 }
 
-pub(crate) fn build_router(state: ProxyStateHandle) -> Router<ProxyStateHandle> {
+pub(crate) fn build_router(
+    state: ProxyStateHandle,
+    max_request_body_bytes: usize,
+) -> Router<ProxyStateHandle> {
     Router::new()
         .route("/{*path}", any(proxy_request))
-        .layer(DefaultBodyLimit::disable())
+        // 限制入站请求体，避免超大请求占用内存/临时盘并拖慢首字节。
+        .layer(DefaultBodyLimit::max(max_request_body_bytes))
         .with_state(state)
 }
 
