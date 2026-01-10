@@ -57,7 +57,7 @@ function usePagination(totalRequests: number) {
 }
 
 function useDashboardSnapshot() {
-  const [rangePreset, setRangePreset] = useState<DashboardTimeRange>("30d")
+  const [rangePreset, setRangePreset] = useState<DashboardTimeRange>("today")
   const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null)
   const [status, setStatus] = useState<DashboardStatus>("idle")
   const [statusMessage, setStatusMessage] = useState("")
