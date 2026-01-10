@@ -11,8 +11,12 @@ import {
 } from "@tanstack/react-table";
 
 import { Badge } from "@/components/ui/badge";
+import {
+  createDashboardTimeFormatter,
+  formatDashboardTimestamp,
+  formatInteger,
+} from "@/features/dashboard/format";
 import type { DashboardRequestItem } from "@/features/dashboard/types";
-import { formatInteger } from "@/features/dashboard/format";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { m } from "@/paraglide/messages.js";
@@ -22,11 +26,6 @@ const ROW_HEIGHT_PX = 44;
 const OVERSCAN = 6;
 
 const GRID_COLS = "grid-cols-[170px_1fr_1fr_90px_140px_90px]";
-const RECENT_REQUEST_TIME_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
-  dateStyle: "short",
-  timeStyle: "medium",
-};
-
 type BadgeVariant = "default" | "secondary" | "destructive" | "outline";
 
 function statusToVariant(status: number): BadgeVariant {
@@ -42,22 +41,13 @@ function statusToVariant(status: number): BadgeVariant {
   return "outline";
 }
 
-function createRecentRequestTimeFormatter(locale: string) {
-  return new Intl.DateTimeFormat(locale, RECENT_REQUEST_TIME_FORMAT_OPTIONS);
-}
-
-function formatTimestamp(value: number, formatter: Intl.DateTimeFormat) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "—" : formatter.format(date);
-}
-
 function timeColumn(formatter: Intl.DateTimeFormat): ColumnDef<DashboardRequestItem> {
   return {
     id: "time",
     header: m.dashboard_table_time(),
     cell: ({ row }) => (
       <span className="whitespace-nowrap text-xs text-muted-foreground">
-        {formatTimestamp(row.original.tsMs, formatter)}
+        {formatDashboardTimestamp(row.original.tsMs, formatter)}
       </span>
     ),
   };
@@ -101,7 +91,7 @@ function tokensColumn(): ColumnDef<DashboardRequestItem> {
         <span>{row.original.totalTokens === null ? "—" : formatInteger(row.original.totalTokens)}</span>
         {row.original.cachedTokens ? (
           <span className="text-xs font-normal text-muted-foreground">
-            {m.dashboard_cached({ count: formatInteger(row.original.cachedTokens) })}
+            {formatInteger(row.original.cachedTokens)}
           </span>
         ) : null}
       </div>
@@ -239,7 +229,7 @@ function RecentRequestsBody({ rows, scrollKey }: { rows: Row<DashboardRequestIte
 
 export function RecentRequestsTable({ items, scrollKey }: RecentRequestsTableProps) {
   const { locale } = useI18n();
-  const formatter = createRecentRequestTimeFormatter(locale);
+  const formatter = createDashboardTimeFormatter(locale);
   const columns = buildColumns(formatter);
 
   const table = useReactTable({
