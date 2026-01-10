@@ -53,7 +53,7 @@ pub(super) fn stream_with_logging(
                         token_tracker.add_output_text(&text).await;
                     }
                     let entry = build_log_entry(&context, collector.finish());
-                    log.write(&entry).await;
+                    log.clone().write_detached(entry);
                     Err(std::io::Error::new(std::io::ErrorKind::Other, err))
                 }
                 None => {
@@ -68,7 +68,7 @@ pub(super) fn stream_with_logging(
                         token_tracker.add_output_text(&text).await;
                     }
                     let entry = build_log_entry(&context, collector.finish());
-                    log.write(&entry).await;
+                    log.clone().write_detached(entry);
                     Ok(None)
                 }
             }
@@ -134,7 +134,7 @@ where
                 return Ok(Some((next, self)));
             }
             if self.upstream_ended {
-                self.log_usage_once().await;
+                self.log_usage_once();
                 return Ok(None);
             }
 
@@ -155,7 +155,7 @@ where
                     }
                 }
                 Some(Err(err)) => {
-                    self.log_usage_once().await;
+                    self.log_usage_once();
                     return Err(std::io::Error::new(std::io::ErrorKind::Other, err));
                 }
                 None => {
@@ -182,12 +182,12 @@ where
         self.out.push_back(Bytes::from(format!("data: {output}\n\n")));
     }
 
-    async fn log_usage_once(&mut self) {
+    fn log_usage_once(&mut self) {
         if self.logged {
             return;
         }
         let entry = build_log_entry(&self.context, self.collector.finish());
-        self.log.write(&entry).await;
+        self.log.clone().write_detached(entry);
         self.logged = true;
     }
 }

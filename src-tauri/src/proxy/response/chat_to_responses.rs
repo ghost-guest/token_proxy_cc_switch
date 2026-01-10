@@ -124,7 +124,7 @@ where
                     }
                 }
                 Some(Err(err)) => {
-                    self.log_usage_once().await;
+                    self.log_usage_once();
                     return Err(std::io::Error::new(std::io::ErrorKind::Other, err));
                 }
                 None => {
@@ -141,7 +141,7 @@ where
                     if !self.sent_done {
                         self.push_done();
                     }
-                    self.log_usage_once().await;
+                    self.log_usage_once();
                     if self.out.is_empty() {
                         return Ok(None);
                     }
@@ -569,13 +569,13 @@ where
         self.function_calls.iter().filter(|call| call.is_some()).count() > 1
     }
 
-    async fn log_usage_once(&mut self) {
+    fn log_usage_once(&mut self) {
         if self.logged {
             return;
         }
         self.logged = true;
         let entry = build_log_entry(&self.context, self.collector.finish());
-        self.log.write(&entry).await;
+        self.log.clone().write_detached(entry);
     }
 
     fn next_sequence_number(&mut self) -> u64 {

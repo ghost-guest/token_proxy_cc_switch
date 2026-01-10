@@ -218,7 +218,7 @@ async fn build_buffered_response(
     };
     let usage = extract_usage_from_response(&bytes);
     let entry = build_log_entry(&context, usage);
-    log.write(&entry).await;
+    log.clone().write_detached(entry);
 
     let output = if response_transform != FormatTransform::None && status.is_success() {
         match transform_response_body(response_transform, &bytes, context.model.as_deref()) {
