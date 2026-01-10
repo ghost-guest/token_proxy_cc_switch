@@ -172,7 +172,7 @@ impl ProxyServiceInner {
             return Ok(());
         }
         if self.sqlite_pool.is_none() {
-            self.sqlite_pool = sqlite::open_pool(&app).await.ok();
+            self.sqlite_pool = sqlite::open_write_pool(&app).await.ok();
         }
         let sqlite_pool = self.sqlite_pool.clone();
         let loaded_config = ProxyConfig::load(&app).await?;
