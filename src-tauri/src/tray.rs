@@ -373,6 +373,7 @@ fn start_token_rate_loop(tray_state: TrayState, loop_id: u64) {
     });
 }
 
+#[cfg(target_os = "macos")]
 fn format_rate_title(snapshot: TokenRateSnapshot, format: TrayTokenRateFormat) -> String {
     let has_tokens = snapshot.total > 0;
     let total_display = if has_tokens { snapshot.total } else { snapshot.connections };

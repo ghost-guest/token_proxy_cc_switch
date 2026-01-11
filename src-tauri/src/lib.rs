@@ -28,7 +28,7 @@ pub(crate) fn set_main_window_visibility(app: &tauri::AppHandle, visible: bool) 
 
     #[cfg(not(target_os = "macos"))]
     {
-        let Some(window) = app.get_window(MAIN_WINDOW_LABEL) else {
+        let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
             return;
         };
         if let Err(err) = window.set_skip_taskbar(!visible) {
