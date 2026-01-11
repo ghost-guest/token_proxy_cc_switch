@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "vite",
     "i18n:compile": "paraglide-js compile --project ./project.inlang --outdir ./src/paraglide --strategy localStorage preferredLanguage baseLocale --emit-ts-declarations",
-    "build": "pnpm run i18n:compile && tsc && vite build",
+    "build": "pnpm run i18n:compile && tsc --noEmit && vite build",
     "preview": "vite preview",
     "routes:gen": "tsr generate",
     "tauri": "tauri",
