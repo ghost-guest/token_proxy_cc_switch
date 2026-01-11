@@ -80,8 +80,7 @@ jobs:
 
       - name: Detect release bump commit
         id: release_guard
-        run: |
-          node -e "const fs=require('fs');const {execSync}=require('child_process');const msg=execSync('git log -1 --pretty=%s',{encoding:'utf8'}).trim();const skip=msg.startsWith('chore: release v');fs.appendFileSync(process.env.GITHUB_OUTPUT, `skip=${skip}\\n`);"
+        run: node scripts/release-guard.mjs
 
       - name: Install frontend dependencies
         if: steps.release_guard.outputs.skip != 'true'
