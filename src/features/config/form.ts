@@ -6,7 +6,6 @@ import {
   type TrayTokenRateConfig,
   type UpstreamForm,
   TRAY_TOKEN_RATE_FORMATS,
-  UPSTREAM_STRATEGIES,
 } from "@/features/config/types";
 import { m } from "@/paraglide/messages.js";
 
