@@ -169,7 +169,6 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               tag_name: tag,
-              configuration_file_path: ".github/release.yml",
             };
             if (previousTag) {
               params.previous_tag_name = previousTag;
