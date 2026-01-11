@@ -32,7 +32,7 @@ pub(crate) enum UpstreamStrategy {
 
 impl Default for UpstreamStrategy {
     fn default() -> Self {
-        Self::PriorityRoundRobin
+        Self::PriorityFillFirst
     }
 }
 
@@ -111,7 +111,7 @@ impl Default for ProxyConfigFile {
             max_request_body_bytes: None,
             tray_token_rate: TrayTokenRateConfig::default(),
             enable_api_format_conversion: false,
-            upstream_strategy: UpstreamStrategy::PriorityRoundRobin,
+            upstream_strategy: UpstreamStrategy::PriorityFillFirst,
             upstreams: vec![
                 UpstreamConfig {
                     id: "openai-default".to_string(),

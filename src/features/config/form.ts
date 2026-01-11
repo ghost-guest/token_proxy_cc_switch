@@ -83,7 +83,7 @@ export const EMPTY_FORM: ConfigForm = {
   logPath: "proxy.log",
   trayTokenRate: { ...DEFAULT_TRAY_TOKEN_RATE },
   enableApiFormatConversion: false,
-  upstreamStrategy: UPSTREAM_STRATEGIES[0].value,
+  upstreamStrategy: "priority_fill_first",
   upstreams: DEFAULT_UPSTREAMS.map((upstream) => ({ ...upstream })),
 };
 
