@@ -58,15 +58,20 @@ function computeNextPatch(baseVersion) {
   return `${core.major}.${core.minor}.${core.patch + 1}`;
 }
 
-function computeNextRc(nextPatch) {
-  // 通过已有 tag 推导 rc 计数，避免重复发布。
-  const tags = getTags(`v${nextPatch}-rc.*`);
+function computeNextPrerelease(nextPatch) {
+  // 通过已有 tag 推导预发布计数，避免重复发布。
+  const tags = getTags(`v${nextPatch}-*`);
   const numbers = tags
-    .map((tag) => tag.replace(`v${nextPatch}-rc.`, ""))
+    .map((tag) => tag.replace(`v${nextPatch}-`, ""))
     .map((value) => Number(value))
     .filter((value) => Number.isFinite(value));
   const next = numbers.length > 0 ? Math.max(...numbers) + 1 : 1;
-  const version = `${nextPatch}-rc.${next}`;
+  if (next > 65535) {
+    throw new Error(
+      "Prerelease identifier must be numeric-only and <= 65535 for MSI targets."
+    );
+  }
+  const version = `${nextPatch}-${next}`;
   return { version, tag: `v${version}` };
 }
 
@@ -176,7 +181,7 @@ function assertValidReleaseVersion(version) {
 if (command === "prerelease") {
   const currentVersion = getCurrentVersion();
   const nextPatch = computeNextPatch(currentVersion);
-  const { version, tag } = computeNextRc(nextPatch);
+  const { version, tag } = computeNextPrerelease(nextPatch);
   applyVersion(version);
   setOutput("version", version);
   setOutput("tag", tag);
