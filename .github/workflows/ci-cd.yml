@@ -117,7 +117,7 @@ jobs:
 
       - name: Build and release
         if: steps.release_guard.outputs.skip != 'true'
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@v0.6.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -221,7 +221,7 @@ jobs:
           cache-on-failure: true
 
       - name: Build and release
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@v0.6.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
