@@ -38,3 +38,52 @@ fn redact_query_param_value_hides_secret() {
     assert!(!redacted.contains("SECRET"));
     assert!(redacted.contains("foo=bar"));
 }
+
+#[test]
+fn apply_header_overrides_sets_and_removes() {
+    use axum::http::header::{AUTHORIZATION, CONTENT_LENGTH, HOST};
+    use axum::http::{HeaderMap, HeaderName, HeaderValue};
+
+    let mut headers = HeaderMap::new();
+    headers.insert(HeaderName::from_static("x-remove"), HeaderValue::from_static("value"));
+    headers.insert(AUTHORIZATION, HeaderValue::from_static("Bearer original"));
+    headers.insert(HeaderName::from_static("x-keep"), HeaderValue::from_static("old"));
+
+    let overrides = vec![
+        super::super::config::HeaderOverride {
+            name: HeaderName::from_static("x-custom"),
+            value: Some(HeaderValue::from_static("new")),
+        },
+        super::super::config::HeaderOverride {
+            name: AUTHORIZATION,
+            value: Some(HeaderValue::from_static("Bearer override")),
+        },
+        super::super::config::HeaderOverride {
+            name: HeaderName::from_static("x-remove"),
+            value: None,
+        },
+        super::super::config::HeaderOverride {
+            name: HOST,
+            value: Some(HeaderValue::from_static("skip.example.com")),
+        },
+        super::super::config::HeaderOverride {
+            name: CONTENT_LENGTH,
+            value: Some(HeaderValue::from_static("123")),
+        },
+    ];
+
+    apply_header_overrides(&mut headers, &overrides);
+
+    assert_eq!(
+        headers.get("x-custom").and_then(|v| v.to_str().ok()),
+        Some("new")
+    );
+    assert_eq!(
+        headers.get(AUTHORIZATION).and_then(|v| v.to_str().ok()),
+        Some("Bearer override")
+    );
+    assert!(!headers.contains_key("x-remove"));
+    // hop-by-hop/host/content-length must stay untouched/removed
+    assert!(!headers.contains_key(HOST));
+    assert!(!headers.contains_key(CONTENT_LENGTH));
+}

@@ -25,7 +25,11 @@ import {
 import { getUpstreamLabel } from "@/features/config/cards/upstreams/constants";
 import type { UpstreamEditorState } from "@/features/config/cards/upstreams/types";
 import { createModelMapping } from "@/features/config/form";
-import type { ModelMappingForm, UpstreamForm } from "@/features/config/types";
+import type {
+  HeaderOverrideForm,
+  ModelMappingForm,
+  UpstreamForm,
+} from "@/features/config/types";
 import { m } from "@/paraglide/messages.js";
 
 type EditorFieldProps = {
@@ -122,6 +126,92 @@ function ModelMappingsEditor({ mappings, onChange }: ModelMappingsEditorProps) {
         <span className="text-xs text-muted-foreground">
           {m.model_mappings_tip()}
         </span>
+      </div>
+    </div>
+  );
+}
+
+type HeaderOverridesEditorProps = {
+  overrides: UpstreamForm["overrides"]["header"];
+  onChange: (next: UpstreamForm["overrides"]["header"]) => void;
+};
+
+function HeaderOverridesEditor({ overrides, onChange }: HeaderOverridesEditorProps) {
+  const handleAdd = () => {
+    const next: HeaderOverrideForm = {
+      id: `header-override-${Date.now()}-${overrides.length}`,
+      name: "",
+      value: "",
+      isNull: false,
+    };
+    onChange([...overrides, next]);
+  };
+
+  const handleUpdate = (index: number, patch: Partial<HeaderOverrideForm>) => {
+    onChange(
+      overrides.map((item, current) => (current === index ? { ...item, ...patch } : item)),
+    );
+  };
+
+  const handleRemove = (index: number) => {
+    onChange(overrides.filter((_, current) => current !== index));
+  };
+
+  return (
+    <div data-slot="header-overrides" className="space-y-2">
+      {overrides.length ? (
+        <>
+          <div className="grid grid-cols-[1fr_1fr_auto_auto] gap-2 text-xs text-muted-foreground">
+            <span>{m.header_overrides_placeholder_name()}</span>
+            <span>{m.header_overrides_placeholder_value()}</span>
+            <span className="sr-only">{m.common_enabled()}</span>
+            <span className="sr-only">{m.header_overrides_remove()}</span>
+          </div>
+          {overrides.map((item, index) => (
+            <div
+              key={item.id}
+              className="grid grid-cols-[1fr_1fr_auto_auto] items-center gap-2"
+            >
+              <Input
+                value={item.name}
+                onChange={(e) => handleUpdate(index, { name: e.target.value })}
+                placeholder={m.header_overrides_placeholder_name()}
+              />
+              <Input
+                value={item.isNull ? "" : item.value}
+                onChange={(e) => handleUpdate(index, { value: e.target.value, isNull: false })}
+                placeholder={m.header_overrides_placeholder_value()}
+                disabled={item.isNull}
+              />
+              <Button
+                type="button"
+                variant={item.isNull ? "secondary" : "ghost"}
+                size="icon-sm"
+                aria-label={item.isNull ? m.common_disabled() : m.common_enabled()}
+                onClick={() => handleUpdate(index, { isNull: !item.isNull })}
+              >
+                {item.isNull ? m.common_disabled() : m.common_enabled()}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={m.header_overrides_remove()}
+                onClick={() => handleRemove(index)}
+              >
+                <CircleX className="size-4" aria-hidden="true" />
+              </Button>
+            </div>
+          ))}
+        </>
+      ) : (
+        <p className="text-xs text-muted-foreground">{m.header_overrides_empty()}</p>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" variant="secondary" size="sm" onClick={handleAdd}>
+          {m.header_overrides_add()}
+        </Button>
+        <span className="text-xs text-muted-foreground">{m.header_overrides_tip()}</span>
       </div>
     </div>
   );
@@ -287,6 +377,26 @@ function UpstreamModelMappingFields({
   );
 }
 
+type UpstreamHeaderOverrideFieldsProps = {
+  draft: UpstreamForm;
+  onChangeDraft: (patch: Partial<UpstreamForm>) => void;
+};
+
+function UpstreamHeaderOverrideFields({
+  draft,
+  onChangeDraft,
+}: UpstreamHeaderOverrideFieldsProps) {
+  return (
+    <div data-slot="upstream-header-override-fields" className="contents">
+      <Label className="self-start">{m.field_header_overrides()}</Label>
+      <HeaderOverridesEditor
+        overrides={draft.overrides.header}
+        onChange={(header) => onChangeDraft({ overrides: { header } })}
+      />
+    </div>
+  );
+}
+
 function UpstreamEditorFields({
   draft,
   providerOptions,
@@ -312,6 +422,7 @@ function UpstreamEditorFields({
       />
       <UpstreamOrderFields draft={draft} onChangeDraft={onChangeDraft} />
       <UpstreamModelMappingFields draft={draft} onChangeDraft={onChangeDraft} />
+      <UpstreamHeaderOverrideFields draft={draft} onChangeDraft={onChangeDraft} />
     </div>
   );
 }

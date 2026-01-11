@@ -244,6 +244,17 @@ fn should_skip_request_header(name: &HeaderName) -> bool {
     is_hop_header(name) || name == HOST || name == CONTENT_LENGTH
 }
 
+pub(crate) fn is_hop_header(name: &HeaderName) -> bool {
+    name == CONNECTION
+        || name == KEEP_ALIVE
+        || name == PROXY_AUTHENTICATE
+        || name == PROXY_AUTHORIZATION
+        || name == TE
+        || name == TRAILER
+        || name == TRANSFER_ENCODING
+        || name == UPGRADE
+}
+
 pub(crate) fn filter_response_headers(headers: &ReqwestHeaderMap) -> HeaderMap {
     let mut output = HeaderMap::new();
     for (name, value) in headers.iter() {
@@ -253,17 +264,6 @@ pub(crate) fn filter_response_headers(headers: &ReqwestHeaderMap) -> HeaderMap {
         output.append(name.clone(), value.clone());
     }
     output
-}
-
-fn is_hop_header(name: &HeaderName) -> bool {
-    name == CONNECTION
-        || name == KEEP_ALIVE
-        || name == PROXY_AUTHENTICATE
-        || name == PROXY_AUTHORIZATION
-        || name == TE
-        || name == TRAILER
-        || name == TRANSFER_ENCODING
-        || name == UPGRADE
 }
 
 pub(crate) fn build_response(status: StatusCode, headers: HeaderMap, body: Body) -> Response {

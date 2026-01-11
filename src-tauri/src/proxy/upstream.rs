@@ -1,6 +1,6 @@
 use axum::{
     http::{
-        header::{HeaderName, HeaderValue},
+        header::{HeaderName, HeaderValue, CONTENT_LENGTH, HOST},
         HeaderMap, Method, StatusCode,
     },
     response::Response,
@@ -263,7 +263,12 @@ async fn prepare_upstream_request(
         &upstream_path_with_query,
         &upstream_url,
     )?;
-    let request_headers = build_request_headers(provider, headers, auth);
+    let request_headers = build_request_headers(
+        provider,
+        headers,
+        auth,
+        upstream.header_overrides.as_deref(),
+    );
     let upstream_body = build_upstream_body(body, &mapped_meta).await?;
     Ok(PreparedUpstreamRequest {
         upstream_url,
@@ -380,6 +385,30 @@ fn resolve_upstream_path_with_query(
     }
 }
 
+fn apply_header_overrides(
+    request_headers: &mut HeaderMap,
+    overrides: &[super::config::HeaderOverride],
+) {
+    for override_item in overrides {
+        // 屏蔽 hop-by-hop / Host / Content-Length，无论配置为何。
+        if crate::proxy::http::is_hop_header(&override_item.name)
+            || override_item.name == HOST
+            || override_item.name == CONTENT_LENGTH
+        {
+            continue;
+        }
+
+        match &override_item.value {
+            Some(value) => {
+                request_headers.insert(override_item.name.clone(), value.clone());
+            }
+            None => {
+                request_headers.remove(&override_item.name);
+            }
+        }
+    }
+}
+
 fn split_path_query(path_with_query: &str) -> (&str, Option<&str>) {
     match path_with_query.split_once('?') {
         Some((path, query)) => (path, Some(query)),
@@ -391,6 +420,7 @@ fn build_request_headers(
     provider: &str,
     headers: &HeaderMap,
     auth: http::UpstreamAuthHeader,
+    header_overrides: Option<&[super::config::HeaderOverride]>,
 ) -> HeaderMap {
     let mut request_headers = http::build_upstream_headers(headers, auth);
     if provider == "anthropic" && !request_headers.contains_key(ANTHROPIC_VERSION_HEADER) {
@@ -399,6 +429,10 @@ fn build_request_headers(
             ANTHROPIC_VERSION_HEADER,
             HeaderValue::from_static(DEFAULT_ANTHROPIC_VERSION),
         );
+    }
+
+    if let Some(overrides) = header_overrides {
+        apply_header_overrides(&mut request_headers, overrides);
     }
     request_headers
 }

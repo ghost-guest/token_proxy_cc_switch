@@ -16,7 +16,9 @@ pub(crate) use types::{
     TrayTokenRateConfig,
     TrayTokenRateFormat,
     UpstreamConfig,
+    UpstreamOverrides,
     UpstreamGroup,
+    HeaderOverride,
     UpstreamRuntime,
     UpstreamStrategy,
 };
