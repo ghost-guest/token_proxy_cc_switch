@@ -179,9 +179,7 @@ function ChartBody({ data, timeFormatter }: ChartBodyProps) {
       {data.length ? (
         <ChartCanvas data={data} timeFormatter={timeFormatter} />
       ) : (
-        <div className="flex h-[250px] items-center justify-center text-sm text-muted-foreground">
-          {m.dashboard_no_data()}
-        </div>
+        <div className="h-[250px] rounded-md border border-dashed border-border/60 bg-muted/30" />
       )}
     </CardContent>
   )
