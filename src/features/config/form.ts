@@ -19,6 +19,7 @@ const DEFAULT_UPSTREAMS: UpstreamForm[] = [
     index: "0",
     enabled: true,
     modelMappings: [],
+    overrides: { header: [] },
   },
   {
     id: "openai-responses",
@@ -29,6 +30,7 @@ const DEFAULT_UPSTREAMS: UpstreamForm[] = [
     index: "1",
     enabled: true,
     modelMappings: [],
+    overrides: { header: [] },
   },
   {
     id: "anthropic-default",
@@ -39,6 +41,7 @@ const DEFAULT_UPSTREAMS: UpstreamForm[] = [
     index: "2",
     enabled: true,
     modelMappings: [],
+    overrides: { header: [] },
   },
   {
     id: "gemini-default",
@@ -49,6 +52,7 @@ const DEFAULT_UPSTREAMS: UpstreamForm[] = [
     index: "3",
     enabled: true,
     modelMappings: [],
+    overrides: { header: [] },
   },
 ];
 
@@ -96,6 +100,7 @@ export function createEmptyUpstream(): UpstreamForm {
     index: "",
     enabled: true,
     modelMappings: [],
+    overrides: { header: [] },
   };
 }
 
@@ -147,6 +152,7 @@ export function toForm(config: ProxyConfigFile): ConfigForm {
       index: upstream.index === null ? "" : String(upstream.index),
       enabled: upstream.enabled,
       modelMappings: toModelMappingForm(upstream.model_mappings),
+      overrides: normalizeOverrides(upstream.overrides),
     })),
   };
 }
@@ -170,6 +176,7 @@ export function toPayload(form: ConfigForm): ProxyConfigFile {
       index: parseOptionalInt(upstream.index),
       enabled: upstream.enabled,
       model_mappings: toModelMappingPayload(upstream.modelMappings),
+      overrides: toOverridesPayload(upstream.overrides),
     })),
   };
 }
@@ -220,6 +227,10 @@ export function validate(form: ConfigForm) {
     if (mappingError) {
       return { valid: false, message: mappingError };
     }
+    const headerOverrideError = validateHeaderOverrides(upstream.overrides.header, id);
+    if (headerOverrideError) {
+      return { valid: false, message: headerOverrideError };
+    }
   }
 
   return { valid: true, message: "" };
@@ -231,11 +242,41 @@ function toModelMappingForm(mappings: Record<string, string>): ModelMappingForm[
   );
 }
 
+type HeaderOverrideForm = ConfigForm["upstreams"][number]["overrides"]["header"][number];
+
+function normalizeOverrides(
+  overrides?: ProxyConfigFile["upstreams"][number]["overrides"],
+): ConfigForm["upstreams"][number]["overrides"] {
+  const header = Object.entries(overrides?.header ?? {}).map(
+    ([name, value], index): HeaderOverrideForm => ({
+      id: `header-override-${Date.now()}-${index}`,
+      name,
+      value: value ?? "",
+      isNull: value === null,
+    }),
+  );
+  return { header };
+}
+
 function toModelMappingPayload(mappings: ModelMappingForm[]) {
   const entries = mappings.map(
     (mapping): [string, string] => [mapping.pattern.trim(), mapping.target.trim()],
   );
   return Object.fromEntries(entries);
+}
+
+function toOverridesPayload(
+  overrides: ConfigForm["upstreams"][number]["overrides"],
+) {
+  const headerEntries = overrides.header
+    .map(({ name, value, isNull }) => [name.trim(), isNull ? null : value.trim()] as const)
+    .filter(([name]) => name);
+  if (!headerEntries.length) {
+    return undefined;
+  }
+  return {
+    header: Object.fromEntries(headerEntries),
+  };
 }
 
 function normalizeTrayTokenRate(value: TrayTokenRateConfig) {
@@ -283,6 +324,24 @@ function validateModelMappings(mappings: ModelMappingForm[], upstreamId: string)
       if (prefix.includes("*")) {
         return m.error_model_mapping_pattern_invalid({ id: upstreamId, pattern });
       }
+    }
+  }
+  return "";
+}
+
+function validateHeaderOverrides(
+  overrides: ConfigForm["upstreams"][number]["overrides"]["header"],
+  upstreamId: string
+) {
+  for (let index = 0; index < overrides.length; index += 1) {
+    const row = String(index + 1);
+    const name = overrides[index]?.name.trim() ?? "";
+    if (!name) {
+      return m.error_header_override_name_required({ id: upstreamId, row });
+    }
+    const isValid = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name);
+    if (!isValid) {
+      return m.error_header_override_name_invalid({ id: upstreamId, row });
     }
   }
   return "";

@@ -1,9 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
 use super::{
-    model_mapping::compile_model_mappings, ProviderUpstreams, UpstreamConfig, UpstreamGroup,
-    UpstreamRuntime,
+    model_mapping::compile_model_mappings, HeaderOverride, ProviderUpstreams, UpstreamConfig,
+    UpstreamGroup, UpstreamOverrides, UpstreamRuntime,
 };
+use axum::http::header::{HeaderName, HeaderValue};
 
 #[derive(Clone)]
 pub(super) struct NormalizedUpstream {
@@ -152,6 +153,7 @@ fn normalize_single_upstream(
         .filter(|value| !value.is_empty())
         .map(|value| value.to_string());
     let model_mappings = compile_model_mappings(&upstream.id, &upstream.model_mappings)?;
+    let header_overrides = normalize_header_overrides(upstream.overrides.as_ref())?;
     let runtime = UpstreamRuntime {
         id: upstream.id.trim().to_string(),
         base_url: base_url.to_string(),
@@ -159,10 +161,50 @@ fn normalize_single_upstream(
         priority: upstream.priority.unwrap_or(0),
         index,
         model_mappings,
+        header_overrides,
         order,
     };
     Ok(Some(NormalizedUpstream {
         provider: provider.to_string(),
         runtime,
     }))
+}
+
+fn normalize_header_overrides(
+    overrides: Option<&UpstreamOverrides>,
+) -> Result<Option<Vec<HeaderOverride>>, String> {
+    let Some(overrides) = overrides else {
+        return Ok(None);
+    };
+    if overrides.header.is_empty() {
+        return Ok(None);
+    }
+
+    let mut normalized = Vec::with_capacity(overrides.header.len());
+    for (raw_name, raw_value) in &overrides.header {
+        let trimmed = raw_name.trim();
+        let name = HeaderName::from_bytes(trimmed.as_bytes())
+            .map_err(|_| format!("Invalid header name in overrides: {raw_name}"))?;
+
+        let value: Option<HeaderValue> = match raw_value {
+            Some(value) => {
+                if value.is_empty() {
+                    // 允许空字符串，代表设置为空值。
+                    Some(HeaderValue::from_str("").map_err(|_| {
+                        format!("Invalid header value for {raw_name}")
+                    })?)
+                } else {
+                    Some(HeaderValue::from_str(value).map_err(|_| {
+                        format!("Invalid header value for {raw_name}")
+                    })?)
+                }
+            }
+            None => None,
+        };
+
+        normalized.push(HeaderOverride { name, value });
+    }
+
+    // 用户输入大小写混合时，保持用户写法；应用阶段再做覆盖策略。
+    Ok(Some(normalized))
 }

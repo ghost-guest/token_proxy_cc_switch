@@ -18,7 +18,6 @@
   "theme_system": "跟随系统",
   "theme_light": "亮色",
   "theme_dark": "深色",
-
   "config_status_working": "处理中",
   "config_status_error": "错误",
   "config_status_unsaved": "未保存",
@@ -26,10 +25,8 @@
   "config_status_idle": "空闲",
   "config_request_failed_title": "请求失败",
   "config_invalid_configuration": "配置无效。",
-
   "sidebar_hide": "隐藏侧栏",
   "sidebar_show": "显示侧栏",
-
   "config_section_dashboard_label": "仪表盘",
   "config_section_dashboard_desc": "请求与 Token 使用",
   "config_section_core_label": "内核",
@@ -42,7 +39,6 @@
   "config_section_file_desc": "磁盘 JSONC 与重置工具",
   "config_section_validation_label": "校验",
   "config_section_validation_desc": "快速检查",
-
   "proxy_core_title": "内核",
   "proxy_core_desc": "监听地址、访问控制与日志输出。",
   "proxy_core_host_label": "Host",
@@ -63,16 +59,13 @@
   "proxy_core_tray_token_rate_format_split": "拆分（↑/↓）",
   "proxy_core_tray_token_rate_format_both": "两者",
   "proxy_core_tray_token_rate_macos_only": "仅 macOS 菜单栏生效。",
-
   "strategy_title": "上游策略",
   "strategy_desc": "选择全局上游的选择方式。",
   "strategy_label": "策略",
   "strategy_placeholder": "选择策略",
   "strategy_help": "Priority round robin 会在最高优先级组内轮询。Priority fill first 会优先使用最高项，直到失败为止。",
-
   "upstream_strategy_priority_round_robin": "优先级轮询",
   "upstream_strategy_priority_fill_first": "优先级填充优先",
-
   "upstreams_title": "上游",
   "upstreams_desc": "定义提供商池与凭据。provider 名称使用 openai、openai-response、anthropic、gemini。",
   "upstreams_add": "添加上游",
@@ -113,11 +106,19 @@
   "model_mappings_tip": "精确：gpt-4，前缀：gpt-4*，通配：*（优先级：精确 > 前缀 > 通配）。",
   "model_mappings_placeholder_pattern": "gpt-4*",
   "model_mappings_placeholder_target": "gpt-4.1",
+  "field_header_overrides": "请求头覆盖",
+  "header_overrides_add": "添加请求头",
+  "header_overrides_remove": "删除请求头",
+  "header_overrides_empty": "暂无请求头覆盖。",
+  "header_overrides_tip": "在注入鉴权与 anthropic-version 之后再应用；null 表示删除，空字符串表示设为空值。",
+  "header_overrides_placeholder_name": "x-forwarded-for",
+  "header_overrides_placeholder_value": "client",
+  "error_header_override_name_required": "{id} 第 {row} 行的请求头名称必填。",
+  "error_header_override_name_invalid": "{id} 第 {row} 行的请求头名称无效。",
   "upstreams_delete_title": "删除上游？",
   "upstreams_delete_description": "将删除 {rowLabel}。",
   "upstreams_columns_title": "可见列",
   "upstreams_columns_description": "选择表格中显示的字段。",
-
   "config_file_title": "配置文件",
   "config_file_desc": "磁盘位置与维护操作。",
   "config_file_location_label": "位置",
@@ -129,7 +130,6 @@
   "config_file_discard_title": "丢弃未保存的更改？",
   "config_file_discard_description": "这将把表单恢复为上次加载的配置文件内容。",
   "config_file_discard_action": "丢弃",
-
   "proxy_service_title": "代理服务",
   "proxy_service_desc": "安全停止/重启与手动 reload 配置。",
   "proxy_service_state_label": "状态",
@@ -145,7 +145,6 @@
   "proxy_service_badge_unknown": "未知",
   "proxy_service_badge_running": "运行中",
   "proxy_service_badge_stopped": "已停止",
-
   "validation_title": "校验",
   "validation_desc": "保存前请确保字段一致。",
   "validation_host_row": "Host",
@@ -156,7 +155,6 @@
   "validation_ok": "OK",
   "validation_check": "检查",
   "validation_disabled": "禁用",
-
   "dashboard_title": "仪表盘",
   "dashboard_subtitle": "请求与 Token 使用概览",
   "dashboard_truncated": "已截断",
@@ -196,7 +194,6 @@
   "dashboard_table_status": "状态",
   "dashboard_table_tokens": "Tokens",
   "dashboard_table_latency_ms": "延迟 (ms)",
-
   "error_host_required": "Host 为必填。",
   "error_port_range": "端口必须在 1 到 65535 之间。",
   "error_log_path_required": "日志路径为必填。",

@@ -1,3 +1,4 @@
+use axum::http::header::{HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -79,6 +80,14 @@ pub(crate) struct UpstreamConfig {
     pub(crate) enabled: bool,
     #[serde(default)]
     pub(crate) model_mappings: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) overrides: Option<UpstreamOverrides>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Default)]
+pub(crate) struct UpstreamOverrides {
+    #[serde(default)]
+    pub(crate) header: HashMap<String, Option<String>>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -122,6 +131,7 @@ impl Default for ProxyConfigFile {
                     index: Some(0),
                     enabled: true,
                     model_mappings: HashMap::new(),
+                    overrides: None,
                 },
                 UpstreamConfig {
                     id: "openai-responses".to_string(),
@@ -132,6 +142,7 @@ impl Default for ProxyConfigFile {
                     index: Some(1),
                     enabled: true,
                     model_mappings: HashMap::new(),
+                    overrides: None,
                 },
                 UpstreamConfig {
                     id: "anthropic-default".to_string(),
@@ -142,6 +153,7 @@ impl Default for ProxyConfigFile {
                     index: Some(2),
                     enabled: true,
                     model_mappings: HashMap::new(),
+                    overrides: None,
                 },
                 UpstreamConfig {
                     id: "gemini-default".to_string(),
@@ -152,6 +164,7 @@ impl Default for ProxyConfigFile {
                     index: Some(3),
                     enabled: true,
                     model_mappings: HashMap::new(),
+                    overrides: None,
                 },
             ],
         }
@@ -189,7 +202,14 @@ pub(crate) struct UpstreamRuntime {
     pub(crate) priority: i32,
     pub(crate) index: i32,
     pub(crate) model_mappings: Option<ModelMappingRules>,
+    pub(crate) header_overrides: Option<Vec<HeaderOverride>>,
     pub(crate) order: usize,
+}
+
+#[derive(Clone)]
+pub(crate) struct HeaderOverride {
+    pub(crate) name: HeaderName,
+    pub(crate) value: Option<HeaderValue>,
 }
 
 impl UpstreamRuntime {
@@ -315,6 +335,7 @@ mod tests {
             priority: 0,
             index: 0,
             model_mappings: None,
+            header_overrides: None,
             order: 0,
         };
         assert_eq!(
@@ -330,6 +351,7 @@ mod tests {
             priority: 0,
             index: 0,
             model_mappings: None,
+            header_overrides: None,
             order: 0,
         };
         assert_eq!(
@@ -345,6 +367,7 @@ mod tests {
             priority: 0,
             index: 0,
             model_mappings: None,
+            header_overrides: None,
             order: 0,
         };
         assert_eq!(
@@ -364,6 +387,7 @@ mod tests {
             priority: 0,
             index: 0,
             model_mappings: None,
+            header_overrides: None,
             order: 0,
         };
         // openai: /v1/chat/completions

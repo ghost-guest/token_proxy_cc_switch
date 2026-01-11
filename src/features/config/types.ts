@@ -29,6 +29,9 @@ export type UpstreamConfig = {
   index: number | null;
   enabled: boolean;
   model_mappings: Record<string, string>;
+  overrides?: {
+    header?: Record<string, string | null>;
+  };
 };
 
 export type ProxyConfigFileBase = {
@@ -68,6 +71,16 @@ export type UpstreamForm = {
   index: string;
   enabled: boolean;
   modelMappings: ModelMappingForm[];
+  overrides: {
+    header: HeaderOverrideForm[];
+  };
+};
+
+export type HeaderOverrideForm = {
+  id: string;
+  name: string;
+  value: string;
+  isNull: boolean;
 };
 
 export type ModelMappingForm = {
