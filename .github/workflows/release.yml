@@ -65,10 +65,11 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install Linux dependencies
-        if: steps.release_guard.outputs.skip != 'true' && matrix.platform == 'ubuntu-22.04'
+        if: steps.release_guard.outputs.skip != 'true' && (matrix.platform == 'ubuntu-22.04' || matrix.platform == 'ubuntu-22.04-arm')
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            libgtk-3-dev \
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
@@ -186,10 +187,11 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
+        if: matrix.platform == 'ubuntu-22.04' || matrix.platform == 'ubuntu-22.04-arm'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            libgtk-3-dev \
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
