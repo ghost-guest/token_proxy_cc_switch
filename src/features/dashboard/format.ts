@@ -3,8 +3,17 @@ const DASHBOARD_TIME_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
   timeStyle: "medium",
 };
 
+const DASHBOARD_TIME_MINUTE_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
+  dateStyle: "short",
+  timeStyle: "short",
+};
+
 export function createDashboardTimeFormatter(locale: string) {
   return new Intl.DateTimeFormat(locale, DASHBOARD_TIME_FORMAT_OPTIONS);
+}
+
+export function createDashboardMinuteFormatter(locale: string) {
+  return new Intl.DateTimeFormat(locale, DASHBOARD_TIME_MINUTE_FORMAT_OPTIONS);
 }
 
 export function formatDashboardTimestamp(tsMs: number, formatter: Intl.DateTimeFormat) {
