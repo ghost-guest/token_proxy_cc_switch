@@ -16,7 +16,7 @@ import {
   type ChartConfig,
 } from "@/components/ui/chart"
 import {
-  createDashboardTimeFormatter,
+  createDashboardMinuteFormatter,
   formatDashboardTimestamp,
   formatInteger,
 } from "@/features/dashboard/format"
@@ -190,7 +190,7 @@ function ChartBody({ data, timeFormatter }: ChartBodyProps) {
 export function ChartAreaInteractive({ series }: ChartAreaInteractiveProps) {
   const { locale } = useI18n()
   const timeFormatter = React.useMemo(
-    () => createDashboardTimeFormatter(locale),
+    () => createDashboardMinuteFormatter(locale),
     [locale]
   )
   const chartData = React.useMemo(
