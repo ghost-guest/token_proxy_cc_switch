@@ -47,7 +47,7 @@ pub(super) async fn responses_request_to_anthropic(
     out.insert("messages".to_string(), Value::Array(messages));
 
     if let Some(system) = join_system_texts(system_texts) {
-        out.insert("system".to_string(), Value::String(system));
+        out.insert("system".to_string(), system_blocks_from_text(system));
     }
 
     if let Some(temperature) = object.get("temperature") {
@@ -283,8 +283,19 @@ async fn responses_message_content_to_claude_blocks(
                 };
                 let part_type = part.get("type").and_then(Value::as_str).unwrap_or("");
                 match part_type {
-                    "input_text" | "text" => {
+                    "input_text" | "output_text" | "text" => {
                         if let Some(text) = part.get("text").and_then(Value::as_str) {
+                            blocks.push(json!({ "type": "text", "text": text }));
+                        }
+                    }
+                    "refusal" => {
+                        // Some OpenAI Responses payloads represent refusals as dedicated parts.
+                        let text = part
+                            .get("refusal")
+                            .or_else(|| part.get("text"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        if !text.is_empty() {
                             blocks.push(json!({ "type": "text", "text": text }));
                         }
                     }
@@ -320,6 +331,12 @@ fn claude_message_to_responses_input_items(message: &Value, input_items: &mut Ve
     let blocks = claude_content_to_blocks(content);
 
     let mut message_parts = Vec::new();
+    let text_part_type = match role {
+        // OpenAI Responses schema expects assistant messages in `input` to use output types.
+        // This avoids errors like: "Invalid value: 'input_text'. Supported values are: 'output_text' and 'refusal'."
+        "assistant" => "output_text",
+        _ => "input_text",
+    };
     for block in &blocks {
         let Some(block) = block.as_object() else {
             continue;
@@ -328,7 +345,7 @@ fn claude_message_to_responses_input_items(message: &Value, input_items: &mut Ve
         match block_type {
             "text" => {
                 if let Some(text) = block.get("text").and_then(Value::as_str) {
-                    message_parts.push(json!({ "type": "input_text", "text": text }));
+                    message_parts.push(json!({ "type": text_part_type, "text": text }));
                 }
             }
             "image" => {
@@ -396,19 +413,14 @@ fn claude_system_to_text(value: &Value) -> Option<String> {
     match value {
         Value::String(text) => Some(text.to_string()),
         Value::Array(items) => {
-            let mut combined = String::new();
-            for item in items {
-                let Some(item) = item.as_object() else {
-                    continue;
-                };
-                if item.get("type").and_then(Value::as_str) != Some("text") {
-                    continue;
-                }
-                if let Some(text) = item.get("text").and_then(Value::as_str) {
-                    combined.push_str(text);
-                }
-            }
-            Some(combined)
+            let texts = items
+                .iter()
+                .filter_map(|item| item.as_object())
+                .filter(|item| item.get("type").and_then(Value::as_str) == Some("text"))
+                .filter_map(|item| item.get("text").and_then(Value::as_str))
+                .map(|text| text.to_string())
+                .collect::<Vec<_>>();
+            join_system_texts(texts)
         }
         _ => None,
     }
@@ -426,6 +438,12 @@ fn join_system_texts(texts: Vec<String>) -> Option<String> {
     } else {
         Some(combined)
     }
+}
+
+fn system_blocks_from_text(text: String) -> Value {
+    // new-api style: `system` uses array blocks for better compatibility.
+    // Keep the original newlines inside the single block (avoid splitting).
+    json!([{ "type": "text", "text": text }])
 }
 
 fn extract_text_from_any_content(value: Option<&Value>) -> Option<String> {
@@ -516,4 +534,3 @@ fn ensure_claude_content_array_in_place(content: &mut Value) {
     }
     *content = Value::Array(Vec::new());
 }
-
