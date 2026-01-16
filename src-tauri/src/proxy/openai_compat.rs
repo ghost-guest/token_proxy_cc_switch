@@ -1,10 +1,17 @@
 use axum::body::Bytes;
 use serde_json::{json, Map, Value};
 
-use super::{anthropic_compat, http_client::ProxyHttpClients};
+use super::{
+    anthropic_compat,
+    compat_content,
+    compat_reason,
+    gemini_compat,
+    http_client::ProxyHttpClients,
+};
 
 mod extract;
 mod input;
+mod message;
 mod tools;
 mod usage;
 
@@ -29,6 +36,12 @@ pub(crate) enum FormatTransform {
     AnthropicToResponses,
     ChatToAnthropic,
     AnthropicToChat,
+    GeminiToAnthropic,
+    AnthropicToGemini,
+    ChatToGemini,
+    GeminiToChat,
+    ResponsesToGemini,
+    GeminiToResponses,
 }
 
 pub(crate) fn inbound_format(path: &str) -> Option<ApiFormat> {
@@ -43,6 +56,7 @@ pub(crate) async fn transform_request_body(
     transform: FormatTransform,
     body: &Bytes,
     http_clients: &ProxyHttpClients,
+    model_hint: Option<&str>,
 ) -> Result<Bytes, String> {
     match transform {
         FormatTransform::None => Ok(body.clone()),
@@ -62,6 +76,14 @@ pub(crate) async fn transform_request_body(
             let intermediate = anthropic_compat::anthropic_request_to_responses(body, http_clients).await?;
             responses_request_to_chat(&intermediate)
         }
+        FormatTransform::GeminiToAnthropic => {
+            gemini_request_to_anthropic(body, http_clients, model_hint).await
+        }
+        FormatTransform::AnthropicToGemini => anthropic_request_to_gemini(body, http_clients).await,
+        FormatTransform::ChatToGemini => gemini_compat::chat_request_to_gemini(body),
+        FormatTransform::GeminiToChat => gemini_compat::gemini_request_to_chat(body, model_hint),
+        FormatTransform::ResponsesToGemini => responses_request_to_gemini(body),
+        FormatTransform::GeminiToResponses => gemini_request_to_responses(body, model_hint),
     }
 }
 
@@ -86,6 +108,12 @@ pub(crate) fn transform_response_body(
             let intermediate = anthropic_compat::anthropic_response_to_responses(bytes)?;
             responses_response_to_chat(&intermediate, model_hint)
         }
+        FormatTransform::GeminiToAnthropic => gemini_response_to_anthropic(bytes, model_hint),
+        FormatTransform::AnthropicToGemini => anthropic_response_to_gemini(bytes, model_hint),
+        FormatTransform::ChatToGemini => gemini_compat::chat_response_to_gemini(bytes, model_hint),
+        FormatTransform::GeminiToChat => gemini_compat::gemini_response_to_chat(bytes, model_hint),
+        FormatTransform::ResponsesToGemini => responses_response_to_gemini(bytes, model_hint),
+        FormatTransform::GeminiToResponses => gemini_response_to_responses(bytes, model_hint),
     }
 }
 
@@ -117,6 +145,8 @@ fn chat_request_to_responses(body: &Bytes) -> Result<Bytes, String> {
     copy_key(object, &mut output, "user");
     copy_key(object, &mut output, "seed");
     copy_key(object, &mut output, "parallel_tool_calls");
+    copy_key(object, &mut output, "modalities");
+    copy_key(object, &mut output, "audio");
 
     if let Some(max_output_tokens) = object
         .get("max_completion_tokens")
@@ -134,6 +164,11 @@ fn chat_request_to_responses(body: &Bytes) -> Result<Bytes, String> {
             "tool_choice".to_string(),
             tools::map_chat_tool_choice_to_responses(tool_choice),
         );
+    }
+    if let Some(response_format) = object.get("response_format") {
+        let mut text_obj = Map::new();
+        text_obj.insert("format".to_string(), response_format.clone());
+        output.insert("text".to_string(), Value::Object(text_obj));
     }
 
     serde_json::to_vec(&Value::Object(output))
@@ -172,6 +207,8 @@ fn responses_request_to_chat(body: &Bytes) -> Result<Bytes, String> {
     copy_key(object, &mut output, "user");
     copy_key(object, &mut output, "seed");
     copy_key(object, &mut output, "parallel_tool_calls");
+    copy_key(object, &mut output, "modalities");
+    copy_key(object, &mut output, "audio");
 
     if let Some(max_output_tokens) = object.get("max_output_tokens").and_then(Value::as_i64) {
         // Prefer the modern chat parameter.
@@ -190,10 +227,74 @@ fn responses_request_to_chat(body: &Bytes) -> Result<Bytes, String> {
             tools::map_responses_tool_choice_to_chat(tool_choice),
         );
     }
+    if let Some(text_format) = object
+        .get("text")
+        .and_then(Value::as_object)
+        .and_then(|text| text.get("format"))
+    {
+        output.insert("response_format".to_string(), text_format.clone());
+    }
 
     serde_json::to_vec(&Value::Object(output))
         .map(Bytes::from)
         .map_err(|err| format!("Failed to serialize request: {err}"))
+}
+
+fn responses_request_to_gemini(body: &Bytes) -> Result<Bytes, String> {
+    let intermediate = responses_request_to_chat(body)?;
+    gemini_compat::chat_request_to_gemini(&intermediate)
+}
+
+fn gemini_request_to_responses(body: &Bytes, model_hint: Option<&str>) -> Result<Bytes, String> {
+    let intermediate = gemini_compat::gemini_request_to_chat(body, model_hint)?;
+    chat_request_to_responses(&intermediate)
+}
+
+fn responses_response_to_gemini(bytes: &Bytes, model_hint: Option<&str>) -> Result<Bytes, String> {
+    let intermediate = responses_response_to_chat(bytes, model_hint)?;
+    gemini_compat::chat_response_to_gemini(&intermediate, model_hint)
+}
+
+fn gemini_response_to_responses(bytes: &Bytes, model_hint: Option<&str>) -> Result<Bytes, String> {
+    let intermediate = gemini_compat::gemini_response_to_chat(bytes, model_hint)?;
+    chat_response_to_responses(&intermediate)
+}
+
+async fn gemini_request_to_anthropic(
+    body: &Bytes,
+    http_clients: &ProxyHttpClients,
+    model_hint: Option<&str>,
+) -> Result<Bytes, String> {
+    let intermediate = gemini_compat::gemini_request_to_chat(body, model_hint)?;
+    let intermediate = chat_request_to_responses(&intermediate)?;
+    anthropic_compat::responses_request_to_anthropic(&intermediate, http_clients).await
+}
+
+async fn anthropic_request_to_gemini(
+    body: &Bytes,
+    http_clients: &ProxyHttpClients,
+) -> Result<Bytes, String> {
+    let intermediate = anthropic_compat::anthropic_request_to_responses(body, http_clients).await?;
+    let intermediate = responses_request_to_chat(&intermediate)?;
+    gemini_compat::chat_request_to_gemini(&intermediate)
+}
+
+fn gemini_response_to_anthropic(
+    bytes: &Bytes,
+    model_hint: Option<&str>,
+) -> Result<Bytes, String> {
+    let intermediate = gemini_compat::gemini_response_to_chat(bytes, model_hint)?;
+    let intermediate = chat_response_to_responses(&intermediate)?;
+    anthropic_compat::responses_response_to_anthropic(&intermediate, model_hint)
+}
+
+fn anthropic_response_to_gemini(
+    bytes: &Bytes,
+    model_hint: Option<&str>,
+) -> Result<Bytes, String> {
+    let intermediate = anthropic_compat::anthropic_response_to_responses(bytes)?;
+    let intermediate = responses_response_to_chat(&intermediate, model_hint)?;
+    gemini_compat::chat_response_to_gemini(&intermediate, model_hint)
 }
 
 fn chat_messages_to_responses_input(
@@ -218,12 +319,12 @@ fn chat_messages_to_responses_input(
         }
     }
 
-    let instructions = join_non_empty_lines(system_texts);
+    let instructions = message::join_non_empty_lines(system_texts);
     Ok((input, instructions))
 }
 
 fn push_chat_system_message(system_texts: &mut Vec<String>, message: &Map<String, Value>) {
-    if let Some(text) = extract_text_from_chat_content(message.get("content")) {
+    if let Some(text) = message::extract_text_from_chat_content(message.get("content")) {
         system_texts.push(text);
     }
 }
@@ -233,7 +334,7 @@ fn push_chat_user_message(
     has_user_message: &mut bool,
     message: &Map<String, Value>,
 ) -> Result<(), String> {
-    let parts = chat_content_to_responses_message_parts(message.get("content"), "input_text")?;
+    let parts = message::chat_content_to_responses_message_parts(message.get("content"), "input_text")?;
     if parts.is_empty() {
         return Ok(());
     }
@@ -249,14 +350,14 @@ fn push_chat_assistant_message(
 ) -> Result<(), String> {
     // Responses API expects assistant message content parts to use output types.
     // This matches OpenAI's schema and avoids errors like: "supported values are output_text/refusal".
-    let parts = chat_content_to_responses_message_parts(message.get("content"), "output_text")?;
-    let tool_calls = chat_tool_calls_to_responses_items(message.get("tool_calls"));
-    let legacy_call = chat_function_call_to_responses_item(message.get("function_call"));
+    let parts = message::chat_content_to_responses_message_parts(message.get("content"), "output_text")?;
+    let tool_calls = message::chat_tool_calls_to_responses_items(message.get("tool_calls"));
+    let legacy_call = message::chat_function_call_to_responses_item(message.get("function_call"));
 
     let has_payload =
         !parts.is_empty() || !tool_calls.is_empty() || legacy_call.is_some();
     if has_payload && !*has_user_message {
-        input.push(user_placeholder_item());
+        input.push(message::user_placeholder_item());
         *has_user_message = true;
     }
 
@@ -272,166 +373,12 @@ fn push_chat_assistant_message(
 
 fn push_chat_tool_message(input: &mut Vec<Value>, message: &Map<String, Value>) {
     let call_id = message.get("tool_call_id").and_then(Value::as_str).unwrap_or("");
-    let output = stringify_any_json(message.get("content"));
+    let output = message::stringify_any_json(message.get("content"));
     input.push(json!({
         "type": "function_call_output",
         "call_id": call_id,
         "output": output
     }));
-}
-
-fn extract_text_from_chat_content(content: Option<&Value>) -> Option<String> {
-    let Some(content) = content else {
-        return None;
-    };
-    match content {
-        Value::String(text) => Some(text.to_string()),
-        Value::Array(parts) => {
-            let mut combined = String::new();
-            for part in parts {
-                let Some(part) = part.as_object() else {
-                    continue;
-                };
-                let part_type = part.get("type").and_then(Value::as_str).unwrap_or("");
-                if !matches!(part_type, "text" | "input_text") {
-                    continue;
-                }
-                if let Some(text) = part.get("text").and_then(Value::as_str) {
-                    combined.push_str(text);
-                }
-            }
-            if combined.trim().is_empty() { None } else { Some(combined) }
-        }
-        Value::Object(object) => object.get("text").and_then(Value::as_str).map(|t| t.to_string()),
-        _ => None,
-    }
-}
-
-fn chat_content_to_responses_message_parts(
-    content: Option<&Value>,
-    text_part_type: &str,
-) -> Result<Vec<Value>, String> {
-    let Some(content) = content else {
-        return Ok(Vec::new());
-    };
-    match content {
-        Value::String(text) => Ok(vec![json!({ "type": text_part_type, "text": text })]),
-        Value::Array(parts) => {
-            let mut out = Vec::new();
-            for part in parts {
-                let Some(part) = part.as_object() else {
-                    continue;
-                };
-                let part_type = part.get("type").and_then(Value::as_str).unwrap_or("");
-                match part_type {
-                    "text" | "input_text" => {
-                        if let Some(text) = part.get("text").and_then(Value::as_str) {
-                            out.push(json!({ "type": text_part_type, "text": text }));
-                        }
-                    }
-                    "image_url" => {
-                        let url = match part.get("image_url") {
-                            Some(Value::String(url)) => Some(json!({ "url": url })),
-                            Some(Value::Object(object)) => object
-                                .get("url")
-                                .and_then(Value::as_str)
-                                .map(|url| json!({ "url": url })),
-                            _ => None,
-                        };
-                        if let Some(image_url) = url {
-                            out.push(json!({ "type": "input_image", "image_url": image_url }));
-                        }
-                    }
-                    "input_image" => {
-                        if let Some(image_url) = part.get("image_url") {
-                            out.push(json!({ "type": "input_image", "image_url": image_url.clone() }));
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            Ok(out)
-        }
-        _ => Ok(Vec::new()),
-    }
-}
-
-fn chat_tool_calls_to_responses_items(value: Option<&Value>) -> Vec<Value> {
-    let Some(tool_calls) = value.and_then(Value::as_array) else {
-        return Vec::new();
-    };
-
-    tool_calls
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, call)| chat_tool_call_to_responses_item(call, idx))
-        .collect()
-}
-
-fn chat_tool_call_to_responses_item(value: &Value, idx: usize) -> Option<Value> {
-    let call = value.as_object()?;
-    let call_id = call
-        .get("id")
-        .and_then(Value::as_str)
-        .filter(|v| !v.is_empty())
-        .map(|v| v.to_string())
-        .unwrap_or_else(|| format!("call_proxy_{idx}"));
-    let function = call.get("function").and_then(Value::as_object)?;
-    let name = function.get("name").and_then(Value::as_str).unwrap_or("");
-    let arguments = stringify_any_json(function.get("arguments"));
-
-    Some(json!({
-        "type": "function_call",
-        "call_id": call_id,
-        "name": name,
-        "arguments": arguments
-    }))
-}
-
-fn chat_function_call_to_responses_item(value: Option<&Value>) -> Option<Value> {
-    let Some(value) = value else {
-        return None;
-    };
-    let Some(function) = value.as_object() else {
-        return None;
-    };
-    let name = function.get("name").and_then(Value::as_str).unwrap_or("");
-    if name.is_empty() {
-        return None;
-    }
-    let arguments = stringify_any_json(function.get("arguments"));
-    Some(json!({
-        "type": "function_call",
-        "call_id": "call_legacy",
-        "name": name,
-        "arguments": arguments
-    }))
-}
-
-fn stringify_any_json(value: Option<&Value>) -> String {
-    match value {
-        None => String::new(),
-        Some(Value::String(text)) => text.to_string(),
-        Some(other) => serde_json::to_string(other).unwrap_or_default(),
-    }
-}
-
-fn user_placeholder_item() -> Value {
-    json!({
-        "type": "message",
-        "role": "user",
-        "content": [{ "type": "input_text", "text": "..." }]
-    })
-}
-
-fn join_non_empty_lines(texts: Vec<String>) -> Option<String> {
-    let combined = texts
-        .into_iter()
-        .map(|t| t.trim().to_string())
-        .filter(|t| !t.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n");
-    if combined.is_empty() { None } else { Some(combined) }
 }
 
 fn responses_response_to_chat(bytes: &Bytes, model_hint: Option<&str>) -> Result<Bytes, String> {
@@ -457,21 +404,15 @@ fn responses_response_to_chat(bytes: &Bytes, model_hint: Option<&str>) -> Result
         .get("usage")
         .and_then(|usage| usage::map_usage_responses_to_chat(usage));
 
-    let finish_reason = if extracted.tool_calls.is_empty() {
-        "stop"
-    } else {
-        "tool_calls"
-    };
+    let finish_reason =
+        compat_reason::chat_finish_reason_from_response_object(object, !extracted.tool_calls.is_empty());
 
     let mut message = json!({
         "role": "assistant",
-        "content": extracted.content
+        "content": compat_content::chat_message_content_from_responses_parts(
+            &extracted.content_parts,
+        )
     });
-    if let Some(parts) = extracted.content_parts {
-        if let Some(message) = message.as_object_mut() {
-            message.insert("content_parts".to_string(), Value::Array(parts));
-        }
-    }
     if !extracted.tool_calls.is_empty() {
         if let Some(message) = message.as_object_mut() {
             message.insert("tool_calls".to_string(), Value::Array(extracted.tool_calls));
@@ -511,6 +452,19 @@ fn chat_response_to_responses(bytes: &Bytes) -> Result<Bytes, String> {
     let id = object.get("id").and_then(Value::as_str).unwrap_or("resp-proxy");
     let created = object.get("created").and_then(Value::as_i64).unwrap_or(0);
     let model = object.get("model").and_then(Value::as_str).unwrap_or("unknown");
+    let finish_reason = object
+        .get("choices")
+        .and_then(Value::as_array)
+        .and_then(|choices| choices.first())
+        .and_then(Value::as_object)
+        .and_then(|choice| choice.get("finish_reason"))
+        .and_then(Value::as_str);
+    let (status, incomplete_reason) =
+        compat_reason::responses_status_from_chat_finish_reason(finish_reason);
+    let status = status.unwrap_or("completed");
+    let incomplete_details = incomplete_reason
+        .map(|reason| json!({ "reason": reason }))
+        .unwrap_or(Value::Null);
 
     let usage = object
         .get("usage")
@@ -543,8 +497,9 @@ fn chat_response_to_responses(bytes: &Bytes) -> Result<Bytes, String> {
         "id": id,
         "object": "response",
         "created_at": created,
-        "status": "completed",
+        "status": status,
         "error": null,
+        "incomplete_details": incomplete_details,
         "model": model,
         "parallel_tool_calls": parallel_tool_calls,
         "output": output,

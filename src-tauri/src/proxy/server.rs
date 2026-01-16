@@ -73,6 +73,8 @@ const ERROR_RESPONSES_CONVERSION_DISABLED: &str =
     "API format conversion is disabled (enable_api_format_conversion=false). Configure provider \"openai-response\" for /v1/responses or enable conversion.";
 const ERROR_ANTHROPIC_CONVERSION_DISABLED: &str =
     "API format conversion is disabled (enable_api_format_conversion=false). Configure provider \"anthropic\" for /v1/messages or enable conversion.";
+const ERROR_GEMINI_CONVERSION_DISABLED: &str =
+    "API format conversion is disabled (enable_api_format_conversion=false). Configure provider \"gemini\" for Gemini paths or enable conversion.";
 
 fn base_plan(provider: &'static str) -> DispatchPlan {
     DispatchPlan {
@@ -109,14 +111,44 @@ fn choose_provider_by_priority(
     selected.map(|(provider, _)| provider)
 }
 
-fn resolve_gemini_plan(has_gemini: bool, path: &str) -> Option<Result<DispatchPlan, String>> {
+fn resolve_gemini_plan(config: &ProxyConfig, path: &str) -> Option<Result<DispatchPlan, String>> {
     if !gemini::is_gemini_path(path) {
         return None;
     }
-    if has_gemini {
+    if config.provider_upstreams(PROVIDER_GEMINI).is_some() {
         return Some(Ok(base_plan(PROVIDER_GEMINI)));
     }
-    Some(Err(ERROR_NO_UPSTREAM.to_string()))
+    let fallback = choose_provider_by_priority(
+        config,
+        &[PROVIDER_RESPONSES, PROVIDER_CHAT, PROVIDER_ANTHROPIC],
+    );
+    let Some(fallback) = fallback else {
+        return Some(Err(ERROR_NO_UPSTREAM.to_string()));
+    };
+    if !config.enable_api_format_conversion {
+        return Some(Err(ERROR_GEMINI_CONVERSION_DISABLED.to_string()));
+    }
+    Some(Ok(match fallback {
+        PROVIDER_RESPONSES => DispatchPlan {
+            provider: PROVIDER_RESPONSES,
+            outbound_path: Some(RESPONSES_PATH),
+            request_transform: FormatTransform::GeminiToResponses,
+            response_transform: FormatTransform::ResponsesToGemini,
+        },
+        PROVIDER_CHAT => DispatchPlan {
+            provider: PROVIDER_CHAT,
+            outbound_path: Some(CHAT_PATH),
+            request_transform: FormatTransform::GeminiToChat,
+            response_transform: FormatTransform::ChatToGemini,
+        },
+        PROVIDER_ANTHROPIC => DispatchPlan {
+            provider: PROVIDER_ANTHROPIC,
+            outbound_path: Some("/v1/messages"),
+            request_transform: FormatTransform::GeminiToAnthropic,
+            response_transform: FormatTransform::AnthropicToGemini,
+        },
+        _ => base_plan(PROVIDER_RESPONSES),
+    }))
 }
 
 fn resolve_anthropic_plan(
@@ -133,7 +165,10 @@ fn resolve_anthropic_plan(
     // Claude Code uses /v1/messages. If Anthropic upstream is missing but Responses is available,
     // fall back to OpenAI Responses format conversion when enabled (new-api style).
     if path == "/v1/messages" {
-        let fallback = choose_provider_by_priority(config, &[PROVIDER_RESPONSES, PROVIDER_CHAT]);
+        let fallback = choose_provider_by_priority(
+            config,
+            &[PROVIDER_RESPONSES, PROVIDER_CHAT, PROVIDER_GEMINI],
+        );
         let Some(fallback) = fallback else {
             return Some(Err(ERROR_NO_UPSTREAM.to_string()));
         };
@@ -152,6 +187,12 @@ fn resolve_anthropic_plan(
                 outbound_path: Some(CHAT_PATH),
                 request_transform: FormatTransform::AnthropicToChat,
                 response_transform: FormatTransform::ChatToAnthropic,
+            },
+            PROVIDER_GEMINI => DispatchPlan {
+                provider: PROVIDER_GEMINI,
+                outbound_path: None,
+                request_transform: FormatTransform::AnthropicToGemini,
+                response_transform: FormatTransform::GeminiToAnthropic,
             },
             _ => base_plan(PROVIDER_RESPONSES),
         }));
@@ -174,8 +215,12 @@ fn resolve_chat_plan(config: &ProxyConfig) -> Result<DispatchPlan, String> {
         return Ok(base_plan(PROVIDER_CHAT));
     }
 
-    let fallback = choose_provider_by_priority(config, &[PROVIDER_RESPONSES, PROVIDER_ANTHROPIC])
-        .ok_or_else(|| ERROR_NO_UPSTREAM.to_string())?;
+    // 包含 Gemini 作为可选的转换目标
+    let fallback = choose_provider_by_priority(
+        config,
+        &[PROVIDER_RESPONSES, PROVIDER_ANTHROPIC, PROVIDER_GEMINI],
+    )
+    .ok_or_else(|| ERROR_NO_UPSTREAM.to_string())?;
     if !config.enable_api_format_conversion {
         return Err(ERROR_CHAT_CONVERSION_DISABLED.to_string());
     }
@@ -193,6 +238,12 @@ fn resolve_chat_plan(config: &ProxyConfig) -> Result<DispatchPlan, String> {
             request_transform: FormatTransform::ChatToAnthropic,
             response_transform: FormatTransform::AnthropicToChat,
         },
+        PROVIDER_GEMINI => DispatchPlan {
+            provider: PROVIDER_GEMINI,
+            outbound_path: None, // Gemini 路径需要在 upstream 层根据 model 动态构建
+            request_transform: FormatTransform::ChatToGemini,
+            response_transform: FormatTransform::GeminiToChat,
+        },
         _ => base_plan(PROVIDER_RESPONSES),
     })
 }
@@ -202,7 +253,10 @@ fn resolve_responses_plan(config: &ProxyConfig) -> Result<DispatchPlan, String> 
         return Ok(base_plan(PROVIDER_RESPONSES));
     }
 
-    let fallback = choose_provider_by_priority(config, &[PROVIDER_CHAT, PROVIDER_ANTHROPIC])
+    let fallback = choose_provider_by_priority(
+        config,
+        &[PROVIDER_CHAT, PROVIDER_ANTHROPIC, PROVIDER_GEMINI],
+    )
         .ok_or_else(|| ERROR_NO_UPSTREAM.to_string())?;
     if !config.enable_api_format_conversion {
         return Err(ERROR_RESPONSES_CONVERSION_DISABLED.to_string());
@@ -221,14 +275,18 @@ fn resolve_responses_plan(config: &ProxyConfig) -> Result<DispatchPlan, String> 
             request_transform: FormatTransform::ResponsesToAnthropic,
             response_transform: FormatTransform::AnthropicToResponses,
         },
+        PROVIDER_GEMINI => DispatchPlan {
+            provider: PROVIDER_GEMINI,
+            outbound_path: None,
+            request_transform: FormatTransform::ResponsesToGemini,
+            response_transform: FormatTransform::GeminiToResponses,
+        },
         _ => base_plan(PROVIDER_CHAT),
     })
 }
 
 fn resolve_dispatch_plan(config: &ProxyConfig, path: &str) -> Result<DispatchPlan, String> {
-    let has_gemini = config.provider_upstreams(PROVIDER_GEMINI).is_some();
-
-    if let Some(plan) = resolve_gemini_plan(has_gemini, path) {
+    if let Some(plan) = resolve_gemini_plan(config, path) {
         return plan;
     }
     if let Some(plan) = resolve_anthropic_plan(config, path) {
@@ -409,7 +467,14 @@ async fn build_outbound_body_or_respond(
     body: ReplayableBody,
     request_start: Instant,
 ) -> Result<ReplayableBody, Response> {
-    let body = match maybe_transform_request_body(http_clients, plan.request_transform, body).await {
+    let body = match maybe_transform_request_body(
+        http_clients,
+        plan.request_transform,
+        meta.original_model.as_deref(),
+        body,
+    )
+    .await
+    {
         Ok(body) => body,
         Err(err) => {
             log_request_error(
@@ -546,8 +611,27 @@ async fn finalize_prepared_request(
     inbound: InboundRequest,
     request_start: Instant,
 ) -> Result<PreparedRequest, Response> {
-    let outbound_path = inbound.plan.outbound_path.unwrap_or(inbound.path.as_str());
-    let outbound_path_with_query = build_outbound_path_with_query(outbound_path, uri);
+    // 对于 ChatToGemini 转换，需要根据 model 动态构建 Gemini 路径
+    let outbound_path = match (inbound.plan.outbound_path, inbound.plan.provider) {
+        (Some(path), _) => path.to_string(),
+        (None, PROVIDER_GEMINI) if inbound.plan.request_transform != FormatTransform::None => {
+            // 从 meta 中获取 model，构建 Gemini API 路径
+            let model = inbound
+                .meta
+                .mapped_model
+                .as_deref()
+                .or(inbound.meta.original_model.as_deref())
+                .unwrap_or("gemini-1.5-flash");
+            let suffix = if inbound.meta.stream {
+                ":streamGenerateContent"
+            } else {
+                ":generateContent"
+            };
+            format!("{}{}{}", gemini::GEMINI_MODELS_PREFIX, model, suffix)
+        }
+        (None, _) => inbound.path.clone(),
+    };
+    let outbound_path_with_query = build_outbound_path_with_query(&outbound_path, uri);
     let outbound_body = build_outbound_body_or_respond(
         &state.http_clients,
         &state.log,
