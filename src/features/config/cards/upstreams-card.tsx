@@ -16,15 +16,17 @@ import type {
   UpstreamEditorState,
 } from "@/features/config/cards/upstreams/types";
 import { createEmptyUpstream } from "@/features/config/form";
-import type { UpstreamForm } from "@/features/config/types";
+import type { UpstreamForm, UpstreamStrategy } from "@/features/config/types";
 import { m } from "@/paraglide/messages.js";
 
 type UpstreamsCardProps = {
   upstreams: UpstreamForm[];
   appProxyUrl: string;
+  strategy: UpstreamStrategy;
   showApiKeys: boolean;
   providerOptions: string[];
   onToggleApiKeys: () => void;
+  onStrategyChange: (value: UpstreamStrategy) => void;
   onAdd: (upstream: UpstreamForm) => void;
   onRemove: (index: number) => void;
   onChange: (index: number, patch: Partial<UpstreamForm>) => void;
@@ -63,9 +65,11 @@ function cloneUpstreamDraft(upstream: UpstreamForm): UpstreamForm {
 export function UpstreamsCard({
   upstreams,
   appProxyUrl,
+  strategy,
   showApiKeys,
   providerOptions,
   onToggleApiKeys,
+  onStrategyChange,
   onAdd,
   onRemove,
   onChange,
@@ -152,6 +156,8 @@ export function UpstreamsCard({
           onToggleApiKeys={onToggleApiKeys}
           onAddClick={openCreateDialog}
           onColumnsClick={() => setColumnsOpen(true)}
+          strategy={strategy}
+          onStrategyChange={onStrategyChange}
         />
         {upstreams.length ? (
           <UpstreamsTable
