@@ -33,6 +33,7 @@ use crate::logging::LogLevel;
 
 const PROVIDER_ANTHROPIC: &str = "anthropic";
 const PROVIDER_GEMINI: &str = "gemini";
+const PROVIDER_KIRO: &str = "kiro";
 const PROVIDER_PROXY: &str = "proxy";
 const LOCAL_UPSTREAM_ID: &str = "local";
 
@@ -85,27 +86,46 @@ fn base_plan(provider: &'static str) -> DispatchPlan {
     }
 }
 
-fn provider_priority(config: &ProxyConfig, provider: &str) -> Option<i32> {
-    config
-        .provider_upstreams(provider)
-        .map(|upstreams| upstreams.groups.first().map(|group| group.priority).unwrap_or(0))
+struct ProviderRank {
+    priority: i32,
+    min_id: String,
 }
 
-fn choose_provider_by_priority(
-    config: &ProxyConfig,
-    candidates: &[&'static str],
-) -> Option<&'static str> {
-    let mut selected: Option<(&'static str, i32)> = None;
+fn provider_rank(config: &ProxyConfig, provider: &str) -> Option<ProviderRank> {
+    let upstreams = config.provider_upstreams(provider)?;
+    let (priority, min_id) = match upstreams.groups.first() {
+        Some(group) => {
+            let min_id = group
+                .items
+                .iter()
+                .map(|item| item.id.as_str())
+                .min()
+                .unwrap_or(provider);
+            (group.priority, min_id)
+        }
+        None => (0, provider),
+    };
+    Some(ProviderRank {
+        priority,
+        min_id: min_id.to_string(),
+    })
+}
+
+fn choose_provider_by_priority(config: &ProxyConfig, candidates: &[&'static str]) -> Option<&'static str> {
+    let mut selected: Option<(&'static str, ProviderRank)> = None;
     for candidate in candidates {
-        let Some(priority) = provider_priority(config, candidate) else {
+        let Some(rank) = provider_rank(config, candidate) else {
             continue;
         };
-        match selected {
-            None => selected = Some((candidate, priority)),
-            Some((_, best_priority)) if priority > best_priority => {
-                selected = Some((candidate, priority));
+        match &selected {
+            None => selected = Some((*candidate, rank)),
+            Some((_, best)) => {
+                if rank.priority > best.priority
+                    || (rank.priority == best.priority && rank.min_id < best.min_id)
+                {
+                    selected = Some((*candidate, rank));
+                }
             }
-            _ => {}
         }
     }
     selected.map(|(provider, _)| provider)
@@ -158,13 +178,26 @@ fn resolve_anthropic_plan(
     if !is_anthropic_path(path) {
         return None;
     }
-    if config.provider_upstreams(PROVIDER_ANTHROPIC).is_some() {
-        return Some(Ok(base_plan(PROVIDER_ANTHROPIC)));
-    }
-
-    // Claude Code uses /v1/messages. If Anthropic upstream is missing but Responses is available,
-    // fall back to OpenAI Responses format conversion when enabled (new-api style).
     if path == "/v1/messages" {
+        // Claude Code uses /v1/messages. Prefer native providers (Anthropic/Kiro) by priority.
+        if let Some(selected) =
+            choose_provider_by_priority(config, &[PROVIDER_ANTHROPIC, PROVIDER_KIRO])
+        {
+            return Some(Ok(match selected {
+                PROVIDER_ANTHROPIC => base_plan(PROVIDER_ANTHROPIC),
+                PROVIDER_KIRO => DispatchPlan {
+                    provider: PROVIDER_KIRO,
+                    outbound_path: Some(RESPONSES_PATH),
+                    request_transform: FormatTransform::None,
+                    response_transform: FormatTransform::KiroToAnthropic,
+                },
+                _ => base_plan(PROVIDER_ANTHROPIC),
+            }));
+        }
+        if !config.enable_api_format_conversion {
+            return Some(Err(ERROR_ANTHROPIC_CONVERSION_DISABLED.to_string()));
+        }
+        // If native providers are missing, fall back to other formats when enabled (new-api style).
         let fallback = choose_provider_by_priority(
             config,
             &[PROVIDER_RESPONSES, PROVIDER_CHAT, PROVIDER_GEMINI],
@@ -172,9 +205,6 @@ fn resolve_anthropic_plan(
         let Some(fallback) = fallback else {
             return Some(Err(ERROR_NO_UPSTREAM.to_string()));
         };
-        if !config.enable_api_format_conversion {
-            return Some(Err(ERROR_ANTHROPIC_CONVERSION_DISABLED.to_string()));
-        }
         return Some(Ok(match fallback {
             PROVIDER_RESPONSES => DispatchPlan {
                 provider: PROVIDER_RESPONSES,
@@ -197,7 +227,9 @@ fn resolve_anthropic_plan(
             _ => base_plan(PROVIDER_RESPONSES),
         }));
     }
-
+    if config.provider_upstreams(PROVIDER_ANTHROPIC).is_some() {
+        return Some(Ok(base_plan(PROVIDER_ANTHROPIC)));
+    }
     Some(Err(ERROR_NO_UPSTREAM.to_string()))
 }
 
@@ -214,18 +246,16 @@ fn resolve_chat_plan(config: &ProxyConfig) -> Result<DispatchPlan, String> {
     if config.provider_upstreams(PROVIDER_CHAT).is_some() {
         return Ok(base_plan(PROVIDER_CHAT));
     }
-
-    // 包含 Gemini 作为可选的转换目标
-    let fallback = choose_provider_by_priority(
+    let selected = choose_provider_by_priority(
         config,
-        &[PROVIDER_RESPONSES, PROVIDER_ANTHROPIC, PROVIDER_GEMINI],
+        &[PROVIDER_RESPONSES, PROVIDER_ANTHROPIC, PROVIDER_GEMINI, PROVIDER_KIRO],
     )
     .ok_or_else(|| ERROR_NO_UPSTREAM.to_string())?;
     if !config.enable_api_format_conversion {
         return Err(ERROR_CHAT_CONVERSION_DISABLED.to_string());
     }
 
-    Ok(match fallback {
+    Ok(match selected {
         PROVIDER_RESPONSES => DispatchPlan {
             provider: PROVIDER_RESPONSES,
             outbound_path: Some(RESPONSES_PATH),
@@ -244,25 +274,40 @@ fn resolve_chat_plan(config: &ProxyConfig) -> Result<DispatchPlan, String> {
             request_transform: FormatTransform::ChatToGemini,
             response_transform: FormatTransform::GeminiToChat,
         },
+        PROVIDER_KIRO => DispatchPlan {
+            provider: PROVIDER_KIRO,
+            outbound_path: Some(RESPONSES_PATH),
+            request_transform: FormatTransform::None,
+            response_transform: FormatTransform::KiroToChat,
+        },
         _ => base_plan(PROVIDER_RESPONSES),
     })
 }
 
 fn resolve_responses_plan(config: &ProxyConfig) -> Result<DispatchPlan, String> {
-    if config.provider_upstreams(PROVIDER_RESPONSES).is_some() {
-        return Ok(base_plan(PROVIDER_RESPONSES));
+    if let Some(selected) =
+        choose_provider_by_priority(config, &[PROVIDER_RESPONSES, PROVIDER_KIRO])
+    {
+        if selected == PROVIDER_RESPONSES {
+            return Ok(base_plan(PROVIDER_RESPONSES));
+        }
+        return Ok(DispatchPlan {
+            provider: PROVIDER_KIRO,
+            outbound_path: Some(RESPONSES_PATH),
+            request_transform: FormatTransform::None,
+            response_transform: FormatTransform::KiroToResponses,
+        });
     }
-
-    let fallback = choose_provider_by_priority(
-        config,
-        &[PROVIDER_CHAT, PROVIDER_ANTHROPIC, PROVIDER_GEMINI],
-    )
-        .ok_or_else(|| ERROR_NO_UPSTREAM.to_string())?;
     if !config.enable_api_format_conversion {
         return Err(ERROR_RESPONSES_CONVERSION_DISABLED.to_string());
     }
 
-    Ok(match fallback {
+    let selected = choose_provider_by_priority(
+        config,
+        &[PROVIDER_CHAT, PROVIDER_ANTHROPIC, PROVIDER_GEMINI],
+    )
+    .ok_or_else(|| ERROR_NO_UPSTREAM.to_string())?;
+    Ok(match selected {
         PROVIDER_CHAT => DispatchPlan {
             provider: PROVIDER_CHAT,
             outbound_path: Some(CHAT_PATH),

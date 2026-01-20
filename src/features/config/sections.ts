@@ -1,11 +1,12 @@
 import type { LucideIcon } from "lucide-react";
 import {
   LayoutDashboard,
-  ScrollText,
+  ShieldCheck,
   Server,
-  Settings,
   Shuffle,
   SlidersHorizontal,
+  ScrollText,
+  Settings,
 } from "lucide-react";
 
 import { m } from "@/paraglide/messages.js";
@@ -15,6 +16,7 @@ export type ConfigSectionId =
   | "logs"
   | "core"
   | "upstreams"
+  | "providers"
   | "agents"
   | "settings";
 
@@ -37,18 +39,11 @@ export const CONFIG_SECTIONS: readonly ConfigSection[] = [
     icon: LayoutDashboard,
   },
   {
-    id: "logs",
-    route: "/config/logs",
-    label: () => m.config_section_logs_label(),
-    description: () => m.config_section_logs_desc(),
-    icon: ScrollText,
-  },
-  {
-    id: "core",
-    route: "/config/core",
-    label: () => m.config_section_core_label(),
-    description: () => m.config_section_core_desc(),
-    icon: SlidersHorizontal,
+    id: "providers",
+    route: "/config/providers",
+    label: () => m.config_section_providers_label(),
+    description: () => m.config_section_providers_desc(),
+    icon: ShieldCheck,
   },
   {
     id: "upstreams",
@@ -63,6 +58,20 @@ export const CONFIG_SECTIONS: readonly ConfigSection[] = [
     label: () => m.config_section_agents_label(),
     description: () => m.config_section_agents_desc(),
     icon: Shuffle,
+  },
+  {
+    id: "core",
+    route: "/config/core",
+    label: () => m.config_section_core_label(),
+    description: () => m.config_section_core_desc(),
+    icon: SlidersHorizontal,
+  },
+  {
+    id: "logs",
+    route: "/config/logs",
+    label: () => m.config_section_logs_label(),
+    description: () => m.config_section_logs_desc(),
+    icon: ScrollText,
   },
   {
     id: "settings",

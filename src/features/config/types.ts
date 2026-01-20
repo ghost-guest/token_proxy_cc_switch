@@ -15,6 +15,8 @@ export const TRAY_TOKEN_RATE_FORMATS = [
 
 export type TrayTokenRateFormat = (typeof TRAY_TOKEN_RATE_FORMATS)[number]["value"];
 
+export type KiroPreferredEndpoint = "ide" | "cli";
+
 export type LogLevel = "silent" | "error" | "warn" | "info" | "debug" | "trace";
 
 export type TrayTokenRateConfig = {
@@ -27,6 +29,8 @@ export type UpstreamConfig = {
   provider: string;
   base_url: string;
   api_key: string | null;
+  kiro_account_id?: string | null;
+  preferred_endpoint?: KiroPreferredEndpoint | null;
   proxy_url: string | null;
   priority: number | null;
   enabled: boolean;
@@ -41,6 +45,7 @@ export type ProxyConfigFileBase = {
   port: number;
   local_api_key: string | null;
   app_proxy_url: string | null;
+  kiro_preferred_endpoint?: KiroPreferredEndpoint | null;
   log_level?: LogLevel;
   tray_token_rate: TrayTokenRateConfig;
   enable_api_format_conversion: boolean;
@@ -70,6 +75,8 @@ export type UpstreamForm = {
   provider: string;
   baseUrl: string;
   apiKey: string;
+  kiroAccountId: string;
+  preferredEndpoint: "" | KiroPreferredEndpoint;
   proxyUrl: string;
   priority: string;
   enabled: boolean;
@@ -97,6 +104,7 @@ export type ConfigForm = {
   port: string;
   localApiKey: string;
   appProxyUrl: string;
+  kiroPreferredEndpoint: "" | KiroPreferredEndpoint;
   logLevel: LogLevel;
   trayTokenRate: TrayTokenRateConfig;
   enableApiFormatConversion: boolean;

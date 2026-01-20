@@ -42,6 +42,9 @@ pub(crate) enum FormatTransform {
     GeminiToChat,
     ResponsesToGemini,
     GeminiToResponses,
+    KiroToResponses,
+    KiroToChat,
+    KiroToAnthropic,
 }
 
 pub(crate) fn inbound_format(path: &str) -> Option<ApiFormat> {
@@ -84,6 +87,9 @@ pub(crate) async fn transform_request_body(
         FormatTransform::GeminiToChat => gemini_compat::gemini_request_to_chat(body, model_hint),
         FormatTransform::ResponsesToGemini => responses_request_to_gemini(body),
         FormatTransform::GeminiToResponses => gemini_request_to_responses(body, model_hint),
+        FormatTransform::KiroToResponses
+        | FormatTransform::KiroToChat
+        | FormatTransform::KiroToAnthropic => Ok(body.clone()),
     }
 }
 
@@ -114,6 +120,9 @@ pub(crate) fn transform_response_body(
         FormatTransform::GeminiToChat => gemini_compat::gemini_response_to_chat(bytes, model_hint),
         FormatTransform::ResponsesToGemini => responses_response_to_gemini(bytes, model_hint),
         FormatTransform::GeminiToResponses => gemini_response_to_responses(bytes, model_hint),
+        FormatTransform::KiroToResponses
+        | FormatTransform::KiroToChat
+        | FormatTransform::KiroToAnthropic => Err("Kiro response conversion is handled upstream.".to_string()),
     }
 }
 
@@ -407,12 +416,21 @@ fn responses_response_to_chat(bytes: &Bytes, model_hint: Option<&str>) -> Result
     let finish_reason =
         compat_reason::chat_finish_reason_from_response_object(object, !extracted.tool_calls.is_empty());
 
+    let reasoning_text = extracted.reasoning_text.clone();
     let mut message = json!({
         "role": "assistant",
         "content": compat_content::chat_message_content_from_responses_parts(
             &extracted.content_parts,
         )
     });
+    if let Some(message) = message.as_object_mut() {
+        if !reasoning_text.trim().is_empty() {
+            message.insert(
+                "reasoning_content".to_string(),
+                Value::String(reasoning_text),
+            );
+        }
+    }
     if !extracted.tool_calls.is_empty() {
         if let Some(message) = message.as_object_mut() {
             message.insert("tool_calls".to_string(), Value::Array(extracted.tool_calls));

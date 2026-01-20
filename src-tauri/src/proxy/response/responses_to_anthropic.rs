@@ -30,6 +30,7 @@ where
 
 enum ActiveBlock {
     Text { index: usize },
+    Thinking { index: usize },
     ToolUse { item_id: String },
 }
 
@@ -39,6 +40,7 @@ struct ToolUseState {
     name: String,
     sent_start: bool,
     sent_stop: bool,
+    sent_input: bool,
 }
 
 struct ResponsesToAnthropicState<S> {
@@ -60,6 +62,7 @@ struct ResponsesToAnthropicState<S> {
     tool_uses: HashMap<String, ToolUseState>,
     saw_tool_use: bool,
     stop_reason_override: Option<&'static str>,
+    saw_reasoning_delta: bool,
 }
 
 impl<S, E> ResponsesToAnthropicState<S>
@@ -97,6 +100,7 @@ where
             tool_uses: HashMap::new(),
             saw_tool_use: false,
             stop_reason_override: None,
+            saw_reasoning_delta: false,
         }
     }
 
@@ -168,6 +172,10 @@ where
             self.handle_output_text_delta(&value, token_texts);
             return;
         }
+        if event_type.ends_with("reasoning_text.delta") {
+            self.handle_reasoning_text_delta(&value, token_texts);
+            return;
+        }
         if event_type.ends_with("output_item.added") {
             self.handle_output_item_added(&value);
             return;
@@ -207,6 +215,24 @@ where
                 "type": "content_block_delta",
                 "index": index,
                 "delta": { "type": "text_delta", "text": delta }
+            }),
+        ));
+    }
+
+    fn handle_reasoning_text_delta(&mut self, value: &Value, token_texts: &mut Vec<String>) {
+        let Some(delta) = value.get("delta").and_then(Value::as_str) else {
+            return;
+        };
+        self.saw_reasoning_delta = true;
+        token_texts.push(delta.to_string());
+        self.ensure_message_start();
+        let index = self.ensure_thinking_block();
+        self.out.push_back(super::anthropic_event_sse(
+            "content_block_delta",
+            json!({
+                "type": "content_block_delta",
+                "index": index,
+                "delta": { "type": "thinking_delta", "thinking": delta }
             }),
         ));
     }
@@ -264,8 +290,10 @@ where
         let Some(item_id) = value.get("item_id").and_then(Value::as_str) else {
             return;
         };
+        let arguments = value.get("arguments").and_then(Value::as_str).unwrap_or("");
         self.ensure_message_start();
         self.ensure_tool_use_state(item_id);
+        self.emit_tool_use_arguments(item_id, arguments);
         self.stop_tool_use_block(item_id);
     }
 
@@ -308,25 +336,42 @@ where
         let Some(output) = response.get("output").and_then(Value::as_array) else {
             return;
         };
+        let mut reasoning_snapshot = String::new();
         for item in output {
             let Some(item) = item.as_object() else {
                 continue;
             };
-            if item.get("type").and_then(Value::as_str) != Some("function_call") {
-                continue;
-            }
-            if let Some(item_id) = item.get("id").and_then(Value::as_str) {
-                let call_id = item.get("call_id").and_then(Value::as_str).unwrap_or("");
-                let name = item.get("name").and_then(Value::as_str).unwrap_or("");
-                let tool_use_id = if !call_id.is_empty() {
-                    call_id.to_string()
-                } else {
-                    item_id.to_string()
-                };
-                self.ensure_tool_use_block(item_id, &tool_use_id, name);
-                self.stop_tool_use_block(item_id);
+            match item.get("type").and_then(Value::as_str) {
+                Some("function_call") => {
+                    if let Some(item_id) = item.get("id").and_then(Value::as_str) {
+                        let call_id = item.get("call_id").and_then(Value::as_str).unwrap_or("");
+                        let name = item.get("name").and_then(Value::as_str).unwrap_or("");
+                        let arguments = item.get("arguments").and_then(Value::as_str).unwrap_or("");
+                        let tool_use_id = if !call_id.is_empty() {
+                            call_id.to_string()
+                        } else {
+                            item_id.to_string()
+                        };
+                        self.ensure_tool_use_block(item_id, &tool_use_id, name);
+                        self.emit_tool_use_arguments(item_id, arguments);
+                        self.stop_tool_use_block(item_id);
+                    }
+                }
+                Some("message") => {
+                    if item.get("role").and_then(Value::as_str) != Some("assistant") {
+                        continue;
+                    }
+                    let Some(content) = item.get("content").and_then(Value::as_array) else {
+                        continue;
+                    };
+                    if reasoning_snapshot.is_empty() {
+                        reasoning_snapshot = extract_reasoning_text(content);
+                    }
+                }
+                _ => {}
             }
         }
+        self.emit_reasoning_snapshot(&reasoning_snapshot);
     }
 
     fn ensure_message_start(&mut self) {
@@ -372,6 +417,44 @@ where
         index
     }
 
+    fn ensure_thinking_block(&mut self) -> usize {
+        if let Some(ActiveBlock::Thinking { index }) = self.active_block {
+            return index;
+        }
+
+        self.stop_active_block();
+        let index = self.next_block_index;
+        self.next_block_index += 1;
+        self.active_block = Some(ActiveBlock::Thinking { index });
+        self.out.push_back(super::anthropic_event_sse(
+            "content_block_start",
+            json!({
+                "type": "content_block_start",
+                "index": index,
+                "content_block": { "type": "thinking", "thinking": "" }
+            }),
+        ));
+        index
+    }
+
+    fn emit_reasoning_snapshot(&mut self, text: &str) {
+        if self.saw_reasoning_delta || text.trim().is_empty() {
+            return;
+        }
+        self.saw_reasoning_delta = true;
+        self.ensure_message_start();
+        let index = self.ensure_thinking_block();
+        self.out.push_back(super::anthropic_event_sse(
+            "content_block_delta",
+            json!({
+                "type": "content_block_delta",
+                "index": index,
+                "delta": { "type": "thinking_delta", "thinking": text }
+            }),
+        ));
+        self.stop_active_block();
+    }
+
     fn ensure_tool_use_block(&mut self, item_id: &str, tool_use_id: &str, name: &str) {
         if !self.tool_uses.contains_key(item_id) {
             let index = self.next_block_index;
@@ -382,6 +465,7 @@ where
                 name: name.to_string(),
                 sent_start: false,
                 sent_stop: false,
+                sent_input: false,
             });
         }
 
@@ -409,6 +493,7 @@ where
                 name: String::new(),
                 sent_start: false,
                 sent_stop: false,
+                sent_input: false,
             }
         })
     }
@@ -449,6 +534,34 @@ where
                 }
             }),
         ));
+    }
+
+    fn emit_tool_use_arguments(&mut self, item_id: &str, arguments: &str) {
+        if arguments.trim().is_empty() {
+            return;
+        }
+        let state = self.ensure_tool_use_state(item_id);
+        if state.sent_input {
+            return;
+        }
+        if !state.sent_start {
+            self.start_tool_use_block(item_id);
+        }
+        self.set_active_tool_use(item_id);
+        let Some(index) = self.tool_uses.get(item_id).map(|state| state.index) else {
+            return;
+        };
+        self.out.push_back(super::anthropic_event_sse(
+            "content_block_delta",
+            json!({
+                "type": "content_block_delta",
+                "index": index,
+                "delta": { "type": "input_json_delta", "partial_json": arguments }
+            }),
+        ));
+        if let Some(state) = self.tool_uses.get_mut(item_id) {
+            state.sent_input = true;
+        }
     }
 
     fn set_active_tool_use(&mut self, item_id: &str) {
@@ -492,6 +605,12 @@ where
         };
         match active {
             ActiveBlock::Text { index } => {
+                self.out.push_back(super::anthropic_event_sse(
+                    "content_block_stop",
+                    json!({ "type": "content_block_stop", "index": index }),
+                ));
+            }
+            ActiveBlock::Thinking { index } => {
                 self.out.push_back(super::anthropic_event_sse(
                     "content_block_stop",
                     json!({ "type": "content_block_stop", "index": index }),
@@ -554,4 +673,20 @@ where
         self.log.clone().write_detached(entry);
         self.logged = true;
     }
+}
+
+fn extract_reasoning_text(parts: &[Value]) -> String {
+    let mut reasoning = String::new();
+    for part in parts {
+        let Some(part) = part.as_object() else {
+            continue;
+        };
+        if part.get("type").and_then(Value::as_str) != Some("reasoning_text") {
+            continue;
+        }
+        if let Some(text) = part.get("text").and_then(Value::as_str) {
+            reasoning.push_str(text);
+        }
+    }
+    reasoning
 }

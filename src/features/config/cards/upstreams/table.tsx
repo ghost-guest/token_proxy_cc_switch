@@ -17,6 +17,7 @@ import {
   toStatusLabel,
 } from "@/features/config/cards/upstreams/constants";
 import type { UpstreamColumnDefinition, UpstreamColumnId } from "@/features/config/cards/upstreams/types";
+import type { KiroAccountSummary } from "@/features/kiro/types";
 import { UPSTREAM_STRATEGIES, type UpstreamForm, type UpstreamStrategy } from "@/features/config/types";
 import { m } from "@/paraglide/messages.js";
 
@@ -133,49 +134,79 @@ function UpstreamsTableHeader({ columns }: UpstreamsTableHeaderProps) {
   );
 }
 
-function renderUpstreamCell(columnId: UpstreamColumnId, upstream: UpstreamForm, showApiKeys: boolean) {
+type KiroAccountMap = Map<string, KiroAccountSummary>;
+
+function renderTextCell(value: string, placeholder: string) {
+  return value.trim() ? (
+    <span className="truncate text-foreground">{value}</span>
+  ) : (
+    <span className="truncate text-muted-foreground">{placeholder}</span>
+  );
+}
+
+function renderPriorityCell(value: string) {
+  return value.trim() ? (
+    <span className="text-foreground">{value}</span>
+  ) : (
+    <span className="text-muted-foreground">0</span>
+  );
+}
+
+function renderAccountCell(upstream: UpstreamForm, kiroAccounts: KiroAccountMap) {
+  if (upstream.provider.trim() !== "kiro") {
+    return <span className="truncate text-muted-foreground">—</span>;
+  }
+  const accountId = upstream.kiroAccountId.trim();
+  if (!accountId) {
+    return <span className="truncate text-muted-foreground">{m.kiro_account_unset()}</span>;
+  }
+  const account = kiroAccounts.get(accountId);
+  if (!account) {
+    return <span className="truncate text-muted-foreground">{m.kiro_account_missing()}</span>;
+  }
+  return <span className="truncate text-foreground">{account.account_id}</span>;
+}
+
+function renderApiKeyCell(upstream: UpstreamForm, showApiKeys: boolean) {
+  const value = showApiKeys ? upstream.apiKey : toMaskedApiKey(upstream.apiKey);
+  return value.trim() ? (
+    <span className="truncate text-foreground">{value}</span>
+  ) : (
+    <span className="truncate text-muted-foreground">{m.common_optional()}</span>
+  );
+}
+
+function renderProxyUrlCell(upstream: UpstreamForm, showApiKeys: boolean) {
+  const rawValue = upstream.proxyUrl;
+  const value = showApiKeys ? rawValue : toMaskedProxyUrl(rawValue);
+  return value.trim() ? (
+    <span className="truncate text-foreground">{value}</span>
+  ) : (
+    <span className="truncate text-muted-foreground">{m.upstreams_proxy_direct()}</span>
+  );
+}
+
+function renderUpstreamCell(
+  columnId: UpstreamColumnId,
+  upstream: UpstreamForm,
+  showApiKeys: boolean,
+  kiroAccounts: KiroAccountMap,
+) {
   switch (columnId) {
     case "id":
-      return upstream.id.trim() ? (
-        <span className="truncate text-foreground">{upstream.id}</span>
-      ) : (
-        <span className="truncate text-muted-foreground">openai-default</span>
-      );
+      return renderTextCell(upstream.id, "openai-default");
     case "provider":
-      return upstream.provider.trim() ? (
-        <span className="truncate text-foreground">{upstream.provider}</span>
-      ) : (
-        <span className="truncate text-muted-foreground">openai</span>
-      );
+      return renderTextCell(upstream.provider, "openai");
+    case "account":
+      return renderAccountCell(upstream, kiroAccounts);
     case "baseUrl":
-      return upstream.baseUrl.trim() ? (
-        <span className="truncate text-foreground">{upstream.baseUrl}</span>
-      ) : (
-        <span className="truncate text-muted-foreground">https://api.openai.com</span>
-      );
-    case "apiKey": {
-      const value = showApiKeys ? upstream.apiKey : toMaskedApiKey(upstream.apiKey);
-      return value.trim() ? (
-        <span className="truncate text-foreground">{value}</span>
-      ) : (
-        <span className="truncate text-muted-foreground">{m.common_optional()}</span>
-      );
-    }
-    case "proxyUrl": {
-      const rawValue = upstream.proxyUrl;
-      const value = showApiKeys ? rawValue : toMaskedProxyUrl(rawValue);
-      return value.trim() ? (
-        <span className="truncate text-foreground">{value}</span>
-      ) : (
-        <span className="truncate text-muted-foreground">{m.upstreams_proxy_direct()}</span>
-      );
-    }
+      return renderTextCell(upstream.baseUrl, "https://api.openai.com");
+    case "apiKey":
+      return renderApiKeyCell(upstream, showApiKeys);
+    case "proxyUrl":
+      return renderProxyUrlCell(upstream, showApiKeys);
     case "priority":
-      return upstream.priority.trim() ? (
-        <span className="text-foreground">{upstream.priority}</span>
-      ) : (
-        <span className="text-muted-foreground">0</span>
-      );
+      return renderPriorityCell(upstream.priority);
     case "status":
       return (
         <Badge variant={upstream.enabled ? "default" : "secondary"}>
@@ -258,6 +289,7 @@ type UpstreamsTableRowProps = {
   index: number;
   columns: readonly UpstreamColumnDefinition[];
   showApiKeys: boolean;
+  kiroAccounts: KiroAccountMap;
   disableDelete: boolean;
   onEdit: (index: number) => void;
   onCopy: (index: number) => void;
@@ -270,6 +302,7 @@ function UpstreamsTableRow({
   index,
   columns,
   showApiKeys,
+  kiroAccounts,
   disableDelete,
   onEdit,
   onCopy,
@@ -285,7 +318,7 @@ function UpstreamsTableRow({
           className={["px-3 py-2 align-top", column.cellClassName].filter(Boolean).join(" ")}
         >
           <div className="flex h-8 items-center">
-            {renderUpstreamCell(column.id, upstream, showApiKeys)}
+            {renderUpstreamCell(column.id, upstream, showApiKeys, kiroAccounts)}
           </div>
         </td>
       ))}
@@ -306,6 +339,7 @@ export type UpstreamsTableProps = {
   upstreams: UpstreamForm[];
   columns: readonly UpstreamColumnDefinition[];
   showApiKeys: boolean;
+  kiroAccounts: KiroAccountMap;
   disableDelete: boolean;
   onEdit: (index: number) => void;
   onCopy: (index: number) => void;
@@ -317,6 +351,7 @@ export function UpstreamsTable({
   upstreams,
   columns,
   showApiKeys,
+  kiroAccounts,
   disableDelete,
   onEdit,
   onCopy,
@@ -335,6 +370,7 @@ export function UpstreamsTable({
               index={index}
               columns={columns}
               showApiKeys={showApiKeys}
+              kiroAccounts={kiroAccounts}
               disableDelete={disableDelete}
               onEdit={onEdit}
               onCopy={onCopy}

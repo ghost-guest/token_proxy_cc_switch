@@ -54,6 +54,13 @@ impl Default for TrayTokenRateFormat {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum KiroPreferredEndpoint {
+    Ide,
+    Cli,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct TrayTokenRateConfig {
     #[serde(default = "default_tray_token_rate_enabled")]
     pub(crate) enabled: bool,
@@ -76,6 +83,10 @@ pub(crate) struct UpstreamConfig {
     pub(crate) provider: String,
     pub(crate) base_url: String,
     pub(crate) api_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) kiro_account_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) preferred_endpoint: Option<KiroPreferredEndpoint>,
     pub(crate) proxy_url: Option<String>,
     pub(crate) priority: Option<i32>,
     #[serde(default = "default_enabled")]
@@ -98,6 +109,8 @@ pub(crate) struct ProxyConfigFile {
     pub(crate) port: u16,
     pub(crate) local_api_key: Option<String>,
     pub(crate) app_proxy_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) kiro_preferred_endpoint: Option<KiroPreferredEndpoint>,
     #[serde(default = "default_log_level", deserialize_with = "deserialize_log_level")]
     pub(crate) log_level: LogLevel,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -105,7 +118,7 @@ pub(crate) struct ProxyConfigFile {
     #[serde(default)]
     pub(crate) tray_token_rate: TrayTokenRateConfig,
     /// 是否允许在不同 API 格式之间自动互转（例如 OpenAI Chat↔Responses、Claude Messages↔OpenAI Responses）。
-    /// 默认为关闭；关闭时将严格按 provider 路由，不做格式转换。
+    /// 默认为开启；关闭时将严格按 provider 路由，不做格式转换。
     #[serde(default)]
     pub(crate) enable_api_format_conversion: bool,
     #[serde(default)]
@@ -121,10 +134,11 @@ impl Default for ProxyConfigFile {
             port: default_proxy_port(),
             local_api_key: None,
             app_proxy_url: None,
+            kiro_preferred_endpoint: None,
             log_level: LogLevel::default(),
             max_request_body_bytes: None,
             tray_token_rate: TrayTokenRateConfig::default(),
-            enable_api_format_conversion: false,
+            enable_api_format_conversion: true,
             upstream_strategy: UpstreamStrategy::PriorityFillFirst,
             upstreams: vec![
                 UpstreamConfig {
@@ -132,6 +146,8 @@ impl Default for ProxyConfigFile {
                     provider: "openai".to_string(),
                     base_url: "https://api.openai.com".to_string(),
                     api_key: None,
+                    kiro_account_id: None,
+                    preferred_endpoint: None,
                     proxy_url: None,
                     priority: Some(0),
                     enabled: true,
@@ -143,6 +159,8 @@ impl Default for ProxyConfigFile {
                     provider: "openai-response".to_string(),
                     base_url: "https://api.openai.com".to_string(),
                     api_key: None,
+                    kiro_account_id: None,
+                    preferred_endpoint: None,
                     proxy_url: None,
                     priority: Some(0),
                     enabled: true,
@@ -154,6 +172,8 @@ impl Default for ProxyConfigFile {
                     provider: "anthropic".to_string(),
                     base_url: "https://api.anthropic.com".to_string(),
                     api_key: None,
+                    kiro_account_id: None,
+                    preferred_endpoint: None,
                     proxy_url: None,
                     priority: Some(0),
                     enabled: true,
@@ -165,6 +185,8 @@ impl Default for ProxyConfigFile {
                     provider: "gemini".to_string(),
                     base_url: "https://generativelanguage.googleapis.com".to_string(),
                     api_key: None,
+                    kiro_account_id: None,
+                    preferred_endpoint: None,
                     proxy_url: None,
                     priority: Some(0),
                     enabled: true,
@@ -186,6 +208,7 @@ pub(crate) struct ProxyConfig {
     pub(crate) enable_api_format_conversion: bool,
     pub(crate) upstream_strategy: UpstreamStrategy,
     pub(crate) upstreams: HashMap<String, ProviderUpstreams>,
+    pub(crate) kiro_preferred_endpoint: Option<KiroPreferredEndpoint>,
 }
 
 fn deserialize_log_level<'de, D>(deserializer: D) -> Result<LogLevel, D::Error>
@@ -224,6 +247,8 @@ pub(crate) struct UpstreamRuntime {
     pub(crate) id: String,
     pub(crate) base_url: String,
     pub(crate) api_key: Option<String>,
+    pub(crate) kiro_account_id: Option<String>,
+    pub(crate) kiro_preferred_endpoint: Option<KiroPreferredEndpoint>,
     pub(crate) proxy_url: Option<String>,
     pub(crate) priority: i32,
     pub(crate) model_mappings: Option<ModelMappingRules>,
@@ -352,6 +377,8 @@ mod tests {
             id: "test".to_string(),
             base_url: "https://api.example.com/openai/v1".to_string(),
             api_key: None,
+            kiro_account_id: None,
+            kiro_preferred_endpoint: None,
             proxy_url: None,
             priority: 0,
             model_mappings: None,
@@ -367,6 +394,8 @@ mod tests {
             id: "test".to_string(),
             base_url: "https://api.example.com/openai/v1".to_string(),
             api_key: None,
+            kiro_account_id: None,
+            kiro_preferred_endpoint: None,
             proxy_url: None,
             priority: 0,
             model_mappings: None,
@@ -382,6 +411,8 @@ mod tests {
             id: "test".to_string(),
             base_url: "https://api.openai.com".to_string(),
             api_key: None,
+            kiro_account_id: None,
+            kiro_preferred_endpoint: None,
             proxy_url: None,
             priority: 0,
             model_mappings: None,
@@ -401,6 +432,8 @@ mod tests {
             id: "test".to_string(),
             base_url: "https://api.example.com/openai/v1/".to_string(),
             api_key: None,
+            kiro_account_id: None,
+            kiro_preferred_endpoint: None,
             proxy_url: None,
             priority: 0,
             model_mappings: None,

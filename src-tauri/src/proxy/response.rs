@@ -84,6 +84,7 @@ pub(super) async fn build_proxy_response(
             request_tracker,
             response_transform,
             model_override,
+            meta.estimated_input_tokens,
         )
         .await
     } else {
@@ -96,6 +97,7 @@ pub(super) async fn build_proxy_response(
             request_tracker,
             response_transform,
             model_override,
+            meta.estimated_input_tokens,
         )
         .await
     }
@@ -153,6 +155,7 @@ pub(super) async fn build_proxy_response_buffered(
         request_tracker,
         response_transform,
         model_override,
+        meta.estimated_input_tokens,
     )
     .await
 }
@@ -166,6 +169,7 @@ async fn build_stream_response(
     request_tracker: RequestTokenTracker,
     response_transform: FormatTransform,
     model_override: Option<&str>,
+    estimated_input_tokens: Option<u64>,
 ) -> Response {
     let mut context = context;
     let mut upstream = upstream_stream::with_idle_timeout(upstream_res.bytes_stream());
@@ -427,6 +431,45 @@ async fn build_stream_response(
             chat_to_responses::stream_chat_to_responses(chat_stream, context, log, request_tracker)
                 .boxed()
         }
+        FormatTransform::KiroToResponses => {
+            kiro_to_responses::stream_kiro_to_responses(
+                upstream,
+                context,
+                log,
+                request_tracker,
+                estimated_input_tokens,
+            )
+            .boxed()
+        }
+        FormatTransform::KiroToChat => {
+            let intermediate_log = Arc::new(LogWriter::new(None));
+            let intermediate_tracker = RequestTokenTracker::disabled();
+            let responses_stream = kiro_to_responses::stream_kiro_to_responses(
+                upstream,
+                context.clone(),
+                intermediate_log,
+                intermediate_tracker,
+                estimated_input_tokens,
+            )
+            .boxed();
+            responses_to_chat::stream_responses_to_chat(
+                responses_stream,
+                context,
+                log,
+                request_tracker,
+            )
+            .boxed()
+        }
+        FormatTransform::KiroToAnthropic => {
+            kiro_to_anthropic::stream_kiro_to_anthropic(
+                upstream,
+                context,
+                log,
+                request_tracker,
+                estimated_input_tokens,
+            )
+            .boxed()
+        }
     };
     let body = Body::from_stream(stream);
     http::build_response(status, headers, body)
@@ -441,6 +484,7 @@ async fn build_buffered_response(
     request_tracker: RequestTokenTracker,
     response_transform: FormatTransform,
     model_override: Option<&str>,
+    estimated_input_tokens: Option<u64>,
 ) -> Response {
     let mut context = context;
     let bytes = match upstream_read::read_upstream_bytes_with_ttfb(upstream_res, &mut context).await {
@@ -478,22 +522,105 @@ async fn build_buffered_response(
             return http::error_response(status, message);
         }
     };
-    let usage = extract_usage_from_response(&bytes);
+    let mut usage = extract_usage_from_response(&bytes);
     let response_error = if status.is_client_error() || status.is_server_error() {
         Some(response_error_text(&bytes))
     } else {
         None
     };
-    let output = if response_transform != FormatTransform::None && status.is_success() {
-        match transform_response_body(response_transform, &bytes, context.model.as_deref()) {
-            Ok(converted) => converted,
-            Err(message) => {
-                let error_message = format!("Failed to transform upstream response: {message}");
-                context.status = StatusCode::BAD_GATEWAY.as_u16();
-                let entry = build_log_entry(&context, usage, Some(error_message.clone()));
-                log.clone().write_detached(entry);
-                return http::error_response(StatusCode::BAD_GATEWAY, error_message);
+    let output = if status.is_success() {
+        match response_transform {
+            FormatTransform::KiroToResponses => {
+                let converted = match kiro_to_responses::convert_kiro_response(
+                    &bytes,
+                    context.model.as_deref(),
+                    estimated_input_tokens,
+                ) {
+                    Ok(converted) => converted,
+                    Err(message) => {
+                        let error_message = format!("Failed to transform upstream response: {message}");
+                        context.status = StatusCode::BAD_GATEWAY.as_u16();
+                        let entry = build_log_entry(&context, usage, Some(error_message.clone()));
+                        log.clone().write_detached(entry);
+                        return http::error_response(StatusCode::BAD_GATEWAY, error_message);
+                    }
+                };
+                usage = resolve_kiro_usage(
+                    &bytes,
+                    &converted,
+                    context.model.as_deref(),
+                    estimated_input_tokens,
+                );
+                converted
             }
+            FormatTransform::KiroToChat => {
+                let responses = match kiro_to_responses::convert_kiro_response(
+                    &bytes,
+                    context.model.as_deref(),
+                    estimated_input_tokens,
+                ) {
+                    Ok(converted) => converted,
+                    Err(message) => {
+                        let error_message = format!("Failed to transform upstream response: {message}");
+                        context.status = StatusCode::BAD_GATEWAY.as_u16();
+                        let entry = build_log_entry(&context, usage, Some(error_message.clone()));
+                        log.clone().write_detached(entry);
+                        return http::error_response(StatusCode::BAD_GATEWAY, error_message);
+                    }
+                };
+                usage = resolve_kiro_usage(
+                    &bytes,
+                    &responses,
+                    context.model.as_deref(),
+                    estimated_input_tokens,
+                );
+                match transform_response_body(FormatTransform::ResponsesToChat, &responses, context.model.as_deref()) {
+                    Ok(converted) => converted,
+                    Err(message) => {
+                        let error_message = format!("Failed to transform upstream response: {message}");
+                        context.status = StatusCode::BAD_GATEWAY.as_u16();
+                        let entry = build_log_entry(&context, usage, Some(error_message.clone()));
+                        log.clone().write_detached(entry);
+                        return http::error_response(StatusCode::BAD_GATEWAY, error_message);
+                    }
+                }
+            }
+            FormatTransform::KiroToAnthropic => {
+                let converted = match kiro_to_anthropic::convert_kiro_response(
+                    &bytes,
+                    context.model.as_deref(),
+                    estimated_input_tokens,
+                ) {
+                    Ok(converted) => converted,
+                    Err(message) => {
+                        let error_message = format!("Failed to transform upstream response: {message}");
+                        context.status = StatusCode::BAD_GATEWAY.as_u16();
+                        let entry = build_log_entry(&context, usage, Some(error_message.clone()));
+                        log.clone().write_detached(entry);
+                        return http::error_response(StatusCode::BAD_GATEWAY, error_message);
+                    }
+                };
+                usage = resolve_kiro_usage(
+                    &bytes,
+                    &converted,
+                    context.model.as_deref(),
+                    estimated_input_tokens,
+                );
+                converted
+            }
+            _ if response_transform != FormatTransform::None => {
+                match transform_response_body(response_transform, &bytes, context.model.as_deref()) {
+                    Ok(converted) => converted,
+                    Err(message) => {
+                        let error_message = format!("Failed to transform upstream response: {message}");
+                        context.status = StatusCode::BAD_GATEWAY.as_u16();
+                        let entry = build_log_entry(&context, usage, Some(error_message.clone()));
+                        log.clone().write_detached(entry);
+                        return http::error_response(StatusCode::BAD_GATEWAY, error_message);
+                    }
+                }
+            }
+            _ => bytes,
         }
     } else {
         bytes
@@ -503,9 +630,32 @@ async fn build_buffered_response(
     log.clone().write_detached(entry);
 
     let output = maybe_override_response_model(output, model_override);
-    token_count::apply_output_tokens_from_response(&request_tracker, &context.provider, &output).await;
+    let provider_for_tokens = match response_transform {
+        FormatTransform::KiroToResponses => "openai-response",
+        FormatTransform::KiroToChat => "openai",
+        FormatTransform::KiroToAnthropic => "anthropic",
+        _ => context.provider.as_str(),
+    };
+    token_count::apply_output_tokens_from_response(&request_tracker, provider_for_tokens, &output).await;
 
     http::build_response(status, headers, Body::from(output))
+}
+
+fn resolve_kiro_usage(
+    raw_bytes: &Bytes,
+    responses_bytes: &Bytes,
+    model: Option<&str>,
+    estimated_input_tokens: Option<u64>,
+) -> UsageSnapshot {
+    let usage = extract_usage_from_response(responses_bytes);
+    if usage.usage.is_none() && usage.cached_tokens.is_none() && usage.usage_json.is_none() {
+        if let Some(fallback) =
+            kiro_to_responses::extract_kiro_usage_snapshot(raw_bytes, model, estimated_input_tokens)
+        {
+            return fallback;
+        }
+    }
+    usage
 }
 
 // 只对 data-only SSE 的提供商做行级重写，避免破坏带 event: 行的流。
@@ -562,6 +712,10 @@ mod chat_to_responses;
 mod anthropic_to_responses;
 mod responses_to_chat;
 mod responses_to_anthropic;
+mod kiro_to_anthropic;
+mod kiro_to_responses;
+mod kiro_to_responses_helpers;
+mod kiro_to_responses_stream;
 mod streaming;
 mod token_count;
 mod upstream_read;

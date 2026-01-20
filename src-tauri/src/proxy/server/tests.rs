@@ -3,7 +3,7 @@ use super::*;
 use std::collections::HashMap;
 
 use crate::logging::LogLevel;
-use crate::proxy::config::{ProviderUpstreams, ProxyConfig, UpstreamStrategy};
+use crate::proxy::config::{ProviderUpstreams, ProxyConfig, UpstreamGroup, UpstreamRuntime, UpstreamStrategy};
 
 fn config_with_providers(
     providers: &[&'static str],
@@ -22,6 +22,52 @@ fn config_with_providers(
         enable_api_format_conversion,
         upstream_strategy: UpstreamStrategy::PriorityRoundRobin,
         upstreams,
+        kiro_preferred_endpoint: None,
+    }
+}
+
+fn config_with_upstreams(
+    upstreams: &[(&'static str, i32, &'static str)],
+    enable_api_format_conversion: bool,
+) -> ProxyConfig {
+    let mut provider_map: HashMap<String, ProviderUpstreams> = HashMap::new();
+    for (provider, priority, id) in upstreams {
+        let runtime = UpstreamRuntime {
+            id: (*id).to_string(),
+            base_url: "https://example.com".to_string(),
+            api_key: None,
+            kiro_account_id: None,
+            kiro_preferred_endpoint: None,
+            proxy_url: None,
+            priority: *priority,
+            model_mappings: None,
+            header_overrides: None,
+        };
+        let entry = provider_map
+            .entry((*provider).to_string())
+            .or_insert_with(|| ProviderUpstreams { groups: Vec::new() });
+        if let Some(group) = entry.groups.iter_mut().find(|group| group.priority == *priority) {
+            group.items.push(runtime);
+        } else {
+            entry.groups.push(UpstreamGroup {
+                priority: *priority,
+                items: vec![runtime],
+            });
+        }
+    }
+    for upstreams in provider_map.values_mut() {
+        upstreams.groups.sort_by(|left, right| right.priority.cmp(&left.priority));
+    }
+    ProxyConfig {
+        host: "127.0.0.1".to_string(),
+        port: 9208,
+        local_api_key: None,
+        log_level: LogLevel::Silent,
+        max_request_body_bytes: 20 * 1024 * 1024,
+        enable_api_format_conversion,
+        upstream_strategy: UpstreamStrategy::PriorityRoundRobin,
+        upstreams: provider_map,
+        kiro_preferred_endpoint: None,
     }
 }
 
@@ -58,6 +104,29 @@ fn responses_fallback_requires_format_conversion_enabled() {
 }
 
 #[test]
+fn responses_same_protocol_preferred_over_priority() {
+    let config = config_with_upstreams(
+        &[(PROVIDER_RESPONSES, 0, "resp"), (PROVIDER_CHAT, 10, "chat")],
+        false,
+    );
+    let plan = resolve_dispatch_plan(&config, RESPONSES_PATH).expect("should dispatch");
+    assert_eq!(plan.provider, PROVIDER_RESPONSES);
+    assert_eq!(plan.request_transform, FormatTransform::None);
+    assert_eq!(plan.response_transform, FormatTransform::None);
+}
+
+#[test]
+fn responses_same_protocol_tiebreaks_by_id() {
+    let config = config_with_upstreams(
+        &[(PROVIDER_RESPONSES, 5, "b-resp"), (PROVIDER_KIRO, 5, "a-kiro")],
+        false,
+    );
+    let plan = resolve_dispatch_plan(&config, RESPONSES_PATH).expect("should dispatch");
+    assert_eq!(plan.provider, PROVIDER_KIRO);
+    assert_eq!(plan.response_transform, FormatTransform::KiroToResponses);
+}
+
+#[test]
 fn anthropic_messages_fallback_requires_format_conversion_enabled() {
     let config = config_with_providers(&[PROVIDER_RESPONSES], false);
     let error = resolve_dispatch_plan(&config, "/v1/messages")
@@ -71,6 +140,55 @@ fn anthropic_messages_fallback_requires_format_conversion_enabled() {
     assert_eq!(plan.outbound_path, Some(RESPONSES_PATH));
     assert_eq!(plan.request_transform, FormatTransform::AnthropicToResponses);
     assert_eq!(plan.response_transform, FormatTransform::ResponsesToAnthropic);
+}
+
+#[test]
+fn anthropic_messages_fallbacks_to_kiro_without_conversion() {
+    let config = config_with_providers(&[PROVIDER_KIRO], false);
+    let plan = resolve_dispatch_plan(&config, "/v1/messages").expect("should fallback");
+    assert_eq!(plan.provider, PROVIDER_KIRO);
+    assert_eq!(plan.outbound_path, Some(RESPONSES_PATH));
+    assert_eq!(plan.request_transform, FormatTransform::None);
+    assert_eq!(plan.response_transform, FormatTransform::KiroToAnthropic);
+}
+
+#[test]
+fn anthropic_messages_prefers_kiro_without_conversion() {
+    let config = config_with_upstreams(
+        &[(PROVIDER_RESPONSES, 10, "resp"), (PROVIDER_KIRO, 0, "kiro")],
+        false,
+    );
+    let plan = resolve_dispatch_plan(&config, "/v1/messages").expect("should fallback");
+    assert_eq!(plan.provider, PROVIDER_KIRO);
+    assert_eq!(plan.outbound_path, Some(RESPONSES_PATH));
+    assert_eq!(plan.request_transform, FormatTransform::None);
+    assert_eq!(plan.response_transform, FormatTransform::KiroToAnthropic);
+}
+
+#[test]
+fn anthropic_messages_prefers_anthropic_when_priority_higher() {
+    let config = config_with_upstreams(
+        &[(PROVIDER_ANTHROPIC, 5, "anthro"), (PROVIDER_KIRO, 1, "kiro")],
+        false,
+    );
+    let plan = resolve_dispatch_plan(&config, "/v1/messages").expect("should dispatch");
+    assert_eq!(plan.provider, PROVIDER_ANTHROPIC);
+    assert_eq!(plan.outbound_path, None);
+    assert_eq!(plan.request_transform, FormatTransform::None);
+    assert_eq!(plan.response_transform, FormatTransform::None);
+}
+
+#[test]
+fn anthropic_messages_tiebreaks_by_id_between_anthropic_and_kiro() {
+    let config = config_with_upstreams(
+        &[(PROVIDER_ANTHROPIC, 5, "b-anthro"), (PROVIDER_KIRO, 5, "a-kiro")],
+        false,
+    );
+    let plan = resolve_dispatch_plan(&config, "/v1/messages").expect("should dispatch");
+    assert_eq!(plan.provider, PROVIDER_KIRO);
+    assert_eq!(plan.outbound_path, Some(RESPONSES_PATH));
+    assert_eq!(plan.request_transform, FormatTransform::None);
+    assert_eq!(plan.response_transform, FormatTransform::KiroToAnthropic);
 }
 
 #[test]
