@@ -9,7 +9,7 @@ use axum::http::header::{HeaderName, HeaderValue};
 
 const APP_PROXY_URL_PLACEHOLDER: &str = "$app_proxy_url";
 const DEFAULT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
-const DEFAULT_ANTIGRAVITY_BASE_URL: &str = "https://cloudcode-pa.googleapis.com";
+const DEFAULT_ANTIGRAVITY_BASE_URL: &str = "https://daily-cloudcode-pa.googleapis.com";
 
 #[derive(Clone)]
 pub(super) struct NormalizedUpstream {
@@ -47,16 +47,18 @@ pub(super) fn build_provider_upstreams(
     Ok(output)
 }
 
-fn group_upstreams_by_priority(mut upstreams: Vec<UpstreamRuntime>) -> Vec<UpstreamGroup> {
-    upstreams.sort_by(|left, right| right.priority.cmp(&left.priority));
-    let mut groups: Vec<UpstreamGroup> = Vec::new();
+fn group_upstreams_by_priority(upstreams: Vec<UpstreamRuntime>) -> Vec<UpstreamGroup> {
+    // Keep same-priority order stable by preserving config insertion order.
+    let mut grouped: HashMap<i32, Vec<UpstreamRuntime>> = HashMap::new();
     for upstream in upstreams {
-        match groups.last_mut() {
-            Some(group) if group.priority == upstream.priority => group.items.push(upstream),
-            _ => groups.push(UpstreamGroup {
-                priority: upstream.priority,
-                items: vec![upstream],
-            }),
+        grouped.entry(upstream.priority).or_default().push(upstream);
+    }
+    let mut priorities: Vec<i32> = grouped.keys().copied().collect();
+    priorities.sort_by(|left, right| right.cmp(left));
+    let mut groups = Vec::with_capacity(priorities.len());
+    for priority in priorities {
+        if let Some(items) = grouped.remove(&priority) {
+            groups.push(UpstreamGroup { priority, items });
         }
     }
     groups
@@ -291,8 +293,15 @@ fn native_inbound_formats_for_provider(provider: &str) -> InboundApiFormatMask {
         "kiro" => mask.insert(InboundApiFormat::AnthropicMessages),
         // Codex 的“native”更接近 OpenAI Responses；Chat 通常需要显式允许转换。
         "codex" => mask.insert(InboundApiFormat::OpenaiResponses),
-        // Antigravity 原生处理 Gemini 路径；其它格式需显式允许转换后再走 Gemini 兼容层。
-        "antigravity" => mask.insert(InboundApiFormat::Gemini),
+        // Align with CLIProxyAPIPlus:
+        // - Antigravity natively supports Gemini routes.
+        // - It also supports Claude Code /v1/messages (Anthropic format) out-of-the-box via
+        //   Anthropic->Gemini request conversion + Antigravity wrapping. Do not gate this behind
+        //   convert_from_map, otherwise users must "enable conversion" manually.
+        "antigravity" => {
+            mask.insert(InboundApiFormat::Gemini);
+            mask.insert(InboundApiFormat::AnthropicMessages);
+        }
         _ => {}
     }
     mask

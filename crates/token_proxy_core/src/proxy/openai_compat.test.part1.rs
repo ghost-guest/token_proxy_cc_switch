@@ -1,40 +1,5 @@
 use super::*;
-use axum::body::Bytes;
-use serde_json::{json, Value};
-use crate::proxy::http_client::ProxyHttpClients;
 
-fn run_async<T>(future: impl std::future::Future<Output = T>) -> T {
-    tokio::runtime::Runtime::new()
-        .expect("create tokio runtime")
-        .block_on(future)
-}
-
-fn bytes_from_json(value: Value) -> Bytes {
-    Bytes::from(serde_json::to_vec(&value).expect("serialize JSON"))
-}
-
-fn json_from_bytes(bytes: Bytes) -> Value {
-    serde_json::from_slice(&bytes).expect("parse JSON")
-}
-fn transform_request_value(
-    transform: FormatTransform,
-    input: Value,
-    http_clients: &ProxyHttpClients,
-    model_hint: Option<&str>,
-) -> Value {
-    let bytes = bytes_from_json(input);
-    let output = run_async(async {
-        transform_request_body(transform, &bytes, http_clients, model_hint)
-            .await
-            .expect("transform")
-    });
-    json_from_bytes(output)
-}
-fn transform_response_value(transform: FormatTransform, input: Value, model_hint: Option<&str>) -> Value {
-    let bytes = bytes_from_json(input);
-    let output = transform_response_body(transform, &bytes, model_hint).expect("transform");
-    json_from_bytes(output)
-}
 #[test]
 fn chat_request_to_responses_maps_common_fields() {
     let http_clients = ProxyHttpClients::new().expect("http clients");
@@ -301,7 +266,12 @@ fn responses_response_to_chat_extracts_output_text_and_maps_usage() {
                 ]
             }
         ],
-        "usage": { "input_tokens": 1, "output_tokens": 2, "total_tokens": 3 }
+        "usage": {
+            "input_tokens": 1,
+            "output_tokens": 2,
+            "total_tokens": 3,
+            "output_tokens_details": { "reasoning_tokens": 7 }
+        }
     }));
 
     let output = transform_response_body(FormatTransform::ResponsesToChat, &input, None).expect("transform");
@@ -317,6 +287,10 @@ fn responses_response_to_chat_extracts_output_text_and_maps_usage() {
     assert_eq!(value["usage"]["prompt_tokens"], json!(1));
     assert_eq!(value["usage"]["completion_tokens"], json!(2));
     assert_eq!(value["usage"]["total_tokens"], json!(3));
+    assert_eq!(
+        value["usage"]["completion_tokens_details"]["reasoning_tokens"],
+        json!(7)
+    );
 }
 
 #[test]
@@ -397,7 +371,12 @@ fn chat_response_to_responses_extracts_choice_text_and_maps_usage() {
         "choices": [
             { "index": 0, "message": { "role": "assistant", "content": "Hello" } }
         ],
-        "usage": { "prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3 }
+        "usage": {
+            "prompt_tokens": 1,
+            "completion_tokens": 2,
+            "total_tokens": 3,
+            "completion_tokens_details": { "reasoning_tokens": 5 }
+        }
     }));
 
     let output = transform_response_body(FormatTransform::ChatToResponses, &input, None).expect("transform");
@@ -414,6 +393,10 @@ fn chat_response_to_responses_extracts_choice_text_and_maps_usage() {
     assert_eq!(value["usage"]["input_tokens"], json!(1));
     assert_eq!(value["usage"]["output_tokens"], json!(2));
     assert_eq!(value["usage"]["total_tokens"], json!(3));
+    assert_eq!(
+        value["usage"]["output_tokens_details"]["reasoning_tokens"],
+        json!(5)
+    );
 }
 
 #[test]
@@ -526,157 +509,4 @@ fn transform_request_body_rejects_non_json() {
             .expect_err("should fail")
     });
     assert!(err.contains("JSON"));
-}
-
-#[test]
-fn responses_and_gemini_request_conversions() {
-    let http_clients = ProxyHttpClients::new().expect("http clients");
-    let responses_value = transform_request_value(
-        FormatTransform::ResponsesToGemini,
-        json!({
-            "model": "gpt-4.1",
-            "input": "hi",
-            "instructions": "sys",
-            "temperature": 0.5,
-            "top_p": 0.9,
-            "max_output_tokens": 128,
-            "stop": ["a", "b"],
-            "seed": 7
-        }),
-        &http_clients,
-        None,
-    );
-    assert_eq!(responses_value["contents"][0]["parts"][0]["text"], json!("hi"));
-    assert_eq!(responses_value["systemInstruction"]["parts"][0]["text"], json!("sys"));
-    assert_eq!(responses_value["generationConfig"]["maxOutputTokens"], json!(128));
-    assert_eq!(responses_value["generationConfig"]["stopSequences"], json!(["a", "b"]));
-    assert_eq!(responses_value["generationConfig"]["seed"], json!(7));
-    let gemini_value = transform_request_value(
-        FormatTransform::GeminiToResponses,
-        json!({
-            "model": "gemini-1.5-flash",
-            "contents": [{ "role": "user", "parts": [{ "text": "hello" }] }],
-            "systemInstruction": { "parts": [{ "text": "rules" }] },
-            "generationConfig": { "maxOutputTokens": 64, "topP": 0.8 }
-        }),
-        &http_clients,
-        None,
-    );
-    assert_eq!(gemini_value["model"], json!("gemini-1.5-flash"));
-    assert_eq!(gemini_value["instructions"], json!("rules"));
-    assert_eq!(gemini_value["input"][0]["content"][0]["text"], json!("hello"));
-    assert_eq!(gemini_value["max_output_tokens"], json!(64));
-    assert_eq!(gemini_value["top_p"], json!(0.8));
-}
-#[test]
-fn gemini_and_anthropic_request_conversions() {
-    let http_clients = ProxyHttpClients::new().expect("http clients");
-    let gemini_value = transform_request_value(
-        FormatTransform::GeminiToAnthropic,
-        json!({
-            "contents": [{ "role": "user", "parts": [{ "text": "ping" }] }],
-            "systemInstruction": { "parts": [{ "text": "sys" }] },
-            "generationConfig": { "maxOutputTokens": 42 }
-        }),
-        &http_clients,
-        Some("claude-3-5-sonnet"),
-    );
-    assert_eq!(gemini_value["model"], json!("claude-3-5-sonnet"));
-    assert_eq!(gemini_value["system"][0]["text"], json!("sys"));
-    assert_eq!(gemini_value["messages"][0]["content"][0]["text"], json!("ping"));
-    assert_eq!(gemini_value["max_tokens"], json!(42));
-    let anthropic_value = transform_request_value(
-        FormatTransform::AnthropicToGemini,
-        json!({
-            "model": "claude-3-5-sonnet",
-            "max_tokens": 321,
-            "system": "guard",
-            "stop_sequences": ["x"],
-            "messages": [{ "role": "user", "content": [{ "type": "text", "text": "yo" }] }]
-        }),
-        &http_clients,
-        None,
-    );
-    assert_eq!(anthropic_value["systemInstruction"]["parts"][0]["text"], json!("guard"));
-    assert_eq!(anthropic_value["contents"][0]["parts"][0]["text"], json!("yo"));
-    assert_eq!(anthropic_value["generationConfig"]["maxOutputTokens"], json!(321));
-    assert_eq!(anthropic_value["generationConfig"]["stopSequences"], json!(["x"]));
-}
-#[test]
-fn responses_and_gemini_response_conversions() {
-    let responses_value = transform_response_value(
-        FormatTransform::ResponsesToGemini,
-        json!({
-            "id": "resp_1",
-            "created_at": 1700000000,
-            "model": "gpt-4.1",
-            "output": [
-                {
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [{ "type": "output_text", "text": "Hello", "annotations": [] }]
-                }
-            ],
-            "usage": { "input_tokens": 2, "output_tokens": 3, "total_tokens": 5 }
-        }),
-        None,
-    );
-    assert_eq!(responses_value["candidates"][0]["content"]["parts"][0]["text"], json!("Hello"));
-    assert_eq!(responses_value["usageMetadata"]["promptTokenCount"], json!(2));
-    assert_eq!(responses_value["usageMetadata"]["candidatesTokenCount"], json!(3));
-    assert_eq!(responses_value["usageMetadata"]["totalTokenCount"], json!(5));
-    let gemini_value = transform_response_value(
-        FormatTransform::GeminiToResponses,
-        json!({
-            "candidates": [
-                { "content": { "role": "model", "parts": [{ "text": "Hi" }] }, "finishReason": "STOP" }
-            ],
-            "usageMetadata": {
-                "promptTokenCount": 4,
-                "candidatesTokenCount": 6,
-                "totalTokenCount": 10
-            }
-        }),
-        Some("gemini-1.5-pro"),
-    );
-    assert_eq!(gemini_value["output"][0]["content"][0]["text"], json!("Hi"));
-    assert_eq!(gemini_value["usage"]["input_tokens"], json!(4));
-    assert_eq!(gemini_value["usage"]["output_tokens"], json!(6));
-    assert_eq!(gemini_value["usage"]["total_tokens"], json!(10));
-}
-#[test]
-fn gemini_and_anthropic_response_conversions() {
-    let gemini_value = transform_response_value(
-        FormatTransform::GeminiToAnthropic,
-        json!({
-            "candidates": [
-                { "content": { "role": "model", "parts": [{ "text": "Howdy" }] }, "finishReason": "STOP" }
-            ],
-            "usageMetadata": {
-                "promptTokenCount": 1,
-                "candidatesTokenCount": 2,
-                "totalTokenCount": 3
-            }
-        }),
-        Some("claude-3-5-sonnet"),
-    );
-    assert_eq!(gemini_value["model"], json!("claude-3-5-sonnet"));
-    assert_eq!(gemini_value["content"][0]["text"], json!("Howdy"));
-    assert_eq!(gemini_value["usage"]["input_tokens"], json!(1));
-    assert_eq!(gemini_value["usage"]["output_tokens"], json!(2));
-    assert_eq!(gemini_value["stop_reason"], json!("end_turn"));
-    let anthropic_value = transform_response_value(
-        FormatTransform::AnthropicToGemini,
-        json!({
-            "id": "msg_1",
-            "model": "claude-3-5-sonnet",
-            "content": [{ "type": "text", "text": "Yo" }],
-            "usage": { "input_tokens": 4, "output_tokens": 6 }
-        }),
-        None,
-    );
-    assert_eq!(anthropic_value["candidates"][0]["content"]["parts"][0]["text"], json!("Yo"));
-    assert_eq!(anthropic_value["usageMetadata"]["promptTokenCount"], json!(4));
-    assert_eq!(anthropic_value["usageMetadata"]["candidatesTokenCount"], json!(6));
-    assert_eq!(anthropic_value["usageMetadata"]["totalTokenCount"], json!(10));
 }

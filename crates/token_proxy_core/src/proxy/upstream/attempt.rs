@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use axum::http::{
-    header::{ACCEPT, ACCEPT_ENCODING, CONTENT_TYPE, USER_AGENT},
+    header::{ACCEPT, ACCEPT_ENCODING, AUTHORIZATION, CONTENT_TYPE, USER_AGENT},
     HeaderMap, HeaderValue, Method, StatusCode,
 };
 use reqwest::{Client, Proxy};
@@ -16,8 +16,11 @@ use crate::proxy::http;
 use crate::proxy::openai_compat::FormatTransform;
 use crate::proxy::request_detail::RequestDetailSnapshot;
 use crate::proxy::request_body::ReplayableBody;
+use crate::proxy::server_helpers::log_debug_headers_body;
 use crate::proxy::{config::UpstreamRuntime, ProxyState, RequestMeta};
 use crate::proxy::{UPSTREAM_NO_DATA_TIMEOUT};
+
+const DEBUG_UPSTREAM_LOG_LIMIT_BYTES: usize = usize::MAX;
 
 pub(super) async fn attempt_upstream(
     state: &ProxyState,
@@ -317,6 +320,13 @@ async fn send_antigravity_with_fallback(
 ) -> Result<reqwest::Response, AttemptOutcome> {
     let urls = antigravity_fallback_urls(&upstream.base_url, upstream_path_with_query);
     let request_headers = antigravity_request_headers(request_headers, meta, antigravity);
+    log_debug_headers_body(
+        "upstream.request",
+        Some(&request_headers),
+        Some(body),
+        DEBUG_UPSTREAM_LOG_LIMIT_BYTES,
+    )
+    .await;
     let mut last_transport: Option<reqwest::Error> = None;
     let mut saw_timeout = false;
     for (idx, url) in urls.iter().enumerate() {
@@ -344,7 +354,12 @@ async fn send_antigravity_with_fallback(
         .await
         {
             Ok(response) => {
-                if super::utils::is_retryable_status(response.status()) && idx + 1 < urls.len() {
+                let status = response.status();
+                // Align with CLIProxyAPIPlus: Antigravity endpoints may return 404 on one base URL
+                // while succeeding on another; try fallbacks on 404 as well.
+                if (super::utils::is_retryable_status(status) || status == StatusCode::NOT_FOUND)
+                    && idx + 1 < urls.len()
+                {
                     let _ = response.bytes().await;
                     continue;
                 }
@@ -449,6 +464,13 @@ async fn send_upstream_request_once(
     request_detail: Option<&RequestDetailSnapshot>,
     start_time: Instant,
 ) -> Result<reqwest::Response, AttemptOutcome> {
+    log_debug_headers_body(
+        "upstream.request",
+        Some(request_headers),
+        Some(body),
+        DEBUG_UPSTREAM_LOG_LIMIT_BYTES,
+    )
+    .await;
     let client = state
         .http_clients
         .client_for_proxy_url(upstream.proxy_url.as_deref())
@@ -564,6 +586,13 @@ async fn send_codex_attempt(
     start_time: Instant,
     attempt: &CodexSendAttempt,
 ) -> Result<reqwest::Response, CodexAttemptError> {
+    log_debug_headers_body(
+        "upstream.request",
+        Some(request_headers),
+        Some(body),
+        DEBUG_UPSTREAM_LOG_LIMIT_BYTES,
+    )
+    .await;
     let client = build_codex_client(attempt.proxy_url.as_deref(), attempt.http1_only).map_err(|message| {
         CodexAttemptError::Fatal(AttemptOutcome::Fatal(http::error_response(StatusCode::BAD_GATEWAY, message)))
     })?;
@@ -738,7 +767,13 @@ fn antigravity_request_headers(
     meta: &RequestMeta,
     antigravity: Option<&super::AntigravityRequestInfo>,
 ) -> HeaderMap {
-    let mut headers = base.clone();
+    // Align with CLIProxyAPIPlus: only forward essential headers to Antigravity.
+    // Do NOT pass through inbound headers (e.g. anthropic-beta/x-stainless), as they can
+    // trigger upstream validation errors.
+    let mut headers = HeaderMap::new();
+    if let Some(value) = base.get(AUTHORIZATION).cloned() {
+        headers.insert(AUTHORIZATION, value);
+    }
     let user_agent = antigravity
         .map(|info| info.user_agent.clone())
         .unwrap_or_else(antigravity_endpoints::default_user_agent);
