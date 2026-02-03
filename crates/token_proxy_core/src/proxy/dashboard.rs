@@ -22,6 +22,7 @@ pub struct DashboardSummary {
     pub output_tokens: u64,
     pub cached_tokens: u64,
     pub avg_latency_ms: u64,
+    pub median_latency_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -145,6 +146,9 @@ WHERE (?1 IS NULL OR ts_ms >= ?1) AND (?2 IS NULL OR ts_ms <= ?2);
         latency_sum_ms / total_requests
     };
 
+    // 中位数查询：使用 LIMIT/OFFSET 取中间值
+    let median_latency_ms = query_median_latency(pool, from_ts_ms, to_ts_ms).await?;
+
     Ok(DashboardSummary {
         total_requests,
         success_requests,
@@ -154,7 +158,55 @@ WHERE (?1 IS NULL OR ts_ms >= ?1) AND (?2 IS NULL OR ts_ms <= ?2);
         output_tokens,
         cached_tokens,
         avg_latency_ms,
+        median_latency_ms,
     })
+}
+
+/// 计算中位数延迟（SQLite 无内置 MEDIAN，使用单条子查询避免并发写入时的 count/offset 错位）
+async fn query_median_latency(
+    pool: &sqlx::SqlitePool,
+    from_ts_ms: Option<i64>,
+    to_ts_ms: Option<i64>,
+) -> Result<u64, String> {
+    // 单条 SQL 完成中位数计算：
+    // - 使用 CTE 保证 count 和数据在同一快照内
+    // - 奇数个取中间值，偶数个取中间两个值的整数除法平均
+    let row = sqlx::query(
+        r#"
+WITH filtered AS (
+    SELECT latency_ms
+    FROM request_logs
+    WHERE (?1 IS NULL OR ts_ms >= ?1) AND (?2 IS NULL OR ts_ms <= ?2)
+),
+cnt AS (
+    SELECT COUNT(*) AS n FROM filtered
+),
+ordered AS (
+    SELECT latency_ms, ROW_NUMBER() OVER (ORDER BY latency_ms) AS rn
+    FROM filtered
+)
+SELECT COALESCE(
+    CASE
+        WHEN (SELECT n FROM cnt) = 0 THEN 0
+        WHEN (SELECT n FROM cnt) % 2 = 1 THEN
+            (SELECT latency_ms FROM ordered WHERE rn = ((SELECT n FROM cnt) + 1) / 2)
+        ELSE
+            (SELECT (o1.latency_ms + o2.latency_ms) / 2
+             FROM ordered o1, ordered o2
+             WHERE o1.rn = (SELECT n FROM cnt) / 2 AND o2.rn = (SELECT n FROM cnt) / 2 + 1)
+    END,
+    0
+) AS median_latency;
+"#,
+    )
+    .bind(from_ts_ms)
+    .bind(to_ts_ms)
+    .fetch_one(pool)
+    .await
+    .map_err(|err| format!("Failed to query median latency: {err}"))?;
+
+    let median: i64 = row.try_get("median_latency").unwrap_or(0);
+    Ok(i64_to_u64(median))
 }
 
 async fn query_providers(
