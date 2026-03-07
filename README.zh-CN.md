@@ -49,6 +49,9 @@ curl -X POST \
 - 现在是 Cargo workspace；Tauri 仍在 `src-tauri/`。
 - CLI crate：`crates/token_proxy_cli`（二进制名 `token-proxy`）。
 - 默认配置路径：`./config.jsonc`（用 `--config` 覆盖）。
+- GitHub Releases 也会按 target 发布 CLI 压缩包：
+  - Unix：`token-proxy_cli_<version>_<target>.tar.gz`
+  - Windows：`token-proxy_cli_<version>_<target>.zip`
 
 ```bash
 # 启动代理
@@ -159,6 +162,7 @@ pnpm exec tsc --noEmit
 ## 一键写 CLI 配置
 - Claude Code：写入 `~/.claude/settings.json` 的 `env`（`ANTHROPIC_BASE_URL`，若有本地密钥则写 `ANTHROPIC_AUTH_TOKEN`）
 - Codex：写入 `~/.codex/config.toml` 的 `model_provider="token_proxy"` 与 `[model_providers.token_proxy].base_url` → `http://127.0.0.1:<port>/v1`；写入 `~/.codex/auth.json` 的 `OPENAI_API_KEY`
+- OpenCode：写入 `~/.config/opencode/opencode.json[c]` 的 `provider.token_proxy` 与 `options.baseURL` → `http://127.0.0.1:<port>/v1`；写入 `~/.local/share/opencode/auth.json` 的 `token_proxy.key`。需要在 Upstreams 中至少配置一个**精确模型映射**（不能带 `*`）
 - 写入前会生成 `.token_proxy.bak` 备份；写完重启对应 CLI 生效
 
 ## FAQ
