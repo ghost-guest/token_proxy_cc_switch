@@ -84,6 +84,7 @@ export type ProxyConfigFileBase = {
   antigravity_process_names?: string[];
   antigravity_user_agent?: string | null;
   log_level?: LogLevel;
+  retryable_failure_cooldown_secs?: number;
   tray_token_rate: TrayTokenRateConfig;
   upstream_strategy: UpstreamStrategy;
   upstreams: UpstreamConfig[];
@@ -102,6 +103,11 @@ export type ProxyServiceStatus = {
   state: ProxyServiceState;
   addr: string | null;
   last_error: string | null;
+};
+
+export type SaveProxyConfigResult = {
+  status: ProxyServiceStatus;
+  apply_error: string | null;
 };
 
 export type ProxyServiceRequestState = "idle" | "working" | "error";
@@ -151,6 +157,7 @@ export type ConfigForm = {
   antigravityProcessNames: string;
   antigravityUserAgent: string;
   logLevel: LogLevel;
+  retryableFailureCooldownSecs: string;
   trayTokenRate: TrayTokenRateConfig;
   upstreamStrategy: UpstreamStrategy;
   upstreams: UpstreamForm[];

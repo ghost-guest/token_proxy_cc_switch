@@ -1,4 +1,4 @@
-import { AlertCircle, Loader2, RefreshCw } from "lucide-react";
+import { AlertCircle, RefreshCw } from "lucide-react";
 import { useMemo, type CSSProperties } from "react";
 
 import { AppSidebar } from "@/components/app-sidebar";
@@ -89,23 +89,19 @@ type AppViewProps = {
 type ConfigToolbarProps = {
   section: ConfigSection;
   status: AppViewProps["status"];
-  canSave: boolean;
   isDirty: boolean;
   onReload: () => void;
-  onSave: () => void;
 };
 
 function ConfigToolbar({
   section,
   status,
-  canSave,
   isDirty,
   onReload,
-  onSave,
 }: ConfigToolbarProps) {
   const isLoading = status === "loading";
   const isSaving = status === "saving";
-  const canReload = !isLoading && !isSaving;
+  const canReload = !isSaving && !isLoading;
 
   return (
     <div
@@ -162,32 +158,45 @@ function ConfigToolbar({
             <span className="sr-only">{m.common_refresh()}</span>
           </Button>
         )}
-        <Button type="button" onClick={onSave} disabled={!canSave}>
-          {isSaving ? (
-            <Loader2 className="animate-spin" aria-hidden="true" />
-          ) : (
-            m.common_save()
-          )}
-        </Button>
       </div>
     </div>
   );
 }
 
 type StatusAlertProps = {
+  status: AppViewProps["status"];
   statusMessage: string;
+  canSave: boolean;
+  isDirty: boolean;
+  onSave: () => void;
 };
 
-function StatusAlert({ statusMessage }: StatusAlertProps) {
-  if (!statusMessage) {
+function StatusAlert({
+  status,
+  statusMessage,
+  canSave,
+  isDirty,
+  onSave,
+}: StatusAlertProps) {
+  if (status !== "error" || !statusMessage) {
     return null;
   }
+
+  const canRetrySave = isDirty && canSave;
+
   return (
     <Alert variant="destructive" className="mb-4">
       <AlertCircle className="size-4" aria-hidden="true" />
-      <div>
-        <AlertTitle>{m.config_request_failed_title()}</AlertTitle>
-        <AlertDescription>{statusMessage}</AlertDescription>
+      <div className="flex flex-1 items-start justify-between gap-3">
+        <div>
+          <AlertTitle>{m.config_request_failed_title()}</AlertTitle>
+          <AlertDescription>{statusMessage}</AlertDescription>
+        </div>
+        {canRetrySave ? (
+          <Button type="button" variant="outline" size="sm" onClick={onSave}>
+            {m.config_retry_save()}
+          </Button>
+        ) : null}
       </div>
     </Alert>
   );
@@ -287,12 +296,16 @@ function ConfigSectionContent({
       <ConfigToolbar
         section={findSection(activeSectionId)}
         status={props.status}
-        canSave={props.canSave}
         isDirty={props.isDirty}
         onReload={props.onReload}
+      />
+      <StatusAlert
+        status={props.status}
+        statusMessage={props.statusMessage}
+        canSave={props.canSave}
+        isDirty={props.isDirty}
         onSave={props.onSave}
       />
-      <StatusAlert statusMessage={props.statusMessage} />
       <ConfigSectionBody
         {...props}
         activeSectionId={activeSectionId}

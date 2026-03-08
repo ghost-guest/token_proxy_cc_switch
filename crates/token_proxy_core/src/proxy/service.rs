@@ -44,6 +44,13 @@ pub struct ProxyServiceHandle {
     inner: Arc<ProxyService>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProxyConfigApplyBehavior {
+    SavedOnly,
+    Reload,
+    Restart,
+}
+
 impl ProxyServiceHandle {
     pub fn new() -> Self {
         Self {
@@ -70,6 +77,17 @@ impl ProxyServiceHandle {
     pub async fn reload(&self, ctx: &ProxyContext) -> Result<ProxyServiceStatus, String> {
         self.inner.reload(ctx).await
     }
+
+    pub async fn reload_behavior(
+        &self,
+        ctx: &ProxyContext,
+    ) -> Result<ProxyConfigApplyBehavior, String> {
+        self.inner.reload_behavior(ctx).await
+    }
+
+    pub async fn apply_saved_config(&self, ctx: &ProxyContext) -> ProxyConfigSaveResult {
+        self.inner.apply_saved_config(ctx).await
+    }
 }
 
 #[derive(Clone, Serialize, Debug)]
@@ -86,6 +104,12 @@ pub struct ProxyServiceStatus {
     pub last_error: Option<String>,
 }
 
+#[derive(Clone, Serialize)]
+pub struct ProxyConfigSaveResult {
+    pub status: ProxyServiceStatus,
+    pub apply_error: Option<String>,
+}
+
 impl ProxyServiceStatus {
     fn stopped(last_error: Option<String>) -> Self {
         Self {
@@ -100,6 +124,22 @@ impl ProxyServiceStatus {
             state: ProxyServiceState::Running,
             addr: Some(addr),
             last_error,
+        }
+    }
+}
+
+impl ProxyConfigSaveResult {
+    fn success(status: ProxyServiceStatus) -> Self {
+        Self {
+            status,
+            apply_error: None,
+        }
+    }
+
+    fn apply_error(status: ProxyServiceStatus, error: String) -> Self {
+        Self {
+            status,
+            apply_error: Some(error),
         }
     }
 }
@@ -148,6 +188,21 @@ impl ProxyService {
         inner.reload(ctx).await?;
         Ok(inner.status())
     }
+
+    async fn reload_behavior(
+        &self,
+        ctx: &ProxyContext,
+    ) -> Result<ProxyConfigApplyBehavior, String> {
+        let mut inner = self.inner.lock().await;
+        inner.refresh_if_finished().await;
+        inner.reload_behavior(ctx).await
+    }
+
+    async fn apply_saved_config(&self, ctx: &ProxyContext) -> ProxyConfigSaveResult {
+        let mut inner = self.inner.lock().await;
+        inner.refresh_if_finished().await;
+        inner.apply_saved_config(ctx).await
+    }
 }
 
 struct ProxyServiceInner {
@@ -189,6 +244,21 @@ impl ProxyServiceInner {
     }
 
     async fn start(&mut self, ctx: &ProxyContext) -> Result<(), String> {
+        let was_running = self.running.is_some();
+        let result = self.start_inner(ctx).await;
+        match &result {
+            Ok(()) if !was_running => {
+                self.last_error = None;
+            }
+            Err(error) => {
+                self.last_error = Some(error.clone());
+            }
+            Ok(()) => {}
+        }
+        result
+    }
+
+    async fn start_inner(&mut self, ctx: &ProxyContext) -> Result<(), String> {
         if self.running.is_some() {
             return Ok(());
         }
@@ -223,7 +293,6 @@ impl ProxyServiceInner {
             task: Some(task),
             shutdown_timeout: DEFAULT_SHUTDOWN_TIMEOUT,
         });
-        self.last_error = None;
         Ok(())
     }
 
@@ -241,6 +310,21 @@ impl ProxyServiceInner {
     }
 
     async fn reload(&mut self, ctx: &ProxyContext) -> Result<(), String> {
+        let was_running = self.running.is_some();
+        let result = self.reload_inner(ctx).await;
+        match &result {
+            Ok(()) if was_running => {
+                self.last_error = None;
+            }
+            Err(error) => {
+                self.last_error = Some(error.clone());
+            }
+            Ok(()) => {}
+        }
+        result
+    }
+
+    async fn reload_inner(&mut self, ctx: &ProxyContext) -> Result<(), String> {
         tracing::debug!("proxy reload start");
         let start = Instant::now();
         if self.running.is_none() {
@@ -248,35 +332,22 @@ impl ProxyServiceInner {
             return self.start(ctx).await;
         }
         let loaded_config = ProxyConfig::load(ctx.paths.as_ref()).await?;
+        let current_running_config = self.current_running_config().await;
         let addr = loaded_config.addr();
-        let current_addr = self
-            .running
+        let current_addr = current_running_config
             .as_ref()
-            .map(|running| running.addr.as_str())
+            .map(|(current_addr, _)| current_addr.as_str())
             .unwrap_or_default()
             .to_string();
 
         tracing::debug!(addr = %addr, current_addr = %current_addr, "proxy reload config loaded");
-        if addr != current_addr {
-            // host/port 变更无法热更新监听地址；退化为安全重启。
+        if classify_reload_behavior(current_running_config, &loaded_config)
+            == ProxyConfigApplyBehavior::Restart
+        {
             tracing::info!(
                 addr = %addr,
                 current_addr = %current_addr,
-                "proxy reload detected addr change, restarting"
-            );
-            return self.restart(ctx).await;
-        }
-        let current_max_request_body_bytes = if let Some(running) = self.running.as_ref() {
-            let guard = running.state_handle.read().await;
-            guard.config.max_request_body_bytes
-        } else {
-            loaded_config.max_request_body_bytes
-        };
-        if loaded_config.max_request_body_bytes != current_max_request_body_bytes {
-            tracing::info!(
-                new_max_request_body_bytes = loaded_config.max_request_body_bytes,
-                current_max_request_body_bytes = current_max_request_body_bytes,
-                "proxy reload detected body limit change, restarting"
+                "proxy reload detected restart-required config change"
             );
             return self.restart(ctx).await;
         }
@@ -296,6 +367,34 @@ impl ProxyServiceInner {
             "proxy reload applied"
         );
         Ok(())
+    }
+
+    async fn reload_behavior(
+        &mut self,
+        ctx: &ProxyContext,
+    ) -> Result<ProxyConfigApplyBehavior, String> {
+        let loaded_config = ProxyConfig::load(ctx.paths.as_ref()).await?;
+        let current_running_config = self.current_running_config().await;
+        Ok(classify_reload_behavior(current_running_config, &loaded_config))
+    }
+
+    async fn apply_saved_config(&mut self, ctx: &ProxyContext) -> ProxyConfigSaveResult {
+        // 保存后的自动应用必须把“是否仍在运行”的判断与真正的 reload/restart
+        // 放在同一把锁内完成，避免 save 与 stop/start 交错后把已停止的代理重新拉起。
+        if self.running.is_none() {
+            return ProxyConfigSaveResult::success(self.status());
+        }
+
+        match self.reload(ctx).await {
+            Ok(()) => ProxyConfigSaveResult::success(self.status()),
+            Err(error) => ProxyConfigSaveResult::apply_error(self.status(), error),
+        }
+    }
+
+    async fn current_running_config(&self) -> Option<(String, usize)> {
+        let running = self.running.as_ref()?;
+        let guard = running.state_handle.read().await;
+        Some((running.addr.clone(), guard.config.max_request_body_bytes))
     }
 
     async fn finish_task(&mut self, mut running: RunningProxy) {
@@ -365,11 +464,13 @@ async fn build_proxy_state(
     let codex_accounts = ctx.codex_accounts.clone();
     let antigravity_accounts = ctx.antigravity_accounts.clone();
     Ok(Arc::new(ProxyState {
+        upstream_selector: super::upstream_selector::UpstreamSelectorRuntime::new_with_cooldown(
+            config.retryable_failure_cooldown,
+        ),
         config,
         http_clients,
         log,
         cursors,
-        upstream_selector: super::upstream_selector::UpstreamSelectorRuntime::new(),
         request_detail,
         token_rate,
         kiro_accounts,
@@ -377,3 +478,22 @@ async fn build_proxy_state(
         antigravity_accounts,
     }))
 }
+
+fn classify_reload_behavior(
+    current_running_config: Option<(String, usize)>,
+    loaded_config: &ProxyConfig,
+) -> ProxyConfigApplyBehavior {
+    let Some((current_addr, current_max_request_body_bytes)) = current_running_config else {
+        return ProxyConfigApplyBehavior::SavedOnly;
+    };
+    if loaded_config.addr() != current_addr
+        || loaded_config.max_request_body_bytes != current_max_request_body_bytes
+    {
+        return ProxyConfigApplyBehavior::Restart;
+    }
+    ProxyConfigApplyBehavior::Reload
+}
+
+#[cfg(test)]
+#[path = "service.test.rs"]
+mod tests;

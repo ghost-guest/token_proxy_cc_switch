@@ -193,8 +193,8 @@ export function useConfigDerived(
   autoStartBaseline: boolean,
   autoStartStatus: AutoStartStatus
 ) {
-  const { locale } = useI18n();
-  const validation = useMemo(() => validate(form), [form, locale]);
+  useI18n();
+  const validation = useMemo(() => validate(form), [form]);
   const currentPayload = useMemo(
     () => (validation.valid ? mergeConfigExtras(toPayload(form), configExtras) : null),
     [configExtras, form, validation.valid]
@@ -236,6 +236,17 @@ export function useConfigDerived(
     return Array.from(providers);
   }, [form.upstreams]);
 
+  const autoSaveKey = useMemo(() => {
+    const segments: string[] = [];
+    if (configDirty && currentPayload) {
+      segments.push(`config:${stableStringify(currentPayload as JsonValue)}`);
+    }
+    if (autoStartDirty) {
+      segments.push(`autostart:${autoStartEnabled ? "enabled" : "disabled"}`);
+    }
+    return segments.join("|");
+  }, [autoStartDirty, autoStartEnabled, configDirty, currentPayload]);
+
   const canSave = status !== "saving" && validation.valid && isDirty;
 
   return {
@@ -243,9 +254,11 @@ export function useConfigDerived(
     currentPayload,
     configDirty,
     autoStartDirty,
+    autoSaveKey,
     isDirty,
     statusBadge,
     canSave,
+    canAutoSave: canSave,
     providerOptions,
   };
 }

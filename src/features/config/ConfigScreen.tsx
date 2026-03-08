@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 import { AppView } from "@/features/config/AppView";
 import {
@@ -23,6 +23,7 @@ type ProxyServiceState = ReturnType<typeof useProxyServiceState>;
 type ConfigListActions = ReturnType<typeof useConfigListActions>;
 type ConfigActions = ReturnType<typeof useConfigActions>;
 type ProxyServiceActions = ReturnType<typeof useProxyServiceActions>;
+const CONFIG_AUTO_SAVE_DELAY_MS = 800;
 
 type AppViewArgs = {
   activeSectionId: ConfigSectionId;
@@ -83,6 +84,8 @@ function buildAppViewProps({
 }
 
 export function ConfigScreen({ activeSectionId }: ConfigScreenProps) {
+  const lastObservedAutoSaveKeyRef = useRef("");
+  const lastAttemptedAutoSaveKeyRef = useRef("");
   const state = useConfigState();
   const derived = useConfigDerived(
     state.form,
@@ -121,11 +124,12 @@ export function ConfigScreen({ activeSectionId }: ConfigScreenProps) {
     setProxyServiceStatus: proxyService.setProxyServiceStatus,
     setProxyServiceMessage: proxyService.setProxyServiceMessage,
   });
-  const { loadConfig } = configActions;
+  const { loadConfig, saveConfig } = configActions;
   const listActions = useConfigListActions(state.setForm);
   const {
     actions: { setAppProxyUrl },
   } = useUpdater();
+  const appProxyUrl = state.lastConfig?.app_proxy_url ?? "";
 
   useEffect(() => {
     void loadConfig();
@@ -135,12 +139,35 @@ export function ConfigScreen({ activeSectionId }: ConfigScreenProps) {
     if (!state.lastConfig) {
       return;
     }
-    setAppProxyUrl(state.lastConfig.app_proxy_url ?? "");
-  }, [setAppProxyUrl, state.lastConfig?.app_proxy_url]);
+    setAppProxyUrl(appProxyUrl);
+  }, [appProxyUrl, setAppProxyUrl, state.lastConfig]);
 
   useEffect(() => {
     void refreshProxyStatus();
   }, [refreshProxyStatus]);
+
+  useEffect(() => {
+    if (derived.autoSaveKey === lastObservedAutoSaveKeyRef.current) {
+      return;
+    }
+    lastObservedAutoSaveKeyRef.current = derived.autoSaveKey;
+    lastAttemptedAutoSaveKeyRef.current = "";
+  }, [derived.autoSaveKey]);
+
+  useEffect(() => {
+    if (!derived.canAutoSave || !derived.autoSaveKey) {
+      return;
+    }
+    if (derived.autoSaveKey === lastAttemptedAutoSaveKeyRef.current) {
+      return;
+    }
+    const timerId = window.setTimeout(() => {
+      // 失败后不应对同一份草稿无限重试；只有用户继续编辑形成新草稿时，才重新进入自动保存。
+      lastAttemptedAutoSaveKeyRef.current = derived.autoSaveKey;
+      void saveConfig();
+    }, CONFIG_AUTO_SAVE_DELAY_MS);
+    return () => window.clearTimeout(timerId);
+  }, [derived.autoSaveKey, derived.canAutoSave, saveConfig]);
 
   const appViewProps = buildAppViewProps({
     activeSectionId,

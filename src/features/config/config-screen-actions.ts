@@ -10,6 +10,7 @@ import type {
   ConfigForm,
   ConfigResponse,
   ProxyConfigFile,
+  SaveProxyConfigResult,
   ProxyServiceStatus,
 } from "@/features/config/types";
 import { extractConfigExtras, toForm } from "@/features/config/form";
@@ -158,13 +159,13 @@ async function writeConfigIfDirty({
     return { saved: false, error: "" };
   }
   try {
-    const status = await invoke<ProxyServiceStatus>("write_proxy_config", {
+    const result = await invoke<SaveProxyConfigResult>("save_proxy_config", {
       config: currentPayload,
     });
-    setProxyServiceStatus(status);
+    setProxyServiceStatus(result.status);
     setLastConfig(currentPayload);
     setSavedAt(new Date().toLocaleString());
-    return { saved: true, error: "" };
+    return { saved: true, error: result.apply_error ?? "" };
   } catch (error) {
     return { saved: false, error: parseError(error) };
   }
@@ -245,8 +246,10 @@ async function saveConfigImpl({
 
   if (configResult.saved || autoStartResult.changed) {
     setStatus("saved");
+    setStatusMessage("");
   } else {
     setStatus("idle");
+    setStatusMessage("");
   }
 }
 
@@ -370,7 +373,7 @@ function useSaveConfigAction({
       }),
     [
       currentPayload,
-      validation.message,
+      validation,
       configDirty,
       autoStartEnabled,
       autoStartBaseline,
