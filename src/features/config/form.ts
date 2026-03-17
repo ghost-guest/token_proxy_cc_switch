@@ -17,6 +17,8 @@ const DEFAULT_TRAY_TOKEN_RATE: TrayTokenRateConfig = {
   format: "split",
 };
 
+const MIN_UPSTREAM_NO_DATA_TIMEOUT_SECS = 3;
+const DEFAULT_UPSTREAM_NO_DATA_TIMEOUT_SECS = 120;
 const INTEGER_PATTERN = /^-?\d+$/;
 const NON_NEGATIVE_INTEGER_PATTERN = /^\d+$/;
 let modelMappingCounter = 0;
@@ -48,6 +50,20 @@ function parseListInput(value: string) {
     .filter((item) => item.length > 0);
 }
 
+function parseApiKeysInput(value: string) {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const item of value.split(/[,\n]/)) {
+    const trimmed = item.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    output.push(trimmed);
+  }
+  return output;
+}
+
 const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "host",
   "port",
@@ -60,6 +76,7 @@ const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "antigravity_user_agent",
   "log_level",
   "retryable_failure_cooldown_secs",
+  "upstream_no_data_timeout_secs",
   "tray_token_rate",
   "upstream_strategy",
   "upstreams",
@@ -77,6 +94,7 @@ export const EMPTY_FORM: ConfigForm = {
   antigravityUserAgent: "",
   logLevel: "silent",
   retryableFailureCooldownSecs: "15",
+  upstreamNoDataTimeoutSecs: String(DEFAULT_UPSTREAM_NO_DATA_TIMEOUT_SECS),
   trayTokenRate: { ...DEFAULT_TRAY_TOKEN_RATE },
   upstreamStrategy: "priority_fill_first",
   upstreams: [],
@@ -87,7 +105,7 @@ export function createEmptyUpstream(): UpstreamForm {
     id: "",
     providers: ["openai"],
     baseUrl: "",
-    apiKey: "",
+    apiKeys: "",
     filterPromptCacheRetention: false,
     filterSafetyIdentifier: false,
     useChatCompletionsForResponses: false,
@@ -149,13 +167,16 @@ export function toForm(config: ProxyConfigFile): ConfigForm {
     antigravityUserAgent: config.antigravity_user_agent ?? "",
     logLevel: config.log_level ?? "silent",
     retryableFailureCooldownSecs: String(config.retryable_failure_cooldown_secs ?? 15),
+    upstreamNoDataTimeoutSecs: String(
+      config.upstream_no_data_timeout_secs ?? DEFAULT_UPSTREAM_NO_DATA_TIMEOUT_SECS,
+    ),
     trayTokenRate: normalizeTrayTokenRate(config.tray_token_rate),
     upstreamStrategy: config.upstream_strategy,
     upstreams: config.upstreams.map((upstream) => ({
       id: upstream.id,
       providers: upstream.providers ?? [],
       baseUrl: upstream.base_url,
-      apiKey: upstream.api_key ?? "",
+      apiKeys: joinListInput(upstream.api_keys),
       filterPromptCacheRetention: upstream.filter_prompt_cache_retention ?? false,
       filterSafetyIdentifier: upstream.filter_safety_identifier ?? false,
       useChatCompletionsForResponses: upstream.use_chat_completions_for_responses ?? false,
@@ -194,15 +215,19 @@ export function toPayload(form: ConfigForm): ProxyConfigFile {
     retryable_failure_cooldown_secs: parseRetryableFailureCooldownSecs(
       form.retryableFailureCooldownSecs,
     ),
+    upstream_no_data_timeout_secs: parseUpstreamNoDataTimeoutSecs(
+      form.upstreamNoDataTimeoutSecs,
+    ),
     tray_token_rate: form.trayTokenRate,
     upstream_strategy: form.upstreamStrategy,
     upstreams: form.upstreams.map((upstream) => {
       const providers = normalizeProviders(upstream.providers);
+      const apiKeys = parseApiKeysInput(upstream.apiKeys);
       return {
         id: upstream.id.trim(),
         providers,
         base_url: upstream.baseUrl.trim(),
-        api_key: upstream.apiKey.trim() ? upstream.apiKey.trim() : null,
+        api_keys: apiKeys.length ? apiKeys : undefined,
         filter_prompt_cache_retention: upstream.filterPromptCacheRetention,
         filter_safety_identifier: upstream.filterSafetyIdentifier,
         use_chat_completions_for_responses: upstream.useChatCompletionsForResponses,
@@ -245,6 +270,12 @@ export function validate(form: ConfigForm) {
       message: m.error_retryable_failure_cooldown_secs_integer(),
     };
   }
+  if (!isValidUpstreamNoDataTimeoutSecs(form.upstreamNoDataTimeoutSecs)) {
+    return {
+      valid: false,
+      message: m.error_upstream_no_data_timeout_secs_integer(),
+    };
+  }
 
   const ids = new Set<string>();
   for (const upstream of form.upstreams) {
@@ -273,6 +304,12 @@ export function validate(form: ConfigForm) {
       return {
         valid: false,
         message: m.error_upstream_provider_required({ id }),
+      };
+    }
+    if (specialProviders.length && parseApiKeysInput(upstream.apiKeys).length > 1) {
+      return {
+        valid: false,
+        message: m.error_upstream_multiple_api_keys_unsupported({ id }),
       };
     }
     if (providers.includes("kiro") && !upstream.kiroAccountId.trim()) {
@@ -544,4 +581,25 @@ function parseRetryableFailureCooldownSecs(value: string) {
   }
   const number = Number.parseInt(trimmed, 10);
   return Number.isFinite(number) ? number : 15;
+}
+
+function isValidUpstreamNoDataTimeoutSecs(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (!NON_NEGATIVE_INTEGER_PATTERN.test(trimmed)) {
+    return false;
+  }
+  const number = Number.parseInt(trimmed, 10);
+  return Number.isFinite(number) && number >= MIN_UPSTREAM_NO_DATA_TIMEOUT_SECS;
+}
+
+function parseUpstreamNoDataTimeoutSecs(value: string) {
+  const trimmed = value.trim();
+  if (!NON_NEGATIVE_INTEGER_PATTERN.test(trimmed)) {
+    return DEFAULT_UPSTREAM_NO_DATA_TIMEOUT_SECS;
+  }
+  const number = Number.parseInt(trimmed, 10);
+  return Number.isFinite(number) ? number : DEFAULT_UPSTREAM_NO_DATA_TIMEOUT_SECS;
 }

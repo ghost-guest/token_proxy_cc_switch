@@ -11,6 +11,7 @@ use crate::proxy::openai_compat::FormatTransform;
 use crate::proxy::request_detail::RequestDetailSnapshot;
 use crate::proxy::response::{build_proxy_response, build_proxy_response_buffered};
 use crate::proxy::token_rate::TokenRateTracker;
+use crate::proxy::ProxyState;
 use crate::proxy::RequestMeta;
 
 pub(super) fn should_cooldown_retryable_status(status: StatusCode) -> bool {
@@ -26,6 +27,7 @@ pub(super) fn should_cooldown_retryable_status(status: StatusCode) -> bool {
 }
 
 pub(super) async fn handle_upstream_result(
+    state: &ProxyState,
     upstream_res: Result<reqwest::Response, reqwest::Error>,
     meta: &RequestMeta,
     provider: &str,
@@ -51,6 +53,7 @@ pub(super) async fn handle_upstream_result(
                 start_time,
                 response_transform,
                 request_detail.clone(),
+                state.config.upstream_no_data_timeout,
             )
             .await;
             AttemptOutcome::Retryable {
@@ -72,6 +75,7 @@ pub(super) async fn handle_upstream_result(
                 start_time,
                 response_transform,
                 request_detail.clone(),
+                state.config.upstream_no_data_timeout,
             )
             .await;
             AttemptOutcome::Success(response)

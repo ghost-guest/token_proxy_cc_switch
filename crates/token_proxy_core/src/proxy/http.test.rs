@@ -11,6 +11,7 @@ fn config_with_local(key: &str) -> ProxyConfig {
         log_level: LogLevel::Silent,
         max_request_body_bytes: 1024,
         retryable_failure_cooldown: std::time::Duration::from_secs(15),
+        upstream_no_data_timeout: std::time::Duration::from_secs(120),
         upstream_strategy: crate::proxy::config::UpstreamStrategy::PriorityFillFirst,
         upstreams: HashMap::new(),
         kiro_preferred_endpoint: None,
@@ -26,6 +27,7 @@ fn config_without_local() -> ProxyConfig {
         log_level: LogLevel::Silent,
         max_request_body_bytes: 1024,
         retryable_failure_cooldown: std::time::Duration::from_secs(15),
+        upstream_no_data_timeout: std::time::Duration::from_secs(120),
         upstream_strategy: crate::proxy::config::UpstreamStrategy::PriorityFillFirst,
         upstreams: HashMap::new(),
         kiro_preferred_endpoint: None,
@@ -36,6 +38,7 @@ fn config_without_local() -> ProxyConfig {
 fn upstream_without_key() -> UpstreamRuntime {
     UpstreamRuntime {
         id: "anthropic-test".to_string(),
+        selector_key: "anthropic-test".to_string(),
         base_url: "https://api.anthropic.com".to_string(),
         api_key: None,
         filter_prompt_cache_retention: false,

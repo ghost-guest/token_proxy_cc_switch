@@ -33,13 +33,14 @@ export type InboundApiFormat =
 export type UpstreamConfig = {
   id: string;
   /**
-   * 一个 upstream 可以同时声明多个 provider（同一条 base_url/api_key 复用）。
+   * 一个 upstream 可以同时声明多个 provider（同一条 base_url/api_keys 复用）。
    *
-   * 说明：后端会把它展开为“每个 provider 一条运行时 upstream”，并按 provider 维度做负载均衡。
+   * 说明：后端会把它展开为“每个 provider × 每个 api key 一条运行时 upstream”，
+   * 并按 provider 维度做负载均衡。
    */
   providers?: string[];
   base_url: string;
-  api_key: string | null;
+  api_keys?: string[];
   /**
    * Whether to drop OpenAI Responses request field `prompt_cache_retention` before sending upstream.
    *
@@ -95,6 +96,7 @@ export type ProxyConfigFileBase = {
   antigravity_user_agent?: string | null;
   log_level?: LogLevel;
   retryable_failure_cooldown_secs?: number;
+  upstream_no_data_timeout_secs?: number;
   tray_token_rate: TrayTokenRateConfig;
   upstream_strategy: UpstreamStrategy;
   upstreams: UpstreamConfig[];
@@ -126,7 +128,7 @@ export type UpstreamForm = {
   id: string;
   providers: string[];
   baseUrl: string;
-  apiKey: string;
+  apiKeys: string;
   filterPromptCacheRetention: boolean;
   filterSafetyIdentifier: boolean;
   useChatCompletionsForResponses: boolean;
@@ -170,6 +172,7 @@ export type ConfigForm = {
   antigravityUserAgent: string;
   logLevel: LogLevel;
   retryableFailureCooldownSecs: string;
+  upstreamNoDataTimeoutSecs: string;
   trayTokenRate: TrayTokenRateConfig;
   upstreamStrategy: UpstreamStrategy;
   upstreams: UpstreamForm[];
