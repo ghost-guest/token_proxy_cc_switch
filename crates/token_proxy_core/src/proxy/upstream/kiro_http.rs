@@ -19,11 +19,11 @@ pub(super) enum KiroSendError {
 
 pub(super) fn build_client(
     state: &ProxyState,
-    upstream: &UpstreamRuntime,
+    proxy_url: Option<&str>,
 ) -> Result<reqwest::Client, AttemptOutcome> {
     state
         .http_clients
-        .client_for_proxy_url(upstream.proxy_url.as_deref())
+        .client_for_proxy_url(proxy_url)
         .map_err(|message| {
             AttemptOutcome::Fatal(http::error_response(StatusCode::BAD_GATEWAY, message))
         })
@@ -103,6 +103,7 @@ pub(super) async fn handle_send_error(
     state: &ProxyState,
     meta: &RequestMeta,
     upstream: &UpstreamRuntime,
+    account_id: Option<String>,
     inbound_path: &str,
     response_transform: FormatTransform,
     request_detail: Option<RequestDetailSnapshot>,
@@ -117,6 +118,7 @@ pub(super) async fn handle_send_error(
                 meta,
                 "kiro",
                 &upstream.id,
+                account_id.clone(),
                 inbound_path,
                 state.log.clone(),
                 state.token_rate.clone(),
@@ -137,6 +139,7 @@ pub(super) async fn handle_send_error(
                 meta,
                 "kiro",
                 &upstream.id,
+                account_id.as_deref(),
                 inbound_path,
                 StatusCode::GATEWAY_TIMEOUT,
                 message.clone(),

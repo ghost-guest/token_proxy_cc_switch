@@ -1,10 +1,5 @@
-use crate::antigravity::endpoints as antigravity_endpoints;
-use crate::antigravity::project as antigravity_project;
 use axum::{
-    http::{
-        header::{AUTHORIZATION, USER_AGENT},
-        HeaderMap, HeaderValue, Method, StatusCode,
-    },
+    http::{header::AUTHORIZATION, HeaderMap, Method, StatusCode},
     response::Response,
 };
 use futures_util::stream::{FuturesUnordered, StreamExt};
@@ -17,8 +12,6 @@ use std::{
 
 const GEMINI_API_KEY_QUERY: &str = "key";
 const LOCAL_UPSTREAM_ID: &str = "local";
-const ANTIGRAVITY_GENERATE_PATH: &str = "/v1internal:generateContent";
-const ANTIGRAVITY_STREAM_PATH: &str = "/v1internal:streamGenerateContent";
 
 mod attempt;
 mod kiro;
@@ -280,21 +273,17 @@ pub(super) struct PreparedUpstreamRequest {
     upstream_path_with_query: String,
     upstream_url: String,
     request_headers: HeaderMap,
+    proxy_url: Option<String>,
+    selected_account_id: Option<String>,
     meta: RequestMeta,
-    antigravity: Option<AntigravityRequestInfo>,
 }
 
 struct ResolvedUpstreamAuth {
     upstream_url: String,
     auth: http::UpstreamAuthHeader,
     extra_headers: Option<HeaderMap>,
-    antigravity: Option<AntigravityRequestInfo>,
-}
-
-#[derive(Clone)]
-pub(super) struct AntigravityRequestInfo {
-    project_id: Option<String>,
-    user_agent: String,
+    proxy_url: Option<String>,
+    selected_account_id: Option<String>,
 }
 
 fn resolve_provider_upstreams<'a>(
@@ -313,6 +302,7 @@ fn resolve_provider_upstreams<'a>(
                 meta,
                 provider,
                 LOCAL_UPSTREAM_ID,
+                None,
                 inbound_path,
                 StatusCode::BAD_GATEWAY,
                 "No available upstream configured.".to_string(),
@@ -395,6 +385,7 @@ fn finalize_forward_response(
             meta,
             provider,
             LOCAL_UPSTREAM_ID,
+            None,
             inbound_path,
             StatusCode::UNAUTHORIZED,
             "Missing upstream API key.".to_string(),
@@ -756,7 +747,7 @@ async fn prepare_upstream_request(
     meta: &RequestMeta,
     request_auth: &RequestAuth,
 ) -> Result<PreparedUpstreamRequest, AttemptOutcome> {
-    let mapped_meta = build_mapped_meta(meta, upstream, provider);
+    let mapped_meta = build_mapped_meta(meta, upstream);
     let upstream_path_with_query =
         resolve_upstream_path_with_query(provider, upstream_path_with_query, &mapped_meta);
     let upstream_url = upstream.upstream_url(&upstream_path_with_query);
@@ -773,7 +764,8 @@ async fn prepare_upstream_request(
         upstream_url,
         auth,
         extra_headers,
-        antigravity,
+        proxy_url,
+        selected_account_id,
     } = resolved;
     let request_headers = request::build_request_headers(
         provider,
@@ -787,8 +779,9 @@ async fn prepare_upstream_request(
         upstream_path_with_query,
         upstream_url,
         request_headers,
+        proxy_url,
+        selected_account_id,
         meta: mapped_meta,
-        antigravity,
     })
 }
 
@@ -811,7 +804,8 @@ async fn resolve_upstream_auth(
             upstream_url,
             auth,
             extra_headers: None,
-            antigravity: None,
+            proxy_url: upstream.proxy_url.clone(),
+            selected_account_id: None,
         });
     }
     if provider == "kiro" {
@@ -819,9 +813,6 @@ async fn resolve_upstream_auth(
     }
     if provider == "codex" {
         return resolve_codex_upstream(state, upstream, upstream_url).await;
-    }
-    if provider == "antigravity" {
-        return resolve_antigravity_upstream(state, upstream, upstream_url).await;
     }
     let auth = match http::resolve_upstream_auth(provider, upstream, request_auth) {
         Ok(Some(auth)) => auth,
@@ -832,7 +823,8 @@ async fn resolve_upstream_auth(
         upstream_url: upstream_url.to_string(),
         auth,
         extra_headers: None,
-        antigravity: None,
+        proxy_url: upstream.proxy_url.clone(),
+        selected_account_id: None,
     })
 }
 
@@ -841,20 +833,18 @@ async fn resolve_kiro_upstream(
     upstream: &UpstreamRuntime,
     upstream_url: &str,
 ) -> Result<ResolvedUpstreamAuth, AttemptOutcome> {
-    let Some(account_id) = upstream.kiro_account_id.as_deref() else {
-        return Err(AttemptOutcome::Fatal(http::error_response(
-            StatusCode::UNAUTHORIZED,
-            "Kiro account is not configured.",
-        )));
-    };
-    let token = state
+    let (selected_account_id, record) = state
         .kiro_accounts
-        .get_access_token(account_id)
+        .resolve_account_record(upstream.kiro_account_id.as_deref())
         .await
-        .map_err(|err| {
-            AttemptOutcome::Fatal(http::error_response(StatusCode::UNAUTHORIZED, err))
-        })?;
-    let value = http::bearer_header(&token).ok_or_else(|| {
+        .map_err(|err| AttemptOutcome::Fatal(http::error_response(StatusCode::UNAUTHORIZED, err)))?;
+    let global_proxy_url = state.kiro_accounts.app_proxy_url().await;
+    let proxy_url = record
+        .proxy_url
+        .clone()
+        .or_else(|| upstream.proxy_url.clone())
+        .or(global_proxy_url);
+    let value = http::bearer_header(&record.access_token).ok_or_else(|| {
         AttemptOutcome::Fatal(http::error_response(
             StatusCode::UNAUTHORIZED,
             "Upstream access token contains invalid characters.",
@@ -867,7 +857,8 @@ async fn resolve_kiro_upstream(
             value,
         },
         extra_headers: None,
-        antigravity: None,
+        proxy_url,
+        selected_account_id: Some(selected_account_id),
     })
 }
 
@@ -876,19 +867,17 @@ async fn resolve_codex_upstream(
     upstream: &UpstreamRuntime,
     upstream_url: &str,
 ) -> Result<ResolvedUpstreamAuth, AttemptOutcome> {
-    let Some(account_id) = upstream.codex_account_id.as_deref() else {
-        return Err(AttemptOutcome::Fatal(http::error_response(
-            StatusCode::UNAUTHORIZED,
-            "Codex account is not configured.",
-        )));
-    };
-    let record = state
+    let (selected_account_id, record) = state
         .codex_accounts
-        .get_account_record(account_id)
+        .resolve_account_record(upstream.codex_account_id.as_deref())
         .await
-        .map_err(|err| {
-            AttemptOutcome::Fatal(http::error_response(StatusCode::UNAUTHORIZED, err))
-        })?;
+        .map_err(|err| AttemptOutcome::Fatal(http::error_response(StatusCode::UNAUTHORIZED, err)))?;
+    let global_proxy_url = state.codex_accounts.app_proxy_url().await;
+    let proxy_url = record
+        .proxy_url
+        .clone()
+        .or_else(|| upstream.proxy_url.clone())
+        .or(global_proxy_url);
     let value = http::bearer_header(&record.access_token).ok_or_else(|| {
         AttemptOutcome::Fatal(http::error_response(
             StatusCode::UNAUTHORIZED,
@@ -916,109 +905,12 @@ async fn resolve_codex_upstream(
             value,
         },
         extra_headers,
-        antigravity: None,
+        proxy_url,
+        selected_account_id: Some(selected_account_id),
     })
 }
 
-async fn resolve_antigravity_upstream(
-    state: &ProxyState,
-    upstream: &UpstreamRuntime,
-    upstream_url: &str,
-) -> Result<ResolvedUpstreamAuth, AttemptOutcome> {
-    let Some(account_id) = upstream.antigravity_account_id.as_deref() else {
-        return Err(AttemptOutcome::Fatal(http::error_response(
-            StatusCode::UNAUTHORIZED,
-            "Antigravity account is not configured.",
-        )));
-    };
-    let mut record = state
-        .antigravity_accounts
-        .get_account_record(account_id)
-        .await
-        .map_err(|err| {
-            AttemptOutcome::Fatal(http::error_response(StatusCode::UNAUTHORIZED, err))
-        })?;
-    if record
-        .project_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .is_none()
-    {
-        let proxy_url = state.antigravity_accounts.app_proxy_url().await;
-        match antigravity_project::load_code_assist(&record.access_token, proxy_url.as_deref())
-            .await
-        {
-            Ok(info) => {
-                if let Some(value) = info.project_id.clone() {
-                    let _ = state
-                        .antigravity_accounts
-                        .update_project_id(account_id, value.clone())
-                        .await;
-                    record.project_id = Some(value);
-                } else if let Some(tier_id) = info.plan_type.as_deref() {
-                    if let Ok(Some(value)) = antigravity_project::onboard_user(
-                        &record.access_token,
-                        proxy_url.as_deref(),
-                        tier_id,
-                    )
-                    .await
-                    {
-                        let _ = state
-                            .antigravity_accounts
-                            .update_project_id(account_id, value.clone())
-                            .await;
-                        record.project_id = Some(value);
-                    }
-                }
-            }
-            Err(err) => {
-                tracing::warn!(error = %err, "antigravity loadCodeAssist failed in proxy");
-            }
-        }
-    }
-    let value = http::bearer_header(&record.access_token).ok_or_else(|| {
-        AttemptOutcome::Fatal(http::error_response(
-            StatusCode::UNAUTHORIZED,
-            "Upstream access token contains invalid characters.",
-        ))
-    })?;
-    let user_agent = state
-        .config
-        .antigravity_user_agent
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.to_string())
-        .unwrap_or_else(antigravity_endpoints::default_user_agent);
-    let mut extra_headers = HeaderMap::new();
-    if let Ok(value) = HeaderValue::from_str(&user_agent) {
-        extra_headers.insert(USER_AGENT, value);
-    }
-    let extra_headers = if extra_headers.is_empty() {
-        None
-    } else {
-        Some(extra_headers)
-    };
-    Ok(ResolvedUpstreamAuth {
-        upstream_url: upstream_url.to_string(),
-        auth: http::UpstreamAuthHeader {
-            name: AUTHORIZATION,
-            value,
-        },
-        extra_headers,
-        antigravity: Some(AntigravityRequestInfo {
-            project_id: record.project_id.clone(),
-            user_agent,
-        }),
-    })
-}
-
-fn build_mapped_meta(
-    meta: &RequestMeta,
-    upstream: &UpstreamRuntime,
-    provider: &str,
-) -> RequestMeta {
+fn build_mapped_meta(meta: &RequestMeta, upstream: &UpstreamRuntime) -> RequestMeta {
     // 只有当实际发生映射时才设置 mapped_model，避免与 original_model 重复
     let mapped_model = meta
         .original_model
@@ -1026,13 +918,6 @@ fn build_mapped_meta(
         .and_then(|original| upstream.map_model(original));
     let (mapped_model, reasoning_effort) =
         normalize_mapped_model_reasoning_suffix(mapped_model, meta.reasoning_effort.clone());
-    let mapped_model = mapped_model.map(|model| {
-        if provider == "antigravity" {
-            super::antigravity_compat::map_antigravity_model(&model)
-        } else {
-            model
-        }
-    });
     RequestMeta {
         stream: meta.stream,
         original_model: meta.original_model.clone(),
@@ -1065,14 +950,6 @@ fn resolve_upstream_path_with_query(
     upstream_path_with_query: &str,
     meta: &RequestMeta,
 ) -> String {
-    if provider == "antigravity" {
-        return if meta.stream {
-            // Align with CLIProxyAPIPlus: Antigravity streaming defaults to SSE via `alt=sse`.
-            format!("{ANTIGRAVITY_STREAM_PATH}?alt=sse")
-        } else {
-            ANTIGRAVITY_GENERATE_PATH.to_string()
-        };
-    }
     if provider != "gemini" || meta.model_override().is_none() {
         return upstream_path_with_query.to_string();
     }

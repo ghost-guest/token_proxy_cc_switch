@@ -17,7 +17,6 @@ use super::{
 const PROVIDER_OPENAI: &str = "openai";
 const PROVIDER_OPENAI_RESPONSES: &str = "openai-response";
 const PROVIDER_ANTHROPIC: &str = "anthropic";
-const PROVIDER_ANTIGRAVITY: &str = "antigravity";
 const PROVIDER_GEMINI: &str = "gemini";
 const PROVIDER_CODEX: &str = "codex";
 const RESPONSE_ERROR_LIMIT_BYTES: usize = 256 * 1024;
@@ -26,6 +25,7 @@ pub(super) async fn build_proxy_response(
     meta: &RequestMeta,
     provider: &str,
     upstream_id: &str,
+    account_id: Option<String>,
     inbound_path: &str,
     upstream_res: reqwest::Response,
     log: Arc<LogWriter>,
@@ -44,6 +44,7 @@ pub(super) async fn build_proxy_response(
         path: inbound_path.to_string(),
         provider: provider.to_string(),
         upstream_id: upstream_id.to_string(),
+        account_id,
         model: meta.original_model.clone(),
         mapped_model: meta.mapped_model.clone(),
         stream: meta.stream,
@@ -103,6 +104,7 @@ pub(super) async fn build_proxy_response_buffered(
     meta: &RequestMeta,
     provider: &str,
     upstream_id: &str,
+    account_id: Option<String>,
     inbound_path: &str,
     upstream_res: reqwest::Response,
     log: Arc<LogWriter>,
@@ -121,6 +123,7 @@ pub(super) async fn build_proxy_response_buffered(
         path: inbound_path.to_string(),
         provider: provider.to_string(),
         upstream_id: upstream_id.to_string(),
+        account_id,
         model: meta.original_model.clone(),
         mapped_model: meta.mapped_model.clone(),
         stream: meta.stream,

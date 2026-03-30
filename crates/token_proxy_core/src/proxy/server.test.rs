@@ -9,6 +9,7 @@ use axum::{
     Router,
 };
 use serde_json::{json, Value};
+use sqlx::Row;
 use std::{
     collections::HashMap,
     net::SocketAddr,
@@ -87,7 +88,6 @@ fn config_with_runtime_upstreams(
             rewrite_developer_role_to_system: false,
             kiro_account_id: None,
             codex_account_id: (*provider == PROVIDER_CODEX).then(|| format!("codex-{id}.json")),
-            antigravity_account_id: None,
             kiro_preferred_endpoint: None,
             proxy_url: None,
             priority: *priority,
@@ -133,7 +133,6 @@ fn config_with_runtime_upstreams(
         },
         upstreams: provider_map,
         kiro_preferred_endpoint: None,
-        antigravity_user_agent: None,
     }
 }
 
@@ -141,6 +140,8 @@ fn config_with_runtime_upstreams(
 struct RecordedRequest {
     path: String,
     body: Value,
+    authorization: Option<String>,
+    chatgpt_account_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -167,8 +168,14 @@ impl MockUpstream {
     }
 }
 
+#[derive(Clone)]
+struct MockAuthSwitchState {
+    requests: Arc<Mutex<Vec<RecordedRequest>>>,
+}
+
 async fn mock_upstream_handler(
     State(state): State<Arc<MockUpstreamState>>,
+    headers: HeaderMap,
     uri: Uri,
     body: Body,
 ) -> axum::response::Response {
@@ -181,6 +188,14 @@ async fn mock_upstream_handler(
         .push(RecordedRequest {
             path: uri.path().to_string(),
             body: json_body,
+            authorization: headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string),
+            chatgpt_account_id: headers
+                .get("chatgpt-account-id")
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string),
         });
     if state.delay_ms > 0 {
         tokio::time::sleep(std::time::Duration::from_millis(state.delay_ms)).await;
@@ -220,6 +235,113 @@ async fn spawn_mock_upstream_with_delay(
         axum::serve(listener, app)
             .await
             .expect("mock upstream server should run");
+    });
+    MockUpstream {
+        base_url: format!("http://{addr}"),
+        requests,
+        task,
+    }
+}
+
+async fn auth_switch_upstream_handler(
+    State(state): State<Arc<MockAuthSwitchState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    body: Body,
+) -> axum::response::Response {
+    let bytes = to_bytes(body, usize::MAX).await.expect("read mock body");
+    let json_body = serde_json::from_slice::<Value>(&bytes).expect("mock request json");
+    let authorization = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    let chatgpt_account_id = headers
+        .get("chatgpt-account-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+
+    state
+        .requests
+        .lock()
+        .expect("requests lock")
+        .push(RecordedRequest {
+            path: uri.path().to_string(),
+            body: json_body,
+            authorization: authorization.clone(),
+            chatgpt_account_id: chatgpt_account_id.clone(),
+        });
+
+    let (status, body) = match authorization.as_deref() {
+        Some("Bearer codex-access-a") => (
+            StatusCode::UNAUTHORIZED,
+            json!({
+                "error": {
+                    "message": "Your authentication token has been invalidated. Please try signing in again.",
+                    "type": "invalid_request_error",
+                    "code": "token_invalidated",
+                    "param": null
+                }
+            }),
+        ),
+        Some("Bearer codex-access-b") => (
+            StatusCode::OK,
+            json!({
+                "id": "resp_codex_failover",
+                "object": "response",
+                "created_at": 123,
+                "model": "gpt-5-codex",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "id": "msg_1",
+                        "status": "completed",
+                        "role": "assistant",
+                        "content": [
+                            { "type": "output_text", "text": "from codex failover" }
+                        ]
+                    }
+                ],
+                "usage": { "input_tokens": 1, "output_tokens": 2, "total_tokens": 3 }
+            }),
+        ),
+        _ => (
+            StatusCode::UNAUTHORIZED,
+            json!({
+                "error": {
+                    "message": "unexpected account",
+                    "type": "invalid_request_error",
+                    "code": "token_invalidated",
+                    "param": null
+                }
+            }),
+        ),
+    };
+
+    (
+        status,
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        body.to_string(),
+    )
+        .into_response()
+}
+
+async fn spawn_auth_switch_mock_upstream() -> MockUpstream {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let state = Arc::new(MockAuthSwitchState {
+        requests: requests.clone(),
+    });
+    let app = Router::new()
+        .route("/{*path}", any(auth_switch_upstream_handler))
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind auth switch mock upstream");
+    let addr: SocketAddr = listener.local_addr().expect("mock local addr");
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("auth switch mock upstream server should run");
     });
     MockUpstream {
         base_url: format!("http://{addr}"),
@@ -428,6 +550,27 @@ fn next_test_data_dir(label: &str) -> PathBuf {
 async fn build_test_state_handle(config: ProxyConfig, data_dir: PathBuf) -> ProxyStateHandle {
     std::fs::create_dir_all(&data_dir).expect("create test data dir");
     let paths = TokenProxyPaths::from_app_data_dir(data_dir).expect("test paths");
+    build_test_state_handle_with_paths(config, paths, None).await
+}
+
+async fn build_test_state_handle_with_sqlite_log(
+    config: ProxyConfig,
+    data_dir: PathBuf,
+) -> (ProxyStateHandle, sqlx::SqlitePool) {
+    std::fs::create_dir_all(&data_dir).expect("create test data dir");
+    let paths = TokenProxyPaths::from_app_data_dir(data_dir).expect("test paths");
+    let pool = crate::proxy::sqlite::open_write_pool(&paths)
+        .await
+        .expect("open sqlite pool");
+    let state = build_test_state_handle_with_paths(config, paths, Some(pool.clone())).await;
+    (state, pool)
+}
+
+async fn build_test_state_handle_with_paths(
+    config: ProxyConfig,
+    paths: TokenProxyPaths,
+    log_pool: Option<sqlx::SqlitePool>,
+) -> ProxyStateHandle {
     let app_proxy = crate::app_proxy::new_state();
     let cursors = build_upstream_cursors(&config);
     let kiro_accounts = Arc::new(
@@ -436,10 +579,7 @@ async fn build_test_state_handle(config: ProxyConfig, data_dir: PathBuf) -> Prox
     let codex_accounts = Arc::new(
         crate::codex::CodexAccountStore::new(&paths, app_proxy.clone()).expect("codex store"),
     );
-    let antigravity_accounts = Arc::new(
-        crate::antigravity::AntigravityAccountStore::new(&paths, app_proxy)
-            .expect("antigravity store"),
-    );
+    let _ = app_proxy;
     let expires_at = (OffsetDateTime::now_utc() + TimeDuration::days(1))
         .format(&time::format_description::well_known::Rfc3339)
         .expect("format expires_at");
@@ -449,22 +589,23 @@ async fn build_test_state_handle(config: ProxyConfig, data_dir: PathBuf) -> Prox
                 let Some(account_id) = upstream.codex_account_id.as_deref() else {
                     continue;
                 };
-                let auth_dir = paths.data_dir().join("codex-auth");
-                std::fs::create_dir_all(&auth_dir).expect("create codex auth dir");
-                let record = json!({
-                    "access_token": "codex-access-token",
-                    "refresh_token": "codex-refresh-token",
-                    "id_token": "codex-id-token",
-                    "account_id": "chatgpt-account",
-                    "email": "codex@example.com",
-                    "expires_at": expires_at,
-                    "last_refresh": null
-                });
-                std::fs::write(
-                    auth_dir.join(account_id),
-                    serde_json::to_vec_pretty(&record).expect("serialize codex record"),
-                )
-                .expect("write codex account");
+                codex_accounts
+                    .save_record(
+                        account_id.to_string(),
+                        crate::codex::CodexTokenRecord {
+                            access_token: "codex-access-token".to_string(),
+                            refresh_token: "codex-refresh-token".to_string(),
+                            id_token: "codex-id-token".to_string(),
+                            auto_refresh_enabled: true,
+                            account_id: Some("chatgpt-account".to_string()),
+                            email: Some("codex@example.com".to_string()),
+                            expires_at: expires_at.clone(),
+                            last_refresh: None,
+                            proxy_url: None,
+                        },
+                    )
+                    .await
+                    .expect("seed codex account");
                 codex_accounts
                     .list_accounts()
                     .await
@@ -476,7 +617,7 @@ async fn build_test_state_handle(config: ProxyConfig, data_dir: PathBuf) -> Prox
     let state = Arc::new(ProxyState {
         config,
         http_clients: super::super::http_client::ProxyHttpClients::new().expect("http clients"),
-        log: Arc::new(super::super::log::LogWriter::new(None)),
+        log: Arc::new(super::super::log::LogWriter::new(log_pool)),
         cursors,
         upstream_selector:
             super::super::upstream_selector::UpstreamSelectorRuntime::new_with_cooldown(
@@ -488,9 +629,36 @@ async fn build_test_state_handle(config: ProxyConfig, data_dir: PathBuf) -> Prox
         token_rate: super::super::token_rate::TokenRateTracker::new(),
         kiro_accounts,
         codex_accounts,
-        antigravity_accounts,
     });
     Arc::new(RwLock::new(state))
+}
+
+async fn seed_codex_account(
+    state: &ProxyStateHandle,
+    storage_account_id: &str,
+    access_token: &str,
+    chatgpt_account_id: &str,
+    expires_at: &str,
+) {
+    let state_guard = state.read().await;
+    state_guard
+        .codex_accounts
+        .save_record(
+            storage_account_id.to_string(),
+            crate::codex::CodexTokenRecord {
+                access_token: access_token.to_string(),
+                refresh_token: "codex-refresh-token".to_string(),
+                id_token: "codex-id-token".to_string(),
+                auto_refresh_enabled: true,
+                account_id: Some(chatgpt_account_id.to_string()),
+                email: Some(format!("{storage_account_id}@example.com")),
+                expires_at: expires_at.to_string(),
+                last_refresh: None,
+                proxy_url: None,
+            },
+        )
+        .await
+        .expect("seed codex account");
 }
 
 async fn assert_responses_retry_fallback_status(status: StatusCode) {
@@ -613,6 +781,272 @@ async fn send_responses_request(state: ProxyStateHandle) -> (StatusCode, Value) 
         .expect("proxy response bytes");
     let json = serde_json::from_slice(&body).expect("proxy response json");
     (status, json)
+}
+
+async fn wait_for_logged_account_id(pool: &sqlx::SqlitePool) -> Option<String> {
+    for _ in 0..50 {
+        let row = sqlx::query(
+            "SELECT account_id FROM request_logs ORDER BY id DESC LIMIT 1;",
+        )
+        .fetch_optional(pool)
+        .await
+        .expect("query request logs");
+        if let Some(row) = row {
+            return row.try_get::<Option<String>, _>("account_id").ok().flatten();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    None
+}
+
+#[test]
+fn responses_request_auto_selects_first_available_codex_account_when_unbound() {
+    run_async(async {
+        let codex = spawn_mock_upstream(
+            StatusCode::OK,
+            json!({
+                "id": "resp_auto_codex",
+                "object": "response",
+                "created_at": 123,
+                "model": "gpt-5-codex",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "id": "msg_1",
+                        "status": "completed",
+                        "role": "assistant",
+                        "content": [
+                            { "type": "output_text", "text": "from auto codex" }
+                        ]
+                    }
+                ],
+                "usage": { "input_tokens": 1, "output_tokens": 2, "total_tokens": 3 }
+            }),
+        )
+        .await;
+
+        let mut config = config_with_runtime_upstreams(&[(
+            PROVIDER_CODEX,
+            0,
+            "codex-auto",
+            codex.base_url.as_str(),
+            FORMATS_RESPONSES,
+        )]);
+        let provider_upstreams = config
+            .upstreams
+            .get_mut(PROVIDER_CODEX)
+            .expect("codex upstreams");
+        provider_upstreams.groups[0].items[0].codex_account_id = None;
+
+        let data_dir = next_test_data_dir("responses_codex_auto_select");
+        let state = build_test_state_handle(config, data_dir.clone()).await;
+        let expires_at = (OffsetDateTime::now_utc() + TimeDuration::days(1))
+            .format(&time::format_description::well_known::Rfc3339)
+            .expect("format expires_at");
+        seed_codex_account(&state, "codex-z.json", "codex-access-z", "chatgpt-z", &expires_at).await;
+        seed_codex_account(&state, "codex-a.json", "codex-access-a", "chatgpt-a", &expires_at).await;
+
+        let (status, json) = send_responses_request(state).await;
+        let requests = codex.requests();
+
+        codex.abort();
+        let _ = std::fs::remove_dir_all(&data_dir);
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            json["output"][0]["content"][0]["text"].as_str(),
+            Some("from auto codex")
+        );
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].authorization.as_deref(), Some("Bearer codex-access-a"));
+        assert_eq!(requests[0].chatgpt_account_id.as_deref(), Some("chatgpt-a"));
+    });
+}
+
+#[test]
+fn responses_request_failovers_to_next_codex_account_after_invalidated_token() {
+    run_async(async {
+        let codex = spawn_auth_switch_mock_upstream().await;
+
+        let mut config = config_with_runtime_upstreams(&[(
+            PROVIDER_CODEX,
+            0,
+            "codex-auto-failover",
+            codex.base_url.as_str(),
+            FORMATS_RESPONSES,
+        )]);
+        let provider_upstreams = config
+            .upstreams
+            .get_mut(PROVIDER_CODEX)
+            .expect("codex upstreams");
+        provider_upstreams.groups[0].items[0].codex_account_id = None;
+
+        let data_dir = next_test_data_dir("responses_codex_account_failover");
+        let state = build_test_state_handle(config, data_dir.clone()).await;
+        let expires_at = (OffsetDateTime::now_utc() + TimeDuration::days(1))
+            .format(&time::format_description::well_known::Rfc3339)
+            .expect("format expires_at");
+        seed_codex_account(&state, "codex-a.json", "codex-access-a", "chatgpt-a", &expires_at)
+            .await;
+        seed_codex_account(&state, "codex-b.json", "codex-access-b", "chatgpt-b", &expires_at)
+            .await;
+
+        let (status, json) = send_responses_request(state).await;
+        let requests = codex.requests();
+
+        codex.abort();
+        let _ = std::fs::remove_dir_all(&data_dir);
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            json["output"][0]["content"][0]["text"].as_str(),
+            Some("from codex failover")
+        );
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].authorization.as_deref(), Some("Bearer codex-access-a"));
+        assert_eq!(requests[0].chatgpt_account_id.as_deref(), Some("chatgpt-a"));
+        assert_eq!(requests[1].authorization.as_deref(), Some("Bearer codex-access-b"));
+        assert_eq!(requests[1].chatgpt_account_id.as_deref(), Some("chatgpt-b"));
+    });
+}
+
+#[test]
+fn responses_request_failovers_to_next_codex_account_after_proxy_error() {
+    run_async(async {
+        let codex = spawn_mock_upstream(
+            StatusCode::OK,
+            json!({
+                "id": "resp_codex_proxy_failover",
+                "object": "response",
+                "created_at": 123,
+                "model": "gpt-5-codex",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "id": "msg_1",
+                        "status": "completed",
+                        "role": "assistant",
+                        "content": [
+                            { "type": "output_text", "text": "from codex proxy failover" }
+                        ]
+                    }
+                ],
+                "usage": { "input_tokens": 1, "output_tokens": 2, "total_tokens": 3 }
+            }),
+        )
+        .await;
+
+        let mut config = config_with_runtime_upstreams(&[(
+            PROVIDER_CODEX,
+            0,
+            "codex-auto-proxy-failover",
+            codex.base_url.as_str(),
+            FORMATS_RESPONSES,
+        )]);
+        let provider_upstreams = config
+            .upstreams
+            .get_mut(PROVIDER_CODEX)
+            .expect("codex upstreams");
+        provider_upstreams.groups[0].items[0].codex_account_id = None;
+
+        let data_dir = next_test_data_dir("responses_codex_account_proxy_failover");
+        let state = build_test_state_handle(config, data_dir.clone()).await;
+        let expires_at = (OffsetDateTime::now_utc() + TimeDuration::days(1))
+            .format(&time::format_description::well_known::Rfc3339)
+            .expect("format expires_at");
+        seed_codex_account(&state, "codex-a.json", "codex-access-a", "chatgpt-a", &expires_at)
+            .await;
+        seed_codex_account(&state, "codex-b.json", "codex-access-b", "chatgpt-b", &expires_at)
+            .await;
+        {
+            let state_guard = state.read().await;
+            state_guard
+                .codex_accounts
+                .set_proxy_url("codex-a.json", Some("http://127.0.0.1:9"))
+                .await
+                .expect("set broken proxy");
+        }
+
+        let (status, json) = send_responses_request(state).await;
+        let requests = codex.requests();
+
+        codex.abort();
+        let _ = std::fs::remove_dir_all(&data_dir);
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            json["output"][0]["content"][0]["text"].as_str(),
+            Some("from codex proxy failover")
+        );
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].authorization.as_deref(), Some("Bearer codex-access-b"));
+        assert_eq!(requests[0].chatgpt_account_id.as_deref(), Some("chatgpt-b"));
+    });
+}
+
+#[test]
+fn responses_request_logs_selected_codex_account_id() {
+    run_async(async {
+        let codex = spawn_mock_upstream(
+            StatusCode::OK,
+            json!({
+                "id": "resp_codex_logged_account",
+                "object": "response",
+                "created_at": 123,
+                "model": "gpt-5-codex",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "id": "msg_1",
+                        "status": "completed",
+                        "role": "assistant",
+                        "content": [
+                            { "type": "output_text", "text": "from codex logged account" }
+                        ]
+                    }
+                ],
+                "usage": { "input_tokens": 1, "output_tokens": 2, "total_tokens": 3 }
+            }),
+        )
+        .await;
+
+        let mut config = config_with_runtime_upstreams(&[(
+            PROVIDER_CODEX,
+            0,
+            "codex-auto-logged-account",
+            codex.base_url.as_str(),
+            FORMATS_RESPONSES,
+        )]);
+        let provider_upstreams = config
+            .upstreams
+            .get_mut(PROVIDER_CODEX)
+            .expect("codex upstreams");
+        provider_upstreams.groups[0].items[0].codex_account_id = None;
+
+        let data_dir = next_test_data_dir("responses_codex_logged_account");
+        let (state, pool) = build_test_state_handle_with_sqlite_log(config, data_dir.clone()).await;
+        let expires_at = (OffsetDateTime::now_utc() + TimeDuration::days(1))
+            .format(&time::format_description::well_known::Rfc3339)
+            .expect("format expires_at");
+        seed_codex_account(&state, "codex-a.json", "codex-access-a", "chatgpt-a", &expires_at)
+            .await;
+
+        let (status, json) = send_responses_request(state).await;
+        let logged_account_id = wait_for_logged_account_id(&pool).await;
+
+        codex.abort();
+        let _ = std::fs::remove_dir_all(&data_dir);
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            json["output"][0]["content"][0]["text"].as_str(),
+            Some("from codex logged account")
+        );
+        assert_eq!(logged_account_id.as_deref(), Some("codex-a.json"));
+    });
 }
 
 async fn send_anthropic_messages_request(
@@ -1514,16 +1948,6 @@ fn anthropic_beta_query_is_preserved_for_native_anthropic() {
     let uri = Uri::from_static("/v1/messages?beta=true");
     let outbound_with_query = build_outbound_path_with_query(&outbound, &uri);
     assert_eq!(outbound_with_query, "/v1/messages?beta=true");
-}
-
-#[test]
-fn anthropic_messages_allows_antigravity_without_conversion() {
-    let config = config_with_providers(&[(PROVIDER_ANTIGRAVITY, FORMATS_ALL)]);
-    let plan = resolve_dispatch_plan(&config, "/v1/messages").expect("should fallback");
-    assert_eq!(plan.provider, PROVIDER_ANTIGRAVITY);
-    assert_eq!(plan.outbound_path, None);
-    assert_eq!(plan.request_transform, FormatTransform::AnthropicToGemini);
-    assert_eq!(plan.response_transform, FormatTransform::GeminiToAnthropic);
 }
 
 #[test]

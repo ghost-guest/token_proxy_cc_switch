@@ -1,6 +1,4 @@
 mod anthropic_compat;
-mod antigravity_compat;
-mod antigravity_schema;
 mod codex_compat;
 mod compat_content;
 mod compat_reason;
@@ -32,14 +30,12 @@ mod upstream;
 mod upstream_selector;
 mod usage;
 
+use crate::codex::CodexAccountStore;
+use crate::kiro::KiroAccountStore;
 use std::{
     collections::HashMap,
     sync::{atomic::AtomicUsize, Arc},
 };
-
-use crate::antigravity::AntigravityAccountStore;
-use crate::codex::CodexAccountStore;
-use crate::kiro::KiroAccountStore;
 
 struct ProxyState {
     config: config::ProxyConfig,
@@ -51,7 +47,6 @@ struct ProxyState {
     token_rate: Arc<token_rate::TokenRateTracker>,
     kiro_accounts: Arc<KiroAccountStore>,
     codex_accounts: Arc<CodexAccountStore>,
-    antigravity_accounts: Arc<AntigravityAccountStore>,
 }
 
 struct RequestMeta {

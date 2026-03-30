@@ -1,9 +1,6 @@
 use std::time::{Duration, Instant};
 
-use axum::http::{
-    header::{ACCEPT, ACCEPT_ENCODING, AUTHORIZATION, CONTENT_TYPE, USER_AGENT},
-    HeaderMap, HeaderValue, Method, StatusCode,
-};
+use axum::http::{HeaderMap, Method, StatusCode};
 use reqwest::{Client, Proxy};
 use tokio::time::timeout;
 
@@ -11,7 +8,6 @@ use super::request;
 use super::result;
 use super::utils::{is_retryable_error, sanitize_upstream_error};
 use super::{AttemptOutcome, PreparedUpstreamRequest};
-use crate::antigravity::endpoints as antigravity_endpoints;
 use crate::proxy::http;
 use crate::proxy::openai_compat::FormatTransform;
 use crate::proxy::request_body::ReplayableBody;
@@ -49,7 +45,7 @@ pub(super) async fn attempt_upstream(
         )
         .await;
     }
-    let first = match attempt_send(
+    let first = attempt_send(
         state,
         method.clone(),
         provider,
@@ -62,14 +58,30 @@ pub(super) async fn attempt_upstream(
         request_auth,
         request_detail.as_ref(),
     )
+    .await;
+    let first = match retry_with_next_codex_account(
+        state,
+        method.clone(),
+        provider,
+        upstream,
+        inbound_path,
+        upstream_path_with_query,
+        headers,
+        body,
+        meta,
+        request_auth,
+        response_transform,
+        request_detail.clone(),
+        first,
+    )
     .await
     {
-        Ok(attempt) => attempt,
-        Err(outcome) => return outcome,
+        CodexFailoverResult::Pending(attempt) => attempt,
+        CodexFailoverResult::Resolved(outcome) => return outcome,
     };
     if let Some(outcome) = retry_after_kiro_refresh(
         state,
-        method,
+        method.clone(),
         provider,
         upstream,
         inbound_path,
@@ -100,8 +112,19 @@ pub(super) async fn attempt_upstream(
 
 struct UpstreamAttempt {
     response: reqwest::Response,
+    selected_account_id: Option<String>,
     meta: RequestMeta,
     start_time: Instant,
+}
+
+struct UpstreamAttemptFailure {
+    outcome: AttemptOutcome,
+    selected_account_id: Option<String>,
+}
+
+enum CodexFailoverResult {
+    Pending(UpstreamAttempt),
+    Resolved(AttemptOutcome),
 }
 
 async fn retry_after_kiro_refresh(
@@ -141,7 +164,7 @@ async fn retry_after_kiro_refresh(
     .await
     {
         Ok(attempt) => attempt,
-        Err(outcome) => return Some(outcome),
+        Err(failure) => return Some(failure.outcome),
     };
     Some(
         finalize_attempt(
@@ -172,6 +195,7 @@ async fn finalize_attempt(
         &attempt.meta,
         provider,
         &upstream.id,
+        attempt.selected_account_id.clone(),
         inbound_path,
         state.log.clone(),
         state.token_rate.clone(),
@@ -180,6 +204,142 @@ async fn finalize_attempt(
         request_detail,
     )
     .await
+}
+
+async fn retry_with_next_codex_account(
+    state: &ProxyState,
+    method: Method,
+    provider: &str,
+    upstream: &UpstreamRuntime,
+    inbound_path: &str,
+    upstream_path_with_query: &str,
+    headers: &HeaderMap,
+    body: &ReplayableBody,
+    meta: &RequestMeta,
+    request_auth: &crate::proxy::http::RequestAuth,
+    response_transform: FormatTransform,
+    request_detail: Option<RequestDetailSnapshot>,
+    first: Result<UpstreamAttempt, UpstreamAttemptFailure>,
+) -> CodexFailoverResult {
+    let Some(first_selected_account_id) = failover_selected_account_id(provider, upstream, &first)
+    else {
+        return match first {
+            Ok(attempt) => CodexFailoverResult::Pending(attempt),
+            Err(failure) => CodexFailoverResult::Resolved(failure.outcome),
+        };
+    };
+
+    let mut excluded_account_ids = vec![first_selected_account_id];
+    let mut last_retry: Option<Result<(UpstreamRuntime, UpstreamAttempt), UpstreamAttemptFailure>> =
+        Some(first.map(|attempt| (upstream.clone(), attempt)));
+
+    // 这里做账户级 failover，而不是 upstream 级 failover。
+    // 当 codex upstream 未绑定具体账户时，只要当前账户请求报错，就继续尝试下一个本地可用账户。
+    loop {
+        let next_account_id = match state
+            .codex_accounts
+            .resolve_next_account_record(&excluded_account_ids)
+            .await
+        {
+            Ok(Some((account_id, _))) => account_id,
+            Ok(None) => match last_retry {
+                Some(Ok((retry_upstream, retry_attempt))) => {
+                    return CodexFailoverResult::Resolved(
+                        finalize_attempt(
+                            state,
+                            provider,
+                            &retry_upstream,
+                            inbound_path,
+                            response_transform,
+                            request_detail,
+                            retry_attempt,
+                        )
+                        .await,
+                    );
+                }
+                Some(Err(failure)) => return CodexFailoverResult::Resolved(failure.outcome),
+                None => {
+                    return CodexFailoverResult::Resolved(AttemptOutcome::Fatal(
+                        http::error_response(
+                            StatusCode::BAD_GATEWAY,
+                            "No available Codex account remained after failover.",
+                        ),
+                    ));
+                }
+            },
+            Err(err) => {
+                return CodexFailoverResult::Resolved(AttemptOutcome::Fatal(
+                    http::error_response(StatusCode::UNAUTHORIZED, err),
+                ));
+            }
+        };
+
+        let mut retry_upstream = upstream.clone();
+        retry_upstream.codex_account_id = Some(next_account_id.clone());
+        let retry = attempt_send(
+            state,
+            method.clone(),
+            provider,
+            &retry_upstream,
+            inbound_path,
+            upstream_path_with_query,
+            headers,
+            body,
+            meta,
+            request_auth,
+            request_detail.as_ref(),
+        )
+        .await;
+        excluded_account_ids.push(next_account_id);
+
+        let should_retry_again = failover_selected_account_id(provider, upstream, &retry).is_some();
+        if !should_retry_again {
+            return match retry {
+                Ok(attempt) => CodexFailoverResult::Resolved(
+                    finalize_attempt(
+                        state,
+                        provider,
+                        &retry_upstream,
+                        inbound_path,
+                        response_transform,
+                        request_detail,
+                        attempt,
+                    )
+                    .await,
+                ),
+                Err(failure) => CodexFailoverResult::Resolved(failure.outcome),
+            };
+        }
+        last_retry = Some(retry.map(|attempt| (retry_upstream, attempt)));
+    }
+}
+
+fn failover_selected_account_id(
+    provider: &str,
+    upstream: &UpstreamRuntime,
+    attempt: &Result<UpstreamAttempt, UpstreamAttemptFailure>,
+) -> Option<String> {
+    if provider != "codex"
+        || upstream
+            .codex_account_id
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty())
+    {
+        return None;
+    }
+
+    match attempt {
+        Ok(attempt) if should_failover_codex_account(provider, &attempt.response) => {
+            attempt.selected_account_id.clone()
+        }
+        Err(failure) => failure.selected_account_id.clone(),
+        _ => None,
+    }
+}
+
+fn should_failover_codex_account(provider: &str, response: &reqwest::Response) -> bool {
+    provider == "codex" && !response.status().is_success()
 }
 
 async fn attempt_send(
@@ -194,7 +354,7 @@ async fn attempt_send(
     meta: &RequestMeta,
     request_auth: &crate::proxy::http::RequestAuth,
     request_detail: Option<&RequestDetailSnapshot>,
-) -> Result<UpstreamAttempt, AttemptOutcome> {
+) -> Result<UpstreamAttempt, UpstreamAttemptFailure> {
     let prepared = super::prepare_upstream_request(
         state,
         provider,
@@ -205,13 +365,18 @@ async fn attempt_send(
         meta,
         request_auth,
     )
-    .await?;
+    .await
+    .map_err(|outcome| UpstreamAttemptFailure {
+        outcome,
+        selected_account_id: None,
+    })?;
     let PreparedUpstreamRequest {
         upstream_path_with_query,
         upstream_url,
         request_headers,
+        proxy_url,
+        selected_account_id,
         meta,
-        antigravity,
     } = prepared;
     let start_time = Instant::now();
     let response = send_upstream_request(
@@ -222,16 +387,22 @@ async fn attempt_send(
         inbound_path,
         &upstream_path_with_query,
         &upstream_url,
+        proxy_url.as_deref(),
         &request_headers,
         body,
         &meta,
-        antigravity.as_ref(),
+        selected_account_id.as_deref(),
         request_detail,
         start_time,
     )
-    .await?;
+    .await
+    .map_err(|outcome| UpstreamAttemptFailure {
+        outcome,
+        selected_account_id: selected_account_id.clone(),
+    })?;
     Ok(UpstreamAttempt {
         response,
+        selected_account_id,
         meta,
         start_time,
     })
@@ -245,10 +416,11 @@ async fn send_upstream_request(
     inbound_path: &str,
     upstream_path_with_query: &str,
     upstream_url: &str,
+    proxy_url: Option<&str>,
     request_headers: &HeaderMap,
     body: &ReplayableBody,
     meta: &RequestMeta,
-    antigravity: Option<&super::AntigravityRequestInfo>,
+    selected_account_id: Option<&str>,
     request_detail: Option<&RequestDetailSnapshot>,
     start_time: Instant,
 ) -> Result<reqwest::Response, AttemptOutcome> {
@@ -261,27 +433,11 @@ async fn send_upstream_request(
             inbound_path,
             upstream_path_with_query,
             upstream_url,
+            proxy_url,
             request_headers,
             body,
             meta,
-            antigravity,
-            request_detail,
-            start_time,
-        )
-        .await;
-    }
-    if provider == "antigravity" {
-        return send_antigravity_with_fallback(
-            state,
-            method,
-            provider,
-            upstream,
-            inbound_path,
-            upstream_path_with_query,
-            request_headers,
-            body,
-            meta,
-            antigravity,
+            selected_account_id,
             request_detail,
             start_time,
         )
@@ -295,109 +451,15 @@ async fn send_upstream_request(
         inbound_path,
         upstream_path_with_query,
         upstream_url,
+        proxy_url,
         request_headers,
         body,
         meta,
-        antigravity,
+        selected_account_id,
         request_detail,
         start_time,
     )
     .await
-}
-
-async fn send_antigravity_with_fallback(
-    state: &ProxyState,
-    method: Method,
-    provider: &str,
-    upstream: &UpstreamRuntime,
-    inbound_path: &str,
-    upstream_path_with_query: &str,
-    request_headers: &HeaderMap,
-    body: &ReplayableBody,
-    meta: &RequestMeta,
-    antigravity: Option<&super::AntigravityRequestInfo>,
-    request_detail: Option<&RequestDetailSnapshot>,
-    start_time: Instant,
-) -> Result<reqwest::Response, AttemptOutcome> {
-    let urls = antigravity_fallback_urls(&upstream.base_url, upstream_path_with_query);
-    let request_headers = antigravity_request_headers(request_headers, meta, antigravity);
-    log_debug_headers_body(
-        "upstream.request",
-        Some(&request_headers),
-        Some(body),
-        DEBUG_UPSTREAM_LOG_LIMIT_BYTES,
-    )
-    .await;
-    let mut last_transport: Option<reqwest::Error> = None;
-    let mut saw_timeout = false;
-    for (idx, url) in urls.iter().enumerate() {
-        let upstream_body = request::build_upstream_body(
-            provider,
-            upstream,
-            upstream_path_with_query,
-            body,
-            meta,
-            antigravity,
-        )
-        .await?;
-        match send_request_once(
-            state
-                .http_clients
-                .client_for_proxy_url(upstream.proxy_url.as_deref())
-                .map_err(|message| {
-                    AttemptOutcome::Fatal(http::error_response(StatusCode::BAD_GATEWAY, message))
-                })?,
-            &method,
-            url,
-            &request_headers,
-            upstream_body,
-            state.config.upstream_no_data_timeout,
-        )
-        .await
-        {
-            Ok(response) => {
-                let status = response.status();
-                // Align with CLIProxyAPIPlus: Antigravity endpoints may return 404 on one base URL
-                // while succeeding on another; try fallbacks on 404 as well.
-                if (super::utils::is_retryable_status(status) || status == StatusCode::NOT_FOUND)
-                    && idx + 1 < urls.len()
-                {
-                    let _ = response.bytes().await;
-                    continue;
-                }
-                return Ok(response);
-            }
-            Err(SendFailure::Timeout) => saw_timeout = true,
-            Err(SendFailure::Transport(err)) => last_transport = Some(err),
-        }
-    }
-    if saw_timeout {
-        return Err(handle_upstream_timeout(
-            state,
-            provider,
-            upstream,
-            inbound_path,
-            meta,
-            request_detail,
-            start_time,
-        ));
-    }
-    if let Some(err) = last_transport {
-        return Err(map_upstream_error(
-            state,
-            provider,
-            upstream,
-            inbound_path,
-            meta,
-            request_detail,
-            err,
-            start_time,
-        ));
-    }
-    Err(AttemptOutcome::Fatal(http::error_response(
-        StatusCode::BAD_GATEWAY,
-        "Antigravity upstream request failed.".to_string(),
-    )))
 }
 
 async fn send_codex_request(
@@ -408,14 +470,15 @@ async fn send_codex_request(
     inbound_path: &str,
     upstream_path_with_query: &str,
     upstream_url: &str,
+    proxy_url: Option<&str>,
     request_headers: &HeaderMap,
     body: &ReplayableBody,
     meta: &RequestMeta,
-    antigravity: Option<&super::AntigravityRequestInfo>,
+    selected_account_id: Option<&str>,
     request_detail: Option<&RequestDetailSnapshot>,
     start_time: Instant,
 ) -> Result<reqwest::Response, AttemptOutcome> {
-    let Some(proxy_url) = upstream.proxy_url.as_deref() else {
+    let Some(proxy_url) = proxy_url else {
         return send_upstream_request_once(
             state,
             method,
@@ -424,10 +487,11 @@ async fn send_codex_request(
             inbound_path,
             upstream_path_with_query,
             upstream_url,
+            proxy_url,
             request_headers,
             body,
             meta,
-            antigravity,
+            selected_account_id,
             request_detail,
             start_time,
         )
@@ -444,6 +508,7 @@ async fn send_codex_request(
         request_headers,
         body,
         meta,
+        selected_account_id,
         request_detail,
         start_time,
         proxy_url,
@@ -459,10 +524,11 @@ async fn send_upstream_request_once(
     inbound_path: &str,
     upstream_path_with_query: &str,
     upstream_url: &str,
+    proxy_url: Option<&str>,
     request_headers: &HeaderMap,
     body: &ReplayableBody,
     meta: &RequestMeta,
-    antigravity: Option<&super::AntigravityRequestInfo>,
+    selected_account_id: Option<&str>,
     request_detail: Option<&RequestDetailSnapshot>,
     start_time: Instant,
 ) -> Result<reqwest::Response, AttemptOutcome> {
@@ -475,19 +541,13 @@ async fn send_upstream_request_once(
     .await;
     let client = state
         .http_clients
-        .client_for_proxy_url(upstream.proxy_url.as_deref())
+        .client_for_proxy_url(proxy_url)
         .map_err(|message| {
             AttemptOutcome::Fatal(http::error_response(StatusCode::BAD_GATEWAY, message))
         })?;
-    let upstream_body = request::build_upstream_body(
-        provider,
-        upstream,
-        upstream_path_with_query,
-        body,
-        meta,
-        antigravity,
-    )
-    .await?;
+    let upstream_body =
+        request::build_upstream_body(provider, upstream, upstream_path_with_query, body, meta)
+            .await?;
     match send_request_once(
         client,
         &method,
@@ -505,6 +565,7 @@ async fn send_upstream_request_once(
             upstream,
             inbound_path,
             meta,
+            selected_account_id,
             request_detail,
             err,
             start_time,
@@ -515,6 +576,7 @@ async fn send_upstream_request_once(
             upstream,
             inbound_path,
             meta,
+            selected_account_id,
             request_detail,
             start_time,
         )),
@@ -532,6 +594,7 @@ async fn send_codex_with_fallback(
     request_headers: &HeaderMap,
     body: &ReplayableBody,
     meta: &RequestMeta,
+    selected_account_id: Option<&str>,
     request_detail: Option<&RequestDetailSnapshot>,
     start_time: Instant,
     proxy_url: &str,
@@ -551,6 +614,7 @@ async fn send_codex_with_fallback(
             request_headers,
             body,
             meta,
+            selected_account_id,
             request_detail,
             start_time,
             &attempt,
@@ -568,6 +632,7 @@ async fn send_codex_with_fallback(
         upstream,
         inbound_path,
         meta,
+        selected_account_id,
         request_detail,
         start_time,
         last_error,
@@ -585,6 +650,7 @@ async fn send_codex_attempt(
     request_headers: &HeaderMap,
     body: &ReplayableBody,
     meta: &RequestMeta,
+    selected_account_id: Option<&str>,
     request_detail: Option<&RequestDetailSnapshot>,
     start_time: Instant,
     attempt: &CodexSendAttempt,
@@ -604,16 +670,10 @@ async fn send_codex_attempt(
             )))
         },
     )?;
-    let upstream_body = request::build_upstream_body(
-        provider,
-        upstream,
-        upstream_path_with_query,
-        body,
-        meta,
-        None,
-    )
-    .await
-    .map_err(CodexAttemptError::Fatal)?;
+    let upstream_body =
+        request::build_upstream_body(provider, upstream, upstream_path_with_query, body, meta)
+            .await
+            .map_err(CodexAttemptError::Fatal)?;
     match send_request_once(
         client,
         method,
@@ -631,6 +691,7 @@ async fn send_codex_attempt(
             upstream,
             inbound_path,
             meta,
+            selected_account_id,
             request_detail,
             start_time,
         ))),
@@ -644,6 +705,7 @@ async fn send_codex_attempt(
                 upstream,
                 inbound_path,
                 meta,
+                selected_account_id,
                 request_detail,
                 err,
                 start_time,
@@ -658,6 +720,7 @@ fn finalize_codex_fallback(
     upstream: &UpstreamRuntime,
     inbound_path: &str,
     meta: &RequestMeta,
+    selected_account_id: Option<&str>,
     request_detail: Option<&RequestDetailSnapshot>,
     start_time: Instant,
     last_error: Option<reqwest::Error>,
@@ -674,6 +737,7 @@ fn finalize_codex_fallback(
         upstream,
         inbound_path,
         meta,
+        selected_account_id,
         request_detail,
         err,
         start_time,
@@ -749,58 +813,6 @@ fn upgrade_socks5(proxy_url: &str) -> Option<String> {
     None
 }
 
-fn antigravity_fallback_urls(base_url: &str, path: &str) -> Vec<String> {
-    let mut urls = Vec::new();
-    let path = if path.starts_with('/') {
-        path.to_string()
-    } else {
-        format!("/{path}")
-    };
-    let base_url = base_url.trim_end_matches('/');
-    let bases = if base_url.is_empty() || base_url == antigravity_endpoints::BASE_URL_PROD {
-        antigravity_endpoints::BASE_URLS
-            .iter()
-            .map(|base| base.to_string())
-            .collect::<Vec<_>>()
-    } else {
-        antigravity_endpoints::build_base_url_list(base_url)
-    };
-    for base in bases {
-        let base = base.trim_end_matches('/');
-        urls.push(format!("{base}{path}"));
-    }
-    urls
-}
-
-fn antigravity_request_headers(
-    base: &HeaderMap,
-    meta: &RequestMeta,
-    antigravity: Option<&super::AntigravityRequestInfo>,
-) -> HeaderMap {
-    // Align with CLIProxyAPIPlus: only forward essential headers to Antigravity.
-    // Do NOT pass through inbound headers (e.g. anthropic-beta/x-stainless), as they can
-    // trigger upstream validation errors.
-    let mut headers = HeaderMap::new();
-    if let Some(value) = base.get(AUTHORIZATION).cloned() {
-        headers.insert(AUTHORIZATION, value);
-    }
-    let user_agent = antigravity
-        .map(|info| info.user_agent.clone())
-        .unwrap_or_else(antigravity_endpoints::default_user_agent);
-    if let Ok(value) = HeaderValue::from_str(&user_agent) {
-        headers.insert(USER_AGENT, value);
-    }
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    headers.insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
-    let accept = if meta.stream {
-        "text/event-stream"
-    } else {
-        "application/json"
-    };
-    headers.insert(ACCEPT, HeaderValue::from_static(accept));
-    headers
-}
-
 fn build_codex_client(proxy_url: Option<&str>, http1_only: bool) -> Result<Client, String> {
     let mut builder = Client::builder();
     if let Some(proxy_url) = proxy_url.map(str::trim).filter(|value| !value.is_empty()) {
@@ -828,6 +840,7 @@ fn handle_upstream_timeout(
     upstream: &UpstreamRuntime,
     inbound_path: &str,
     meta: &RequestMeta,
+    selected_account_id: Option<&str>,
     request_detail: Option<&RequestDetailSnapshot>,
     start_time: Instant,
 ) -> AttemptOutcome {
@@ -841,6 +854,7 @@ fn handle_upstream_timeout(
         meta,
         provider,
         &upstream.id,
+        selected_account_id,
         inbound_path,
         StatusCode::GATEWAY_TIMEOUT,
         message.clone(),
@@ -860,6 +874,7 @@ fn map_upstream_error(
     upstream: &UpstreamRuntime,
     inbound_path: &str,
     meta: &RequestMeta,
+    selected_account_id: Option<&str>,
     request_detail: Option<&RequestDetailSnapshot>,
     err: reqwest::Error,
     start_time: Instant,
@@ -877,6 +892,7 @@ fn map_upstream_error(
             meta,
             provider,
             &upstream.id,
+            selected_account_id,
             inbound_path,
             status,
             message.clone(),
@@ -896,6 +912,7 @@ fn map_upstream_error(
         meta,
         provider,
         &upstream.id,
+        selected_account_id,
         inbound_path,
         StatusCode::BAD_GATEWAY,
         error_message.clone(),

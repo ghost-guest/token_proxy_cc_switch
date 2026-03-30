@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS request_logs (
   path TEXT NOT NULL,
   provider TEXT NOT NULL,
   upstream_id TEXT NOT NULL,
+  account_id TEXT,
   model TEXT,
   mapped_model TEXT,
   stream INTEGER NOT NULL,
@@ -134,6 +135,39 @@ CREATE TABLE IF NOT EXISTS request_logs (
     .execute(pool)
     .await
     .map_err(|err| format!("Failed to create idx_request_logs_ts_latency: {err}"))?;
+
+    sqlx::query(
+        r#"
+CREATE TABLE IF NOT EXISTS provider_accounts (
+  provider_kind TEXT NOT NULL,
+  account_id TEXT PRIMARY KEY,
+  email TEXT,
+  expires_at TEXT,
+  expires_at_ms INTEGER,
+  auth_method TEXT,
+  provider_name TEXT,
+  record_json TEXT NOT NULL,
+  updated_at_ms INTEGER NOT NULL
+);
+"#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|err| format!("Failed to create provider_accounts table: {err}"))?;
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_provider_accounts_kind_account_id ON provider_accounts(provider_kind, account_id);",
+    )
+    .execute(pool)
+    .await
+    .map_err(|err| format!("Failed to create idx_provider_accounts_kind_account_id: {err}"))?;
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_provider_accounts_email ON provider_accounts(email);",
+    )
+    .execute(pool)
+    .await
+    .map_err(|err| format!("Failed to create idx_provider_accounts_email: {err}"))?;
 
     Ok(())
 }
@@ -189,5 +223,37 @@ async fn ensure_request_logs_columns(pool: &SqlitePool) -> Result<(), String> {
             .map_err(|err| format!("Failed to add response_error column: {err}"))?;
     }
 
+    if !columns.contains("account_id") {
+        sqlx::query("ALTER TABLE request_logs ADD COLUMN account_id TEXT;")
+            .execute(pool)
+            .await
+            .map_err(|err| format!("Failed to add account_id column: {err}"))?;
+    }
+
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn init_schema_creates_provider_accounts_table() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect sqlite");
+
+        init_schema(&pool).await.expect("init schema");
+
+        let row = sqlx::query(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'provider_accounts';",
+        )
+        .fetch_optional(&pool)
+        .await
+        .expect("query sqlite_master");
+
+        assert!(row.is_some(), "provider_accounts table should exist");
+    }
 }

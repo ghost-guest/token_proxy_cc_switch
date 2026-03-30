@@ -6,11 +6,16 @@ use time::OffsetDateTime;
 pub struct CodexTokenRecord {
     pub access_token: String,
     pub refresh_token: String,
+    #[serde(default)]
     pub id_token: String,
+    #[serde(default = "default_auto_refresh_enabled")]
+    pub auto_refresh_enabled: bool,
     pub account_id: Option<String>,
     pub email: Option<String>,
     pub expires_at: String,
     pub last_refresh: Option<String>,
+    #[serde(default)]
+    pub proxy_url: Option<String>,
 }
 
 impl CodexTokenRecord {
@@ -51,6 +56,12 @@ pub struct CodexAccountSummary {
     pub email: Option<String>,
     pub expires_at: Option<String>,
     pub status: CodexAccountStatus,
+    pub auto_refresh_enabled: bool,
+    pub proxy_url: Option<String>,
+}
+
+fn default_auto_refresh_enabled() -> bool {
+    true
 }
 
 #[derive(Clone, Serialize, PartialEq, Eq)]

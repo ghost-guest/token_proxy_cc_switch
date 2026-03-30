@@ -22,9 +22,6 @@ import {
   toStatusLabel,
 } from "@/features/config/cards/upstreams/constants";
 import type { UpstreamColumnDefinition, UpstreamColumnId } from "@/features/config/cards/upstreams/types";
-import type { CodexAccountSummary } from "@/features/codex/types";
-import type { KiroAccountSummary } from "@/features/kiro/types";
-import type { AntigravityAccountSummary } from "@/features/antigravity/types";
 import {
   UPSTREAM_DISPATCH_STRATEGIES,
   UPSTREAM_ORDER_STRATEGIES,
@@ -241,17 +238,13 @@ function UpstreamsTableHeader({ columns }: UpstreamsTableHeaderProps) {
             {column.label()}
           </th>
         ))}
-        <th className="w-[9rem] px-3 py-2 text-right text-xs font-medium text-muted-foreground">
+        <th className="sticky right-0 z-20 w-[9rem] border-l border-border/40 bg-background/95 px-3 py-2 text-right text-xs font-medium text-muted-foreground">
           {m.common_actions()}
         </th>
       </tr>
     </thead>
   );
 }
-
-type KiroAccountMap = Map<string, KiroAccountSummary>;
-type CodexAccountMap = Map<string, CodexAccountSummary>;
-type AntigravityAccountMap = Map<string, AntigravityAccountSummary>;
 
 function renderTextCell(value: string, placeholder: string) {
   const trimmed = value.trim();
@@ -272,52 +265,6 @@ function renderPriorityCell(value: string) {
   );
 }
 
-function renderAccountCell(
-  upstream: UpstreamForm,
-  kiroAccounts: KiroAccountMap,
-  codexAccounts: CodexAccountMap,
-  antigravityAccounts: AntigravityAccountMap,
-) {
-  const provider =
-    upstream.providers.map((value) => value.trim()).filter(Boolean)[0] ?? "";
-  if (provider === "kiro") {
-    const accountId = upstream.kiroAccountId.trim();
-    if (!accountId) {
-      return renderTextCell("", m.kiro_account_unset());
-    }
-    const account = kiroAccounts.get(accountId);
-    if (!account) {
-      return renderTextCell("", m.kiro_account_missing());
-    }
-    return renderTextCell(account.account_id, m.kiro_account_unset());
-  }
-  if (provider === "codex") {
-    const accountId = upstream.codexAccountId.trim();
-    if (!accountId) {
-      return renderTextCell("", m.codex_account_unset());
-    }
-    const account = codexAccounts.get(accountId);
-    if (!account) {
-      return renderTextCell("", m.codex_account_missing());
-    }
-    const label = account.email?.trim() ? account.email : account.account_id;
-    return renderTextCell(label, m.codex_account_unset());
-  }
-  if (provider === "antigravity") {
-    const accountId = upstream.antigravityAccountId.trim();
-    if (!accountId) {
-      return renderTextCell("", m.antigravity_account_unset());
-    }
-    const account = antigravityAccounts.get(accountId);
-    if (!account) {
-      return renderTextCell("", m.antigravity_account_missing());
-    }
-    const label = account.email?.trim() ? account.email : account.account_id;
-    return renderTextCell(label, m.antigravity_account_unset());
-  }
-  return renderTextCell("", CELL_PLACEHOLDER);
-}
-
 function renderApiKeyCell(upstream: UpstreamForm, showApiKeys: boolean) {
   const value = showApiKeys ? upstream.apiKeys : toMaskedApiKey(upstream.apiKeys);
   return renderTextCell(value, m.common_optional());
@@ -333,9 +280,6 @@ function renderUpstreamCell(
   columnId: UpstreamColumnId,
   upstream: UpstreamForm,
   showApiKeys: boolean,
-  kiroAccounts: KiroAccountMap,
-  codexAccounts: CodexAccountMap,
-  antigravityAccounts: AntigravityAccountMap,
 ) {
   const providerLabel = upstream.providers
     .map((value) => value.trim())
@@ -346,8 +290,6 @@ function renderUpstreamCell(
       return renderTextCell(upstream.id, "openai-default");
     case "provider":
       return renderTextCell(providerLabel, "openai");
-    case "account":
-      return renderAccountCell(upstream, kiroAccounts, codexAccounts, antigravityAccounts);
     case "baseUrl":
       return renderTextCell(upstream.baseUrl, "https://api.openai.com");
     case "apiKeys":
@@ -368,6 +310,7 @@ function renderUpstreamCell(
 type UpstreamRowActionsProps = {
   rowLabel: string;
   enabled: boolean;
+  disableCopy: boolean;
   disableDelete: boolean;
   onEdit: () => void;
   onCopy: () => void;
@@ -378,6 +321,7 @@ type UpstreamRowActionsProps = {
 function UpstreamRowActions({
   rowLabel,
   enabled,
+  disableCopy,
   disableDelete,
   onEdit,
   onCopy,
@@ -385,7 +329,7 @@ function UpstreamRowActions({
   onDelete,
 }: UpstreamRowActionsProps) {
   return (
-    <td className="w-[9rem] px-3 py-2 align-top">
+    <td className="sticky right-0 z-10 w-[9rem] border-l border-border/40 bg-background/95 px-3 py-2 align-top backdrop-blur-xs group-hover:bg-muted/50">
       <div className="flex justify-end gap-1">
         <Button
           type="button"
@@ -401,6 +345,7 @@ function UpstreamRowActions({
           variant="ghost"
           size="icon-sm"
           onClick={onCopy}
+          disabled={disableCopy}
           aria-label={m.upstreams_row_copy({ rowLabel })}
         >
           <Copy className="size-4" aria-hidden="true" />
@@ -439,10 +384,9 @@ type UpstreamsTableRowProps = {
   displayIndex: number;
   columns: readonly UpstreamColumnDefinition[];
   showApiKeys: boolean;
-  kiroAccounts: KiroAccountMap;
-  codexAccounts: CodexAccountMap;
-  antigravityAccounts: AntigravityAccountMap;
   disableDelete: boolean;
+  isCopyDisabled?: (upstream: UpstreamForm) => boolean;
+  isDeleteDisabled?: (upstream: UpstreamForm) => boolean;
   onEdit: (index: number) => void;
   onCopy: (index: number) => void;
   onToggleEnabled: (index: number) => void;
@@ -455,39 +399,34 @@ function UpstreamsTableRow({
   displayIndex,
   columns,
   showApiKeys,
-  kiroAccounts,
-  codexAccounts,
-  antigravityAccounts,
   disableDelete,
+  isCopyDisabled,
+  isDeleteDisabled,
   onEdit,
   onCopy,
   onToggleEnabled,
   onDelete,
 }: UpstreamsTableRowProps) {
   const rowLabel = getUpstreamLabel(displayIndex);
+  const copyDisabled = isCopyDisabled?.(upstream) === true;
+  const deleteDisabled = disableDelete || isDeleteDisabled?.(upstream) === true;
   return (
-    <tr className="border-b border-border/40 last:border-b-0">
+    <tr className="group border-b border-border/40 last:border-b-0">
       {columns.map((column) => (
         <td
           key={column.id}
           className={["px-3 py-2 align-top", column.cellClassName].filter(Boolean).join(" ")}
         >
           <div className="flex h-8 min-w-0 items-center">
-            {renderUpstreamCell(
-              column.id,
-              upstream,
-              showApiKeys,
-              kiroAccounts,
-              codexAccounts,
-              antigravityAccounts
-            )}
+            {renderUpstreamCell(column.id, upstream, showApiKeys)}
           </div>
         </td>
       ))}
       <UpstreamRowActions
         rowLabel={rowLabel}
         enabled={upstream.enabled}
-        disableDelete={disableDelete}
+        disableCopy={copyDisabled}
+        disableDelete={deleteDisabled}
         onEdit={() => onEdit(upstreamIndex)}
         onCopy={() => onCopy(upstreamIndex)}
         onToggleEnabled={() => onToggleEnabled(upstreamIndex)}
@@ -501,10 +440,9 @@ export type UpstreamsTableProps = {
   upstreams: UpstreamForm[];
   columns: readonly UpstreamColumnDefinition[];
   showApiKeys: boolean;
-  kiroAccounts: KiroAccountMap;
-  codexAccounts: CodexAccountMap;
-  antigravityAccounts: AntigravityAccountMap;
   disableDelete: boolean;
+  isCopyDisabled?: (upstream: UpstreamForm) => boolean;
+  isDeleteDisabled?: (upstream: UpstreamForm) => boolean;
   onEdit: (index: number) => void;
   onCopy: (index: number) => void;
   onToggleEnabled: (index: number) => void;
@@ -546,10 +484,9 @@ export function UpstreamsTable({
   upstreams,
   columns,
   showApiKeys,
-  kiroAccounts,
-  codexAccounts,
-  antigravityAccounts,
   disableDelete,
+  isCopyDisabled,
+  isDeleteDisabled,
   onEdit,
   onCopy,
   onToggleEnabled,
@@ -570,10 +507,9 @@ export function UpstreamsTable({
                 displayIndex={displayIndex}
                 columns={columns}
                 showApiKeys={showApiKeys}
-                kiroAccounts={kiroAccounts}
-                codexAccounts={codexAccounts}
-                antigravityAccounts={antigravityAccounts}
                 disableDelete={disableDelete}
+                isCopyDisabled={isCopyDisabled}
+                isDeleteDisabled={isDeleteDisabled}
                 onEdit={onEdit}
                 onCopy={onCopy}
                 onToggleEnabled={onToggleEnabled}

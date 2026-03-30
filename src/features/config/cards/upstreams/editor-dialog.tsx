@@ -14,9 +14,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { getUpstreamLabel } from "@/features/config/cards/upstreams/constants";
 import { UpstreamEditorFields } from "@/features/config/cards/upstreams/editor-dialog-form";
 import type { UpstreamEditorState } from "@/features/config/cards/upstreams/types";
-import type { AntigravityAccountSummary } from "@/features/antigravity/types";
-import type { CodexAccountSummary } from "@/features/codex/types";
-import type { KiroAccountSummary } from "@/features/kiro/types";
 import type { UpstreamForm } from "@/features/config/types";
 import { m } from "@/paraglide/messages.js";
 
@@ -29,18 +26,6 @@ type UpstreamEditorDialogProps = {
   onOpenChange: (open: boolean) => void;
   onChangeDraft: (patch: Partial<UpstreamForm>) => void;
   onSave: () => void;
-  kiroAccounts: KiroAccountSummary[];
-  kiroAccountsLoading: boolean;
-  kiroAccountsError: string;
-  onRefreshKiroAccounts: () => void;
-  codexAccounts: CodexAccountSummary[];
-  codexAccountsLoading: boolean;
-  codexAccountsError: string;
-  onRefreshCodexAccounts: () => void;
-  antigravityAccounts: AntigravityAccountSummary[];
-  antigravityAccountsLoading: boolean;
-  antigravityAccountsError: string;
-  onRefreshAntigravityAccounts: () => void;
 };
 
 export function UpstreamEditorDialog({
@@ -52,18 +37,6 @@ export function UpstreamEditorDialog({
   onOpenChange,
   onChangeDraft,
   onSave,
-  kiroAccounts,
-  kiroAccountsLoading,
-  kiroAccountsError,
-  onRefreshKiroAccounts,
-  codexAccounts,
-  codexAccountsLoading,
-  codexAccountsError,
-  onRefreshCodexAccounts,
-  antigravityAccounts,
-  antigravityAccountsLoading,
-  antigravityAccountsError,
-  onRefreshAntigravityAccounts,
 }: UpstreamEditorDialogProps) {
   const title = editor.open
     ? editor.mode === "create"
@@ -102,18 +75,6 @@ export function UpstreamEditorDialog({
               showApiKeys={showApiKeys}
               onToggleApiKeys={onToggleApiKeys}
               onChangeDraft={onChangeDraft}
-              kiroAccounts={kiroAccounts}
-              kiroAccountsLoading={kiroAccountsLoading}
-              kiroAccountsError={kiroAccountsError}
-              onRefreshKiroAccounts={onRefreshKiroAccounts}
-              codexAccounts={codexAccounts}
-              codexAccountsLoading={codexAccountsLoading}
-              codexAccountsError={codexAccountsError}
-              onRefreshCodexAccounts={onRefreshCodexAccounts}
-              antigravityAccounts={antigravityAccounts}
-              antigravityAccountsLoading={antigravityAccountsLoading}
-              antigravityAccountsError={antigravityAccountsError}
-              onRefreshAntigravityAccounts={onRefreshAntigravityAccounts}
             />
           ) : null}
         </AlertDialogBody>
@@ -127,4 +88,3 @@ export function UpstreamEditorDialog({
     </AlertDialog>
   );
 }
-
