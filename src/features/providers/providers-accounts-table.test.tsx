@@ -40,6 +40,101 @@ function buildRow(index: number): ProviderAccountTableRow {
 }
 
 describe("providers/providers-accounts-table", () => {
+  it("uses a compact ID header for the account id column", () => {
+    const rows = [buildRow(1)];
+
+    render(
+      <ProvidersAccountsTableSection
+        rows={rows}
+        loading={false}
+        error=""
+        page={1}
+        totalPages={1}
+        totalItems={rows.length}
+        onPrevPage={() => undefined}
+        onNextPage={() => undefined}
+        onRefresh={vi.fn(async () => undefined)}
+        onLogout={vi.fn(async () => undefined)}
+        onBatchDelete={vi.fn(async () => undefined)}
+        onSaveProxyUrl={vi.fn(async () => undefined)}
+        onRefreshQuota={vi.fn(async () => undefined)}
+        onToggleStatus={vi.fn(async () => undefined)}
+        onToggleAutoRefresh={vi.fn(async () => undefined)}
+      />
+    );
+
+    expect(screen.getByRole("columnheader", { name: "ID" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("columnheader", { name: m.providers_table_account_id() })
+    ).not.toBeInTheDocument();
+  });
+
+  it("constrains the account column width and shows tooltip for truncated account names", async () => {
+    const user = userEvent.setup();
+    const longDisplayName = "very-long-account-name-for-tooltip-display@example.com";
+    const rows = [{ ...buildRow(1), displayName: longDisplayName }];
+
+    render(
+      <ProvidersAccountsTableSection
+        rows={rows}
+        loading={false}
+        error=""
+        page={1}
+        totalPages={1}
+        totalItems={rows.length}
+        onPrevPage={() => undefined}
+        onNextPage={() => undefined}
+        onRefresh={vi.fn(async () => undefined)}
+        onLogout={vi.fn(async () => undefined)}
+        onBatchDelete={vi.fn(async () => undefined)}
+        onSaveProxyUrl={vi.fn(async () => undefined)}
+        onRefreshQuota={vi.fn(async () => undefined)}
+        onToggleStatus={vi.fn(async () => undefined)}
+        onToggleAutoRefresh={vi.fn(async () => undefined)}
+      />
+    );
+
+    expect(screen.getByRole("columnheader", { name: m.providers_table_account() })).toHaveClass(
+      "w-[10rem]"
+    );
+
+    const accountNameCell = screen.getByText(longDisplayName);
+    expect(accountNameCell).toHaveClass("max-w-[10rem]", "truncate");
+
+    await user.hover(accountNameCell);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(longDisplayName);
+  });
+
+  it("shows tooltip for truncated account id cells on hover", async () => {
+    const user = userEvent.setup();
+    const longAccountId = "codex-account-with-a-very-long-id-for-tooltip-display.json";
+    const rows = [{ ...buildRow(1), accountId: longAccountId }];
+
+    render(
+      <ProvidersAccountsTableSection
+        rows={rows}
+        loading={false}
+        error=""
+        page={1}
+        totalPages={1}
+        totalItems={rows.length}
+        onPrevPage={() => undefined}
+        onNextPage={() => undefined}
+        onRefresh={vi.fn(async () => undefined)}
+        onLogout={vi.fn(async () => undefined)}
+        onBatchDelete={vi.fn(async () => undefined)}
+        onSaveProxyUrl={vi.fn(async () => undefined)}
+        onRefreshQuota={vi.fn(async () => undefined)}
+        onToggleStatus={vi.fn(async () => undefined)}
+        onToggleAutoRefresh={vi.fn(async () => undefined)}
+      />
+    );
+
+    const accountIdCell = screen.getByText(longAccountId);
+    await user.hover(accountIdCell);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(longAccountId);
+  });
+
   it("renders pagination controls and changes rows when moving to next page", async () => {
     const user = userEvent.setup();
     const onRefresh = vi.fn(async () => undefined);

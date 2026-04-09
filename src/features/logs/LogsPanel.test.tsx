@@ -1,6 +1,6 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LogsPanel } from "@/features/logs/LogsPanel";
 import type { DashboardSnapshotQuery } from "@/features/dashboard/types";
@@ -39,13 +39,11 @@ const {
   readRequestDetailCaptureMock,
   setRequestDetailCaptureMock,
   readRequestLogDetailMock,
-  readAccountStateLogsMock,
 } = vi.hoisted(() => ({
   readDashboardSnapshotMock: vi.fn(),
   readRequestDetailCaptureMock: vi.fn(),
   setRequestDetailCaptureMock: vi.fn(),
   readRequestLogDetailMock: vi.fn(),
-  readAccountStateLogsMock: vi.fn(),
 }));
 
 vi.mock("@/features/dashboard/api", () => ({
@@ -56,7 +54,6 @@ vi.mock("@/features/logs/api", () => ({
   readRequestDetailCapture: readRequestDetailCaptureMock,
   setRequestDetailCapture: setRequestDetailCaptureMock,
   readRequestLogDetail: readRequestLogDetailMock,
-  readAccountStateLogs: readAccountStateLogsMock,
 }));
 
 function renderPanel() {
@@ -68,12 +65,15 @@ function renderPanel() {
 }
 
 describe("logs/LogsPanel", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
   beforeEach(() => {
     readDashboardSnapshotMock.mockReset();
     readRequestDetailCaptureMock.mockReset();
     setRequestDetailCaptureMock.mockReset();
     readRequestLogDetailMock.mockReset();
-    readAccountStateLogsMock.mockReset();
 
     readRequestDetailCaptureMock.mockResolvedValue({
       enabled: false,
@@ -105,31 +105,6 @@ describe("logs/LogsPanel", () => {
       requestBody: null,
       responseError: null,
     });
-    readAccountStateLogsMock.mockResolvedValue([
-      {
-        id: 11,
-        tsMs: 140,
-        provider: "codex",
-        accountId: "codex-a.json",
-        eventKind: "cooldown_cleared",
-        triggerKind: "success",
-        status: "active",
-        reasonDetail: null,
-        cooldownUntilMs: null,
-      },
-      {
-        id: 10,
-        tsMs: 100,
-        provider: "codex",
-        accountId: "codex-a.json",
-        eventKind: "cooldown_started",
-        triggerKind: "http_status",
-        status: "cooling_down",
-        reasonDetail: "429 retry-after=30",
-        cooldownUntilMs: 130,
-      },
-    ]);
-
     readDashboardSnapshotMock.mockImplementation(
       async ({ upstreamId }: DashboardSnapshotQuery) => {
         const base = {
@@ -302,12 +277,29 @@ describe("logs/LogsPanel", () => {
     expect(providerValues.length).toBeGreaterThan(0);
   });
 
-  it("shows recent account state logs", async () => {
+  it("renders detail fields in a left-aligned label-value layout", async () => {
+    const user = userEvent.setup();
+
     renderPanel();
 
-    expect((await screen.findAllByText(m.logs_state_events_title())).length).toBeGreaterThan(0);
-    expect((await screen.findAllByText("codex · codex-a.json")).length).toBeGreaterThan(0);
-    expect((await screen.findAllByText(m.logs_state_event_kind_cooldown_started())).length).toBeGreaterThan(0);
-    expect((await screen.findAllByText("429 retry-after=30")).length).toBeGreaterThan(0);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "alpha · openai" })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "alpha · openai" }));
+
+    await waitFor(() => {
+      expect(readRequestLogDetailMock).toHaveBeenCalledWith(1);
+    });
+
+    const statusLabel = await screen.findByText(m.dashboard_table_status());
+    expect(statusLabel.closest("div")).toHaveClass("grid", "grid-cols-[5rem_minmax(0,1fr)]");
+
+    const statusValue = screen.getByText("200");
+    expect(statusValue).toHaveClass("justify-self-start");
+
+    const latencyLabel = screen.getByText(m.dashboard_table_latency_ms());
+    expect(latencyLabel.closest("div")).toHaveClass("grid", "grid-cols-[5rem_minmax(0,1fr)]");
   });
+
 });

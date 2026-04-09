@@ -8,13 +8,6 @@ import { DataTable } from "@/components/data-table";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Sheet,
@@ -35,13 +28,11 @@ import {
   formatInteger,
 } from "@/features/dashboard/format";
 import {
-  readAccountStateLogs,
   readRequestDetailCapture,
   readRequestLogDetail,
   setRequestDetailCapture,
 } from "@/features/logs/api";
 import type {
-  AccountStateLogItem,
   RequestDetailCaptureState,
   RequestLogDetail,
 } from "@/features/logs/types";
@@ -52,13 +43,15 @@ import { m } from "@/paraglide/messages.js";
 const DETAIL_PLACEHOLDER = "—";
 const REQUEST_DETAIL_CAPTURE_EVENT = "request-detail-capture-changed";
 const CAPTURE_COUNTDOWN_TICK_MS = 1_000;
+const DETAIL_FIELD_ROW_CLASS = "grid grid-cols-[5rem_minmax(0,1fr)] items-start gap-x-3 py-1";
+const DETAIL_FIELD_LABEL_CLASS = "text-xs text-muted-foreground";
+const DETAIL_FIELD_VALUE_CLASS = "min-w-0 text-sm text-foreground justify-self-start";
 const IDLE_CAPTURE_STATE: RequestDetailCaptureState = {
   enabled: false,
   expiresAtMs: null,
 };
 
 type DetailStatus = "idle" | "loading" | "error";
-type StateLogsStatus = "idle" | "loading" | "error";
 
 type RequestDetailCaptureEvent = RequestDetailCaptureState;
 
@@ -99,9 +92,9 @@ type DetailFieldProps = {
 
 function DetailField({ label, value }: DetailFieldProps) {
   return (
-    <div className="flex items-baseline justify-between gap-2 py-1">
-      <span className="text-xs text-muted-foreground shrink-0">{label}</span>
-      <span className="text-sm text-foreground truncate text-right">
+    <div className={DETAIL_FIELD_ROW_CLASS}>
+      <span className={DETAIL_FIELD_LABEL_CLASS}>{label}</span>
+      <span className={`${DETAIL_FIELD_VALUE_CLASS} truncate`}>
         {value?.trim() || DETAIL_PLACEHOLDER}
       </span>
     </div>
@@ -137,22 +130,24 @@ function BasicInfoSection({ detail, formatter }: BasicInfoSectionProps) {
         <DetailField label={m.dashboard_table_path()} value={detail.path} />
         <DetailField label={m.dashboard_table_provider()} value={providerText} />
         {/* Model 展示逻辑与表格一致：主模型在上，映射模型在下 */}
-        <div className="flex items-baseline justify-between gap-2 py-1">
-          <span className="text-xs text-muted-foreground shrink-0">{m.dashboard_table_model()}</span>
-          <div className="flex flex-col items-end min-w-0">
-            <span className="text-sm text-foreground truncate">
+        <div className={DETAIL_FIELD_ROW_CLASS}>
+          <span className={DETAIL_FIELD_LABEL_CLASS}>{m.dashboard_table_model()}</span>
+          <div className="flex min-w-0 flex-col items-start">
+            <span className="w-full truncate text-sm text-foreground">
               {detail.model?.trim() || DETAIL_PLACEHOLDER}
             </span>
             {hasMappedModel ? (
-              <span className="text-xs text-muted-foreground truncate">
+              <span className="w-full truncate text-xs text-muted-foreground">
                 {detail.mappedModel}
               </span>
             ) : null}
           </div>
         </div>
-        <div className="flex items-center justify-between gap-2 py-1">
-          <span className="text-xs text-muted-foreground shrink-0">{m.dashboard_table_status()}</span>
-          <Badge variant={statusToVariant(detail.status)}>{detail.status}</Badge>
+        <div className={DETAIL_FIELD_ROW_CLASS}>
+          <span className={DETAIL_FIELD_LABEL_CLASS}>{m.dashboard_table_status()}</span>
+          <Badge variant={statusToVariant(detail.status)} className="justify-self-start">
+            {detail.status}
+          </Badge>
         </div>
         <DetailField label={m.logs_detail_stream()} value={streamText} />
         <DetailField
@@ -182,117 +177,6 @@ function DetailSection({ title, value }: DetailSectionProps) {
       ) : (
         <p className="text-xs text-muted-foreground">{DETAIL_PLACEHOLDER}</p>
       )}
-    </div>
-  );
-}
-
-function formatAccountStateEventKind(eventKind: string) {
-  if (eventKind === "cooldown_started") {
-    return m.logs_state_event_kind_cooldown_started();
-  }
-  if (eventKind === "cooldown_cleared") {
-    return m.logs_state_event_kind_cooldown_cleared();
-  }
-  if (eventKind === "status_changed") {
-    return m.logs_state_event_kind_status_changed();
-  }
-  return eventKind;
-}
-
-function formatAccountStateStatus(status: string) {
-  if (status === "disabled") {
-    return m.common_disabled();
-  }
-  if (status === "cooling_down") {
-    return m.providers_account_status_cooling_down();
-  }
-  if (status === "active") {
-    return m.kiro_account_status_active();
-  }
-  if (status === "expired") {
-    return m.kiro_account_status_expired();
-  }
-  return status;
-}
-
-function accountStateStatusVariant(status: string): BadgeVariant {
-  if (status === "disabled") {
-    return "secondary";
-  }
-  if (status === "cooling_down") {
-    return "destructive";
-  }
-  return "default";
-}
-
-type AccountStateLogsSectionProps = {
-  items: AccountStateLogItem[];
-  status: StateLogsStatus;
-  statusMessage: string;
-  formatter: Intl.DateTimeFormat;
-};
-
-function AccountStateLogsSection({
-  items,
-  status,
-  statusMessage,
-  formatter,
-}: AccountStateLogsSectionProps) {
-  return (
-    <div className="px-4 lg:px-6">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">{m.logs_state_events_title()}</CardTitle>
-          <CardDescription>{m.logs_state_events_desc()}</CardDescription>
-        </CardHeader>
-        <CardContent className="pt-0">
-          {status === "loading" ? (
-            <p className="text-sm text-muted-foreground">{m.logs_state_events_loading()}</p>
-          ) : null}
-          {status === "error" ? (
-            <Alert variant="destructive">
-              <AlertCircle className="size-4" aria-hidden="true" />
-              <div>
-                <AlertTitle>{m.logs_state_events_error()}</AlertTitle>
-                <AlertDescription>{statusMessage}</AlertDescription>
-              </div>
-            </Alert>
-          ) : null}
-          {status === "idle" && items.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{m.logs_state_events_empty()}</p>
-          ) : null}
-          {status === "idle" && items.length > 0 ? (
-            <div className="space-y-3">
-              {items.map((item) => (
-                <div
-                  key={item.id}
-                  className="rounded-lg border border-border/60 bg-muted/20 p-3"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-xs text-muted-foreground">
-                      {formatDashboardTimestamp(item.tsMs, formatter)}
-                    </p>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="outline">
-                        {formatAccountStateEventKind(item.eventKind)}
-                      </Badge>
-                      <Badge variant={accountStateStatusVariant(item.status)}>
-                        {formatAccountStateStatus(item.status)}
-                      </Badge>
-                    </div>
-                  </div>
-                  <p className="mt-2 text-sm font-medium text-foreground">
-                    {item.provider} · {item.accountId}
-                  </p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {item.reasonDetail?.trim() || m.logs_state_events_no_reason()}
-                  </p>
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
     </div>
   );
 }
@@ -471,7 +355,6 @@ export function LogsPanel() {
     snapshot,
     status,
     statusMessage,
-    activeRange,
     rangePreset,
     selectedUpstreamId,
     upstreamOptions,
@@ -494,9 +377,6 @@ export function LogsPanel() {
   const [detailMessage, setDetailMessage] = useState("");
   const [detail, setDetail] = useState<RequestLogDetail | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [accountStateLogs, setAccountStateLogs] = useState<AccountStateLogItem[]>([]);
-  const [accountStateStatus, setAccountStateStatus] = useState<StateLogsStatus>("loading");
-  const [accountStateMessage, setAccountStateMessage] = useState("");
 
   const isLoading = status === "loading";
   const captureEnabled = isCaptureWindowActive(captureState, captureNowMs);
@@ -639,35 +519,6 @@ export function LogsPanel() {
     };
   }, [detailOpen, selectedId]);
 
-  useEffect(() => {
-    if (!snapshot && status === "loading") {
-      return;
-    }
-    let active = true;
-    const load = async () => {
-      setAccountStateStatus("loading");
-      setAccountStateMessage("");
-      try {
-        const items = await readAccountStateLogs(activeRange);
-        if (!active) {
-          return;
-        }
-        setAccountStateLogs(items);
-        setAccountStateStatus("idle");
-      } catch (error) {
-        if (!active) {
-          return;
-        }
-        setAccountStateMessage(parseError(error));
-        setAccountStateStatus("error");
-      }
-    };
-    void load();
-    return () => {
-      active = false;
-    };
-  }, [activeRange, snapshot, status]);
-
   return (
     <div className="flex flex-col gap-4">
       {status === "error" ? (
@@ -707,13 +558,6 @@ export function LogsPanel() {
         onPrevPage={onPrevPage}
         onNextPage={onNextPage}
         onSelectItem={(item) => handleSelectItem(item.id)}
-      />
-
-      <AccountStateLogsSection
-        items={accountStateLogs}
-        status={accountStateStatus}
-        statusMessage={accountStateMessage}
-        formatter={formatter}
       />
 
       <RequestDetailSheet
