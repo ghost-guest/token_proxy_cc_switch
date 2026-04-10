@@ -521,7 +521,7 @@ impl CodexAccountStore {
         let imported_email = normalize_optional_identity(imported.email.as_deref());
         let cache = self.cache.read().await;
 
-        if let Some(account_id) = imported_account_id {
+        if let Some(account_id) = imported_account_id.as_ref() {
             if let Some((local_account_id, existing_record)) =
                 cache.iter().find(|(_, existing_record)| {
                     normalize_optional_identity(existing_record.account_id.as_deref()).as_deref()
@@ -535,8 +535,21 @@ impl CodexAccountStore {
         if let Some(email) = imported_email {
             if let Some((local_account_id, existing_record)) =
                 cache.iter().find(|(_, existing_record)| {
-                    normalize_optional_identity(existing_record.email.as_deref()).as_deref()
-                        == Some(email.as_str())
+                    let existing_email =
+                        normalize_optional_identity(existing_record.email.as_deref());
+                    if existing_email.as_deref() != Some(email.as_str()) {
+                        return false;
+                    }
+                    let existing_account_id =
+                        normalize_optional_identity(existing_record.account_id.as_deref());
+                    // Email-only fallback should never collapse two explicit workspace/account ids
+                    // into one local record. We only reuse by email when at least one side lacks
+                    // a stable account id.
+                    !matches!(
+                        (&imported_account_id, existing_account_id.as_deref()),
+                        (Some(imported_account_id), Some(existing_account_id))
+                            if imported_account_id != existing_account_id
+                    )
                 })
             {
                 return Ok(Some((local_account_id.clone(), existing_record.clone())));
@@ -1224,6 +1237,88 @@ mod tests {
                 .await
                 .expect("imported accounts should be listed");
             assert_eq!(accounts.len(), 2);
+
+            let _ = std::fs::remove_dir_all(data_dir);
+        });
+    }
+
+    #[test]
+    fn import_file_keeps_distinct_workspace_accounts_with_same_email() {
+        run_async(async {
+            let (store, data_dir) = create_test_store();
+            let first_path = data_dir.join("codex-team-a.json");
+            tokio::fs::write(
+                &first_path,
+                serde_json::to_string_pretty(&json!({
+                    "type": "codex",
+                    "access_token": "team-a-access-token",
+                    "refresh_token": "team-a-refresh-token",
+                    "expired": future_rfc3339(6),
+                    "user": {
+                        "email": "team@example.com"
+                    },
+                    "account": {
+                        "id": "acct-team-a",
+                        "structure": "team",
+                        "planType": "team"
+                    }
+                }))
+                .expect("serialize first team json"),
+            )
+            .await
+            .expect("write first team json");
+
+            let second_path = data_dir.join("codex-team-b.json");
+            tokio::fs::write(
+                &second_path,
+                serde_json::to_string_pretty(&json!({
+                    "type": "codex",
+                    "access_token": "team-b-access-token",
+                    "refresh_token": "team-b-refresh-token",
+                    "expired": future_rfc3339(12),
+                    "user": {
+                        "email": "team@example.com"
+                    },
+                    "account": {
+                        "id": "acct-team-b",
+                        "structure": "team",
+                        "planType": "team"
+                    }
+                }))
+                .expect("serialize second team json"),
+            )
+            .await
+            .expect("write second team json");
+
+            let first_imported = store
+                .import_file(first_path)
+                .await
+                .expect("first team import should succeed");
+            let second_imported = store
+                .import_file(second_path)
+                .await
+                .expect("second team import should succeed");
+
+            assert_eq!(first_imported.len(), 1);
+            assert_eq!(second_imported.len(), 1);
+            assert_ne!(first_imported[0].account_id, second_imported[0].account_id);
+
+            let accounts = store
+                .list_accounts()
+                .await
+                .expect("list accounts should succeed");
+            assert_eq!(accounts.len(), 2);
+
+            let first_record = store
+                .get_account_record(&first_imported[0].account_id)
+                .await
+                .expect("first team record should exist");
+            let second_record = store
+                .get_account_record(&second_imported[0].account_id)
+                .await
+                .expect("second team record should exist");
+            assert_eq!(first_record.account_id.as_deref(), Some("acct-team-a"));
+            assert_eq!(second_record.account_id.as_deref(), Some("acct-team-b"));
 
             let _ = std::fs::remove_dir_all(data_dir);
         });
