@@ -426,6 +426,15 @@ async fn kiro_set_proxy_url(
 }
 
 #[tauri::command]
+async fn kiro_set_priority(
+    kiro_store: tauri::State<'_, Arc<kiro::KiroAccountStore>>,
+    account_id: String,
+    priority: i32,
+) -> Result<kiro::KiroAccountSummary, String> {
+    kiro_store.set_priority(&account_id, priority).await
+}
+
+#[tauri::command]
 async fn codex_list_accounts(
     codex_store: tauri::State<'_, Arc<codex::CodexAccountStore>>,
 ) -> Result<Vec<codex::CodexAccountSummary>, String> {
@@ -505,6 +514,15 @@ async fn codex_set_proxy_url(
     codex_store
         .set_proxy_url(&account_id, proxy_url.as_deref())
         .await
+}
+
+#[tauri::command]
+async fn codex_set_priority(
+    codex_store: tauri::State<'_, Arc<codex::CodexAccountStore>>,
+    account_id: String,
+    priority: i32,
+) -> Result<codex::CodexAccountSummary, String> {
+    codex_store.set_priority(&account_id, priority).await
 }
 
 #[tauri::command]
@@ -880,6 +898,7 @@ pub fn run() {
             kiro_refresh_quota_now,
             kiro_set_status,
             kiro_set_proxy_url,
+            kiro_set_priority,
             codex_list_accounts,
             codex_import_file,
             codex_fetch_quotas,
@@ -889,6 +908,7 @@ pub fn run() {
             codex_set_auto_refresh,
             codex_set_status,
             codex_set_proxy_url,
+            codex_set_priority,
             codex_start_login,
             codex_poll_login,
             codex_logout,

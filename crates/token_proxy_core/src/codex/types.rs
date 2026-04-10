@@ -28,6 +28,10 @@ pub enum CodexAccountStatus {
     Expired,
 }
 
+fn default_account_priority() -> i32 {
+    0
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct CodexTokenRecord {
     pub access_token: String,
@@ -44,6 +48,8 @@ pub struct CodexTokenRecord {
     pub last_refresh: Option<String>,
     #[serde(default)]
     pub proxy_url: Option<String>,
+    #[serde(default = "default_account_priority")]
+    pub priority: i32,
     #[serde(default)]
     pub quota: CodexQuotaCache,
 }
@@ -88,6 +94,7 @@ pub struct CodexAccountSummary {
     pub status: CodexAccountStatus,
     pub auto_refresh_enabled: bool,
     pub proxy_url: Option<String>,
+    pub priority: i32,
 }
 
 fn default_auto_refresh_enabled() -> bool {

@@ -63,3 +63,10 @@ export async function setKiroProxyUrl(accountId: string, proxyUrl: string | null
     proxyUrl,
   });
 }
+
+export async function setKiroPriority(accountId: string, priority: number) {
+  return await invoke<KiroAccountSummary>("kiro_set_priority", {
+    accountId,
+    priority,
+  });
+}

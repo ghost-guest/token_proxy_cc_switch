@@ -49,9 +49,15 @@ impl CodexAccountStore {
                 status: record.effective_status(),
                 auto_refresh_enabled: record.auto_refresh_enabled,
                 proxy_url: record.proxy_url.clone(),
+                priority: record.priority,
             })
             .collect();
-        items.sort_by(|left, right| left.account_id.cmp(&right.account_id));
+        items.sort_by(|left, right| {
+            right
+                .priority
+                .cmp(&left.priority)
+                .then_with(|| left.account_id.cmp(&right.account_id))
+        });
         Ok(items)
     }
 
@@ -170,6 +176,16 @@ impl CodexAccountStore {
         self.save_record(account_id.to_string(), record).await
     }
 
+    pub async fn set_priority(
+        &self,
+        account_id: &str,
+        priority: i32,
+    ) -> Result<CodexAccountSummary, String> {
+        let mut record = self.load_account(account_id).await?;
+        record.priority = priority;
+        self.save_record(account_id.to_string(), record).await
+    }
+
     pub(crate) async fn save_record(
         &self,
         account_id: String,
@@ -189,6 +205,7 @@ impl CodexAccountStore {
             status: record.effective_status(),
             auto_refresh_enabled: record.auto_refresh_enabled,
             proxy_url: record.proxy_url.clone(),
+            priority: record.priority,
         })
     }
 
@@ -217,6 +234,7 @@ impl CodexAccountStore {
             if record.proxy_url.is_none() {
                 record.proxy_url = existing_record.proxy_url.clone();
             }
+            record.priority = existing_record.priority;
             return self.save_record(existing_local_account_id, record).await;
         }
         let id_part_source = record
@@ -285,6 +303,7 @@ impl CodexAccountStore {
             expires_at: expires_at_from_seconds(response.expires_in),
             last_refresh: Some(now_rfc3339()),
             proxy_url: record.proxy_url.clone(),
+            priority: record.priority,
             quota: record.quota.clone(),
         };
         fill_record_from_jwt(&mut refreshed);
@@ -362,9 +381,7 @@ impl CodexAccountStore {
             ordered_account_ids.to_vec()
         } else {
             let cache = self.cache.read().await;
-            let mut account_ids = cache.keys().cloned().collect::<Vec<_>>();
-            account_ids.sort();
-            account_ids
+            sorted_account_ids(&cache)
         };
 
         let mut last_error = None;
@@ -398,9 +415,7 @@ impl CodexAccountStore {
             ordered_account_ids.to_vec()
         } else {
             let cache = self.cache.read().await;
-            let mut account_ids = cache.keys().cloned().collect::<Vec<_>>();
-            account_ids.sort();
-            account_ids
+            sorted_account_ids(&cache)
         };
 
         for account_id in account_ids {
@@ -537,6 +552,20 @@ fn normalize_optional_identity(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| value.to_ascii_lowercase())
+}
+
+fn sorted_account_ids(cache: &HashMap<String, CodexTokenRecord>) -> Vec<String> {
+    let mut entries = cache.iter().collect::<Vec<_>>();
+    entries.sort_by(|(left_id, left_record), (right_id, right_record)| {
+        right_record
+            .priority
+            .cmp(&left_record.priority)
+            .then_with(|| left_id.cmp(right_id))
+    });
+    entries
+        .into_iter()
+        .map(|(account_id, _)| account_id.clone())
+        .collect()
 }
 
 const QUOTA_REFRESH_INTERVAL_SECONDS: i64 = 30;
@@ -762,6 +791,16 @@ fn parse_import_record(value: &Value) -> Option<CodexTokenRecord> {
         expires_at,
         last_refresh,
         proxy_url: None,
+        priority: find_i64(
+            value,
+            &[
+                &["priority"],
+                &["token_data", "priority"],
+                &["data", "priority"],
+            ],
+        )
+        .and_then(|value| i32::try_from(value).ok())
+        .unwrap_or_default(),
         quota: super::types::CodexQuotaCache::default(),
     })
 }
@@ -856,10 +895,12 @@ mod tests {
     use super::*;
     use crate::app_proxy;
     use crate::paths::TokenProxyPaths;
+    use crate::proxy::sqlite;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
     use rand::random;
     use serde_json::json;
+    use sqlx::Row;
     use std::future::Future;
     use std::path::PathBuf;
     use time::format_description::well_known::Rfc3339;
@@ -1266,6 +1307,258 @@ mod tests {
     }
 
     #[test]
+    fn list_accounts_orders_by_priority_descending() {
+        run_async(async {
+            let (store, data_dir) = create_test_store();
+            let paths = TokenProxyPaths::from_app_data_dir(data_dir.clone()).expect("test paths");
+            let pool = sqlite::open_write_pool(&paths)
+                .await
+                .expect("open sqlite pool");
+            let columns = sqlx::query("PRAGMA table_info(provider_accounts);")
+                .fetch_all(&pool)
+                .await
+                .expect("read provider_accounts schema");
+            let has_priority = columns
+                .into_iter()
+                .any(|row| row.try_get::<String, _>("name").ok().as_deref() == Some("priority"));
+            if !has_priority {
+                sqlx::query(
+                    "ALTER TABLE provider_accounts ADD COLUMN priority INTEGER NOT NULL DEFAULT 0;",
+                )
+                .execute(&pool)
+                .await
+                .expect("add priority column");
+            }
+
+            let high_expires_at = future_rfc3339(6);
+            let low_expires_at = future_rfc3339(6);
+            sqlx::query(
+                r#"
+INSERT INTO provider_accounts (
+  provider_kind,
+  account_id,
+  email,
+  expires_at,
+  expires_at_ms,
+  auth_method,
+  provider_name,
+  record_json,
+  updated_at_ms,
+  priority
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+"#,
+            )
+            .bind("codex")
+            .bind("codex-a-low.json")
+            .bind("low@example.com")
+            .bind(low_expires_at.as_str())
+            .bind(0_i64)
+            .bind(Option::<String>::None)
+            .bind(Option::<String>::None)
+            .bind(
+                json!({
+                    "access_token": "access-low",
+                    "refresh_token": "refresh-low",
+                    "id_token": build_id_token("low@example.com", "acct-low"),
+                    "auto_refresh_enabled": true,
+                    "status": "active",
+                    "account_id": "acct-low",
+                    "email": "low@example.com",
+                    "expires_at": low_expires_at,
+                    "last_refresh": null,
+                    "proxy_url": null,
+                    "priority": 1,
+                    "quota": {"plan_type": null, "quotas": [], "error": null, "checked_at": null}
+                })
+                .to_string(),
+            )
+            .bind(0_i64)
+            .bind(1_i64)
+            .execute(&pool)
+            .await
+            .expect("insert low priority account");
+
+            sqlx::query(
+                r#"
+INSERT INTO provider_accounts (
+  provider_kind,
+  account_id,
+  email,
+  expires_at,
+  expires_at_ms,
+  auth_method,
+  provider_name,
+  record_json,
+  updated_at_ms,
+  priority
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+"#,
+            )
+            .bind("codex")
+            .bind("codex-z-high.json")
+            .bind("high@example.com")
+            .bind(high_expires_at.as_str())
+            .bind(0_i64)
+            .bind(Option::<String>::None)
+            .bind(Option::<String>::None)
+            .bind(
+                json!({
+                    "access_token": "access-high",
+                    "refresh_token": "refresh-high",
+                    "id_token": build_id_token("high@example.com", "acct-high"),
+                    "auto_refresh_enabled": true,
+                    "status": "active",
+                    "account_id": "acct-high",
+                    "email": "high@example.com",
+                    "expires_at": high_expires_at,
+                    "last_refresh": null,
+                    "proxy_url": null,
+                    "priority": 9,
+                    "quota": {"plan_type": null, "quotas": [], "error": null, "checked_at": null}
+                })
+                .to_string(),
+            )
+            .bind(0_i64)
+            .bind(9_i64)
+            .execute(&pool)
+            .await
+            .expect("insert high priority account");
+
+            let accounts = store.list_accounts().await.expect("list accounts");
+            let ordered_ids = accounts
+                .into_iter()
+                .map(|item| item.account_id)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                ordered_ids,
+                vec![
+                    "codex-z-high.json".to_string(),
+                    "codex-a-low.json".to_string()
+                ]
+            );
+
+            let _ = std::fs::remove_dir_all(data_dir);
+        });
+    }
+
+    #[test]
+    fn import_file_overwrite_preserves_existing_priority_in_record_json() {
+        run_async(async {
+            let (store, data_dir) = create_test_store();
+            let paths = TokenProxyPaths::from_app_data_dir(data_dir.clone()).expect("test paths");
+            let pool = sqlite::open_write_pool(&paths)
+                .await
+                .expect("open sqlite pool");
+            let columns = sqlx::query("PRAGMA table_info(provider_accounts);")
+                .fetch_all(&pool)
+                .await
+                .expect("read provider_accounts schema");
+            let has_priority = columns
+                .into_iter()
+                .any(|row| row.try_get::<String, _>("name").ok().as_deref() == Some("priority"));
+            if !has_priority {
+                sqlx::query(
+                    "ALTER TABLE provider_accounts ADD COLUMN priority INTEGER NOT NULL DEFAULT 0;",
+                )
+                .execute(&pool)
+                .await
+                .expect("add priority column");
+            }
+
+            let existing_expires_at = future_rfc3339(6);
+            sqlx::query(
+                r#"
+INSERT INTO provider_accounts (
+  provider_kind,
+  account_id,
+  email,
+  expires_at,
+  expires_at_ms,
+  auth_method,
+  provider_name,
+  record_json,
+  updated_at_ms,
+  priority
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+"#,
+            )
+            .bind("codex")
+            .bind("codex-priority.json")
+            .bind("overwrite@example.com")
+            .bind(existing_expires_at.as_str())
+            .bind(0_i64)
+            .bind(Option::<String>::None)
+            .bind(Option::<String>::None)
+            .bind(
+                json!({
+                    "access_token": "existing-access",
+                    "refresh_token": "existing-refresh",
+                    "id_token": build_id_token("overwrite@example.com", "acct-overwrite"),
+                    "auto_refresh_enabled": true,
+                    "status": "active",
+                    "account_id": "acct-overwrite",
+                    "email": "overwrite@example.com",
+                    "expires_at": existing_expires_at,
+                    "last_refresh": null,
+                    "proxy_url": null,
+                    "priority": 7,
+                    "quota": {"plan_type": null, "quotas": [], "error": null, "checked_at": null}
+                })
+                .to_string(),
+            )
+            .bind(0_i64)
+            .bind(7_i64)
+            .execute(&pool)
+            .await
+            .expect("insert existing account");
+
+            let input_path = data_dir.join("codex-overwrite.json");
+            tokio::fs::write(
+                &input_path,
+                serde_json::to_string_pretty(&json!({
+                    "type": "codex",
+                    "access_token": "new-access-token",
+                    "refresh_token": "new-refresh-token",
+                    "account_id": "acct-overwrite",
+                    "email": "overwrite@example.com",
+                    "expired": future_rfc3339(12),
+                }))
+                .expect("serialize overwrite json"),
+            )
+            .await
+            .expect("write overwrite json");
+
+            store
+                .import_file(input_path)
+                .await
+                .expect("import should succeed");
+
+            let row = sqlx::query(
+                "SELECT record_json, priority FROM provider_accounts WHERE account_id = ?;",
+            )
+            .bind("codex-priority.json")
+            .fetch_one(&pool)
+            .await
+            .expect("select overwritten record");
+            let record_json = row
+                .try_get::<String, _>("record_json")
+                .expect("decode record_json");
+            let value: serde_json::Value =
+                serde_json::from_str(&record_json).expect("parse record json");
+            assert_eq!(
+                value.get("priority").and_then(serde_json::Value::as_i64),
+                Some(7)
+            );
+            assert_eq!(
+                row.try_get::<i64, _>("priority").expect("decode priority"),
+                7
+            );
+
+            let _ = std::fs::remove_dir_all(data_dir);
+        });
+    }
+
+    #[test]
     fn refresh_account_without_refresh_token_requires_relogin() {
         run_async(async {
             let (store, data_dir) = create_test_store();
@@ -1409,6 +1702,7 @@ mod tests {
                 expires_at: future_rfc3339(6),
                 last_refresh: None,
                 proxy_url: None,
+                priority: 0,
                 quota: crate::codex::CodexQuotaCache::default(),
             };
             let second = CodexTokenRecord {
@@ -1422,6 +1716,7 @@ mod tests {
                 expires_at: future_rfc3339(6),
                 last_refresh: None,
                 proxy_url: None,
+                priority: 0,
                 quota: crate::codex::CodexQuotaCache::default(),
             };
 

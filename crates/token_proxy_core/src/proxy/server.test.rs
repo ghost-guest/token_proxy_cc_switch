@@ -863,6 +863,7 @@ async fn build_test_state_handle_with_paths(
                             expires_at: expires_at.clone(),
                             last_refresh: None,
                             proxy_url: None,
+                            priority: 0,
                             quota: crate::codex::CodexQuotaCache::default(),
                         },
                     )
@@ -921,6 +922,7 @@ async fn seed_codex_account(
                 expires_at: expires_at.to_string(),
                 last_refresh: None,
                 proxy_url: None,
+                priority: 0,
                 quota: crate::codex::CodexQuotaCache::default(),
             },
         )
@@ -954,6 +956,7 @@ async fn seed_kiro_account(
                 region: None,
                 proxy_url: None,
                 status: crate::kiro::KiroAccountStatus::Active,
+                priority: 0,
                 quota: crate::kiro::KiroQuotaCache::default(),
             },
         )

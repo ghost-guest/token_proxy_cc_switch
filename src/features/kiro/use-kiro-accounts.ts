@@ -7,6 +7,7 @@ import {
   logoutKiroAccount,
   refreshKiroQuotaCache,
   refreshKiroQuotaNow,
+  setKiroPriority,
   setKiroStatus,
   setKiroProxyUrl,
 } from "@/features/kiro/api";
@@ -110,6 +111,24 @@ export function useKiroAccounts(options?: UseKiroAccountsOptions) {
     }
   }, []);
 
+  const setPriority = useCallback(async (accountId: string, priority: number) => {
+    setLoading(true);
+    try {
+      const updated = await setKiroPriority(accountId, priority);
+      setAccounts((prev) =>
+        prev.map((item) => (item.account_id === accountId ? { ...item, ...updated } : item))
+      );
+      setError("");
+      return updated;
+    } catch (err) {
+      const message = parseError(err);
+      setError(message);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   const refreshQuotaCache = useCallback(async (accountIds?: string[]) => {
     await refreshKiroQuotaCache(accountIds);
   }, []);
@@ -134,6 +153,7 @@ export function useKiroAccounts(options?: UseKiroAccountsOptions) {
     importIde,
     importKam,
     setProxyUrl,
+    setPriority,
     setStatus,
     refreshQuotaCache,
     refreshQuotaNow,

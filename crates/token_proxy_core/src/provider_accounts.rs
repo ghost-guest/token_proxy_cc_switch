@@ -79,6 +79,7 @@ pub struct ProviderAccountListItem {
     pub account_id: String,
     pub email: Option<String>,
     pub expires_at: Option<String>,
+    pub priority: i32,
     pub status: ProviderAccountStatus,
     pub auth_method: Option<String>,
     pub provider_name: Option<String>,
@@ -130,6 +131,7 @@ struct ProviderAccountDbRecord {
     provider_name: Option<String>,
     record_json: String,
     updated_at_ms: i64,
+    priority: i32,
 }
 
 pub async fn upsert_kiro_account(
@@ -220,7 +222,7 @@ SELECT
 FROM provider_accounts
 WHERE (?1 = '' OR provider_kind = ?1)
   AND (?2 = '' OR lower(account_id) LIKE ?3 OR lower(COALESCE(email, '')) LIKE ?3)
-ORDER BY provider_kind ASC, account_id ASC
+ORDER BY priority DESC, account_id ASC
 "#,
     )
     .bind(provider_filter)
@@ -298,6 +300,7 @@ fn build_kiro_db_record(
         record_json: serde_json::to_string(record)
             .map_err(|err| format!("Failed to serialize Kiro token record for sqlite: {err}"))?,
         updated_at_ms: now_unix_ms(),
+        priority: record.priority,
     })
 }
 
@@ -316,6 +319,7 @@ fn build_codex_db_record(
         record_json: serde_json::to_string(record)
             .map_err(|err| format!("Failed to serialize Codex token record for sqlite: {err}"))?,
         updated_at_ms: now_unix_ms(),
+        priority: record.priority,
     })
 }
 
@@ -342,9 +346,10 @@ INSERT INTO provider_accounts (
   auth_method,
   provider_name,
   record_json,
-  updated_at_ms
+  updated_at_ms,
+  priority
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(account_id) DO UPDATE SET
   provider_kind = excluded.provider_kind,
   email = excluded.email,
@@ -353,7 +358,8 @@ ON CONFLICT(account_id) DO UPDATE SET
   auth_method = excluded.auth_method,
   provider_name = excluded.provider_name,
   record_json = excluded.record_json,
-  updated_at_ms = excluded.updated_at_ms;
+  updated_at_ms = excluded.updated_at_ms,
+  priority = excluded.priority;
 "#,
     )
     .bind(record.provider_kind.as_str())
@@ -365,6 +371,7 @@ ON CONFLICT(account_id) DO UPDATE SET
     .bind(record.provider_name.as_deref())
     .bind(record.record_json.as_str())
     .bind(record.updated_at_ms)
+    .bind(record.priority)
     .execute(pool)
     .await
     .map_err(|err| format!("Failed to upsert provider account row: {err}"))?;
@@ -394,6 +401,7 @@ fn build_kiro_list_item(
         account_id,
         email,
         expires_at,
+        priority: record.priority,
         status: provider_status_from_kiro(&record),
         auth_method,
         provider_name,
@@ -417,6 +425,7 @@ fn build_codex_list_item(
         account_id,
         email,
         expires_at,
+        priority: record.priority,
         status: provider_status_from_codex(&record),
         auth_method: None,
         provider_name,

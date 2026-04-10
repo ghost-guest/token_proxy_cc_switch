@@ -38,6 +38,17 @@ const providerMocks = vi.hoisted(() => {
     email: "alice@example.com",
     expires_at: "2026-05-01T00:00:00Z",
     status: "active" as const,
+    priority: 2,
+    proxy_url: "http://127.0.0.1:7890",
+  }));
+  const setKiroPriority = vi.fn(async () => ({
+    account_id: "kiro-1",
+    provider: "kiro" as const,
+    auth_method: "google",
+    email: "alice@example.com",
+    expires_at: "2026-05-01T00:00:00Z",
+    status: "active" as const,
+    priority: 12,
     proxy_url: "http://127.0.0.1:7890",
   }));
   const setKiroStatus = vi.fn(async () => ({
@@ -47,6 +58,7 @@ const providerMocks = vi.hoisted(() => {
     email: "alice@example.com",
     expires_at: "2026-05-01T00:00:00Z",
     status: "disabled" as const,
+    priority: 2,
     proxy_url: "http://127.0.0.1:7890",
   }));
   const setCodexProxyUrl = vi.fn(async () => ({
@@ -55,7 +67,17 @@ const providerMocks = vi.hoisted(() => {
     expires_at: "2026-04-01T00:00:00Z",
     status: "expired" as const,
     auto_refresh_enabled: true,
+    priority: 1,
     proxy_url: "socks5://127.0.0.1:1080",
+  }));
+  const setCodexPriority = vi.fn(async () => ({
+    account_id: "codex-1",
+    email: "bob@example.com",
+    expires_at: "2026-04-01T00:00:00Z",
+    status: "expired" as const,
+    auto_refresh_enabled: true,
+    priority: 21,
+    proxy_url: "",
   }));
   const setCodexStatus = vi.fn(async () => ({
     account_id: "codex-1",
@@ -63,6 +85,7 @@ const providerMocks = vi.hoisted(() => {
     expires_at: "2026-04-01T00:00:00Z",
     status: "disabled" as const,
     auto_refresh_enabled: true,
+    priority: 1,
     proxy_url: "",
   }));
   const beginKiroLogin = vi.fn();
@@ -75,6 +98,7 @@ const providerMocks = vi.hoisted(() => {
       email: "alice@example.com",
       expires_at: "2026-05-01T00:00:00Z",
       status: "active" as const,
+      priority: 2,
       proxy_url: "http://127.0.0.1:7890",
     },
   ]);
@@ -86,6 +110,7 @@ const providerMocks = vi.hoisted(() => {
       email: "alice@example.com",
       expires_at: "2026-05-01T00:00:00Z",
       status: "active" as const,
+      priority: 2,
       proxy_url: "http://127.0.0.1:7890",
     },
   ]);
@@ -95,6 +120,7 @@ const providerMocks = vi.hoisted(() => {
       email: "bob@example.com",
       expires_at: "2026-04-01T00:00:00Z",
       status: "expired" as const,
+      priority: 1,
     },
   ]);
   const deleteProviderAccounts = vi.fn(async () => undefined);
@@ -121,6 +147,7 @@ const providerMocks = vi.hoisted(() => {
           status: "active" as const,
           auth_method: "google",
           provider_name: "kiro",
+          priority: 2,
           proxy_url: "http://127.0.0.1:7890",
           quota: {
             plan_type: "Kiro Cached Plan",
@@ -147,6 +174,7 @@ const providerMocks = vi.hoisted(() => {
           auth_method: null,
           provider_name: null,
           auto_refresh_enabled: true,
+          priority: 1,
           proxy_url: "",
           quota: {
             plan_type: "Codex Cached Plan",
@@ -228,8 +256,10 @@ const providerMocks = vi.hoisted(() => {
     logoutKiro,
     logoutCodex,
     setKiroProxyUrl,
+    setKiroPriority,
     setKiroStatus,
     setCodexProxyUrl,
+    setCodexPriority,
     setCodexStatus,
     beginKiroLogin,
     beginCodexLogin,
@@ -281,6 +311,7 @@ vi.mock("@/features/kiro/use-kiro-accounts", () => ({
     refreshQuotaCache: providerMocks.refreshKiroQuotaCache,
     refreshQuotaNow: providerMocks.refreshKiroQuotaNow,
     setProxyUrl: providerMocks.setKiroProxyUrl,
+    setPriority: providerMocks.setKiroPriority,
     setStatus: providerMocks.setKiroStatus,
   }),
 }));
@@ -293,6 +324,7 @@ vi.mock("@/features/codex/use-codex-accounts", () => ({
         email: "bob@example.com",
         expires_at: "2026-04-01T00:00:00Z",
         status: "expired",
+        priority: 1,
         proxy_url: "",
       },
     ],
@@ -304,6 +336,7 @@ vi.mock("@/features/codex/use-codex-accounts", () => ({
     refreshQuotaNow: providerMocks.refreshCodexQuotaNow,
     setAutoRefresh: providerMocks.setCodexAutoRefresh,
     setProxyUrl: providerMocks.setCodexProxyUrl,
+    setPriority: providerMocks.setCodexPriority,
     setStatus: providerMocks.setCodexStatus,
     logout: providerMocks.logoutCodex,
     importFile: providerMocks.importCodexFile,
@@ -451,10 +484,63 @@ describe("providers/ProvidersPanel", () => {
       await screen.findByRole("columnheader", { name: m.providers_table_provider() })
     ).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: m.providers_table_account() })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: m.field_priority() })).toBeInTheDocument();
     expect(within(getAccountsTable()).getByText("alice@example.com")).toBeInTheDocument();
     expect(within(getAccountsTable()).getByText("bob@example.com")).toBeInTheDocument();
     expect(within(getAccountsTable()).getByText("Kiro Cached Plan")).toBeInTheDocument();
     expect(within(getAccountsTable()).getByText("Codex Cached Plan")).toBeInTheDocument();
+  });
+
+  it("keeps API order so higher priority accounts render first across providers", async () => {
+    providerMocks.listProviderAccountsPage.mockResolvedValueOnce({
+      items: [
+        {
+          provider_kind: "codex",
+          account_id: "codex-1",
+          email: "bob@example.com",
+          expires_at: "2026-04-01T00:00:00Z",
+          status: "expired",
+          auth_method: null,
+          provider_name: null,
+          auto_refresh_enabled: true,
+          priority: 20,
+          proxy_url: "",
+          quota: {
+            plan_type: "Codex Cached Plan",
+            error: null,
+            checked_at: "2026-04-01T00:00:00Z",
+            items: [],
+          },
+        } as ProviderAccountPageItem,
+        {
+          provider_kind: "kiro",
+          account_id: "kiro-1",
+          email: "alice@example.com",
+          expires_at: "2026-05-01T00:00:00Z",
+          status: "active",
+          auth_method: "google",
+          provider_name: "kiro",
+          priority: 2,
+          proxy_url: "http://127.0.0.1:7890",
+          quota: {
+            plan_type: "Kiro Cached Plan",
+            error: null,
+            checked_at: "2026-04-01T00:00:00Z",
+            items: [],
+          },
+        } as ProviderAccountPageItem,
+      ],
+      total: 2,
+      page: 1,
+      page_size: 10,
+    });
+
+    render(<ProvidersPanel />);
+
+    await screen.findByRole("columnheader", { name: m.providers_table_provider() });
+    const tableRows = await within(getAccountsTable()).findAllByRole("row");
+    expect(within(tableRows[1]!).getByText("bob@example.com")).toBeInTheDocument();
+    expect(within(tableRows[2]!).getByText("alice@example.com")).toBeInTheDocument();
   });
 
   it("does not render extra provider group panels below the accounts table", () => {
@@ -653,6 +739,42 @@ describe("providers/ProvidersPanel", () => {
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Disable" }));
 
     expect(providerMocks.setCodexStatus).toHaveBeenCalledWith("codex-1", "disabled");
+  });
+
+  it("saves kiro account priority from account dialog", async () => {
+    const user = userEvent.setup();
+    render(<ProvidersPanel />);
+
+    await user.click(
+      within(await findAccountRow("alice@example.com")).getByRole("button", {
+        name: m.providers_account_dialog_title(),
+      })
+    );
+
+    const input = await screen.findByLabelText(m.field_priority());
+    await user.clear(input);
+    await user.type(input, "12");
+    await user.click(screen.getByRole("button", { name: m.providers_save_priority() }));
+
+    expect(providerMocks.setKiroPriority).toHaveBeenCalledWith("kiro-1", 12);
+  });
+
+  it("saves codex account priority from account dialog", async () => {
+    const user = userEvent.setup();
+    render(<ProvidersPanel />);
+
+    await user.click(
+      within(await findAccountRow("bob@example.com")).getByRole("button", {
+        name: m.providers_account_dialog_title(),
+      })
+    );
+
+    const input = await screen.findByLabelText(m.field_priority());
+    await user.clear(input);
+    await user.type(input, "21");
+    await user.click(screen.getByRole("button", { name: m.providers_save_priority() }));
+
+    expect(providerMocks.setCodexPriority).toHaveBeenCalledWith("codex-1", 21);
   });
 
   it("refreshes all provider data from toolbar action", async () => {
@@ -965,6 +1087,7 @@ describe("providers/ProvidersPanel", () => {
           status: "disabled" as const,
           auth_method: "google",
           provider_name: "kiro",
+          priority: 0,
           proxy_url: null,
           quota: {
             plan_type: null,
@@ -982,6 +1105,7 @@ describe("providers/ProvidersPanel", () => {
           auth_method: null,
           provider_name: null,
           auto_refresh_enabled: true,
+          priority: 0,
           proxy_url: null,
           quota: {
             plan_type: null,

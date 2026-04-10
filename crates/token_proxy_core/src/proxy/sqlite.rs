@@ -147,13 +147,16 @@ CREATE TABLE IF NOT EXISTS provider_accounts (
   auth_method TEXT,
   provider_name TEXT,
   record_json TEXT NOT NULL,
-  updated_at_ms INTEGER NOT NULL
+  updated_at_ms INTEGER NOT NULL,
+  priority INTEGER NOT NULL DEFAULT 0
 );
 "#,
     )
     .execute(pool)
     .await
     .map_err(|err| format!("Failed to create provider_accounts table: {err}"))?;
+
+    ensure_provider_accounts_columns(pool).await?;
 
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_provider_accounts_kind_account_id ON provider_accounts(provider_kind, account_id);",
@@ -240,6 +243,27 @@ async fn ensure_request_logs_columns(pool: &SqlitePool) -> Result<(), String> {
     Ok(())
 }
 
+async fn ensure_provider_accounts_columns(pool: &SqlitePool) -> Result<(), String> {
+    let columns = sqlx::query("PRAGMA table_info(provider_accounts);")
+        .fetch_all(pool)
+        .await
+        .map_err(|err| format!("Failed to read provider_accounts schema: {err}"))?
+        .into_iter()
+        .filter_map(|row| row.try_get::<String, _>("name").ok())
+        .collect::<std::collections::HashSet<_>>();
+
+    if !columns.contains("priority") {
+        sqlx::query(
+            "ALTER TABLE provider_accounts ADD COLUMN priority INTEGER NOT NULL DEFAULT 0;",
+        )
+        .execute(pool)
+        .await
+        .map_err(|err| format!("Failed to add priority column: {err}"))?;
+    }
+
+    Ok(())
+}
+
 async fn migrate_provider_account_status(pool: &SqlitePool) -> Result<(), String> {
     let rows = sqlx::query("SELECT account_id, record_json FROM provider_accounts;")
         .fetch_all(pool)
@@ -288,18 +312,41 @@ async fn migrate_provider_account_status(pool: &SqlitePool) -> Result<(), String
         if object.remove("enabled").is_some() {
             changed = true;
         }
-        if !changed {
-            continue;
+        let priority = object
+            .get("priority")
+            .and_then(serde_json::Value::as_i64)
+            .and_then(|value| i32::try_from(value).ok())
+            .unwrap_or(0);
+        if object
+            .insert(
+                "priority".to_string(),
+                serde_json::Value::Number(serde_json::Number::from(priority)),
+            )
+            .is_none()
+        {
+            changed = true;
         }
         let next_record_json = serde_json::to_string(&value).map_err(|err| {
             format!("Failed to serialize migrated provider_accounts.record_json for {account_id}: {err}")
         })?;
-        sqlx::query("UPDATE provider_accounts SET record_json = ? WHERE account_id = ?;")
-            .bind(next_record_json)
-            .bind(account_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|err| format!("Failed to update migrated provider_accounts row: {err}"))?;
+        if !changed {
+            sqlx::query("UPDATE provider_accounts SET priority = ? WHERE account_id = ?;")
+                .bind(priority)
+                .bind(account_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|err| format!("Failed to update provider_accounts priority row: {err}"))?;
+            continue;
+        }
+        sqlx::query(
+            "UPDATE provider_accounts SET record_json = ?, priority = ? WHERE account_id = ?;",
+        )
+        .bind(next_record_json)
+        .bind(priority)
+        .bind(account_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| format!("Failed to update migrated provider_accounts row: {err}"))?;
     }
 
     tx.commit()
@@ -443,6 +490,91 @@ CREATE TABLE account_state_logs (
         assert!(
             row.is_none(),
             "legacy account_state_logs table should be dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn init_schema_adds_provider_account_priority_column_with_default_zero() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect sqlite");
+
+        sqlx::query(
+            r#"
+CREATE TABLE provider_accounts (
+  provider_kind TEXT NOT NULL,
+  account_id TEXT PRIMARY KEY,
+  email TEXT,
+  expires_at TEXT,
+  expires_at_ms INTEGER,
+  auth_method TEXT,
+  provider_name TEXT,
+  record_json TEXT NOT NULL,
+  updated_at_ms INTEGER NOT NULL
+);
+"#,
+        )
+        .execute(&pool)
+        .await
+        .expect("create legacy provider_accounts");
+
+        sqlx::query(
+            r#"
+INSERT INTO provider_accounts (
+  provider_kind,
+  account_id,
+  email,
+  expires_at,
+  expires_at_ms,
+  auth_method,
+  provider_name,
+  record_json,
+  updated_at_ms
+) VALUES (
+  'kiro',
+  'kiro-priority.json',
+  'priority@example.com',
+  '2026-04-01T00:00:00Z',
+  0,
+  'google',
+  'kiro',
+  '{"access_token":"a","refresh_token":"r","profile_arn":"arn","expires_at":"2026-04-01T00:00:00Z","auth_method":"google","provider":"kiro","client_id":null,"client_secret":null,"email":"priority@example.com","last_refresh":null,"start_url":null,"region":null,"status":"active","proxy_url":null,"quota":{"plan_type":null,"quotas":[],"error":null,"checked_at":null}}',
+  0
+);
+"#,
+        )
+        .execute(&pool)
+        .await
+        .expect("insert legacy provider account");
+
+        init_schema(&pool).await.expect("migrate schema");
+
+        let columns = sqlx::query("PRAGMA table_info(provider_accounts);")
+            .fetch_all(&pool)
+            .await
+            .expect("read provider_accounts schema");
+        let priority_column = columns
+            .into_iter()
+            .find(|row| row.try_get::<String, _>("name").ok().as_deref() == Some("priority"))
+            .expect("priority column should exist");
+        assert_eq!(
+            priority_column
+                .try_get::<Option<String>, _>("dflt_value")
+                .expect("decode dflt_value")
+                .as_deref(),
+            Some("0")
+        );
+
+        let row = sqlx::query("SELECT priority FROM provider_accounts WHERE account_id = ?;")
+            .bind("kiro-priority.json")
+            .fetch_one(&pool)
+            .await
+            .expect("select migrated priority");
+        assert_eq!(
+            row.try_get::<i64, _>("priority").expect("decode priority"),
+            0
         );
     }
 }

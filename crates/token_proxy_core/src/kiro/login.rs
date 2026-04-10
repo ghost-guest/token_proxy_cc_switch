@@ -481,6 +481,7 @@ async fn handle_builder_success(
         region: None,
         status: KiroAccountStatus::Active,
         proxy_url: None,
+        priority: 0,
         quota: KiroQuotaCache::default(),
     };
     match manager.store.save_new_account(record).await {
@@ -529,6 +530,7 @@ async fn handle_social_success(
         region: None,
         status: KiroAccountStatus::Active,
         proxy_url: None,
+        priority: 0,
         quota: KiroQuotaCache::default(),
     };
     match manager.store.save_new_account(record).await {

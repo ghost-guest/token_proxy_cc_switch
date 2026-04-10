@@ -65,6 +65,7 @@ pub(crate) async fn refresh_quota_cache(
         status: record.effective_status(),
         auto_refresh_enabled: record.auto_refresh_enabled,
         proxy_url: record.proxy_url.clone(),
+        priority: record.priority,
     };
     let resolved = match store.get_account_record(account_id).await {
         Ok(record) => record,

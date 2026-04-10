@@ -133,9 +133,15 @@ impl KiroAccountStore {
                 }),
                 status: record.effective_status(),
                 proxy_url: record.proxy_url.clone(),
+                priority: record.priority,
             })
             .collect();
-        items.sort_by(|left, right| left.account_id.cmp(&right.account_id));
+        items.sort_by(|left, right| {
+            right
+                .priority
+                .cmp(&left.priority)
+                .then_with(|| left.account_id.cmp(&right.account_id))
+        });
         Ok(items)
     }
 
@@ -191,6 +197,16 @@ impl KiroAccountStore {
         self.save_record(account_id.to_string(), record).await
     }
 
+    pub async fn set_priority(
+        &self,
+        account_id: &str,
+        priority: i32,
+    ) -> Result<KiroAccountSummary, String> {
+        let mut record = self.load_account(account_id).await?;
+        record.priority = priority;
+        self.save_record(account_id.to_string(), record).await
+    }
+
     pub(crate) async fn save_record(
         &self,
         account_id: String,
@@ -211,6 +227,7 @@ impl KiroAccountStore {
             }),
             status: record.effective_status(),
             proxy_url: record.proxy_url.clone(),
+            priority: record.priority,
         })
     }
 
@@ -276,6 +293,7 @@ impl KiroAccountStore {
             _ => return Err("Unsupported Kiro auth method.".to_string()),
         };
         let refreshed = KiroTokenRecord {
+            priority: record.priority,
             quota: record.quota.clone(),
             ..refreshed
         };
@@ -353,9 +371,7 @@ impl KiroAccountStore {
             ordered_account_ids.to_vec()
         } else {
             let cache = self.cache.read().await;
-            let mut account_ids = cache.keys().cloned().collect::<Vec<_>>();
-            account_ids.sort();
-            account_ids
+            sorted_account_ids(&cache)
         };
 
         let mut last_error = None;
@@ -458,6 +474,20 @@ impl KiroAccountStore {
 
 const QUOTA_REFRESH_INTERVAL_SECONDS: i64 = 30;
 
+fn sorted_account_ids(cache: &HashMap<String, KiroTokenRecord>) -> Vec<String> {
+    let mut entries = cache.iter().collect::<Vec<_>>();
+    entries.sort_by(|(left_id, left_record), (right_id, right_record)| {
+        right_record
+            .priority
+            .cmp(&left_record.priority)
+            .then_with(|| left_id.cmp(right_id))
+    });
+    entries
+        .into_iter()
+        .map(|(account_id, _)| account_id.clone())
+        .collect()
+}
+
 fn quota_refresh_is_due(checked_at: Option<&str>) -> bool {
     let Some(checked_at) = checked_at.map(str::trim).filter(|value| !value.is_empty()) else {
         return true;
@@ -541,6 +571,7 @@ fn kam_account_to_record(account: KamAccount) -> Option<KiroTokenRecord> {
         region: credentials.region,
         status: KiroAccountStatus::Active,
         proxy_url: None,
+        priority: 0,
         quota: super::types::KiroQuotaCache::default(),
     })
 }
@@ -649,6 +680,7 @@ impl KiroIdeTokenFile {
             region: self.region,
             status: KiroAccountStatus::Active,
             proxy_url: None,
+            priority: 0,
             quota: super::types::KiroQuotaCache::default(),
         })
     }
@@ -659,8 +691,10 @@ mod tests {
     use super::*;
     use crate::app_proxy;
     use crate::paths::TokenProxyPaths;
+    use crate::proxy::sqlite;
     use rand::random;
     use serde_json::json;
+    use sqlx::Row;
     use std::future::Future;
     use time::Duration;
 
@@ -718,6 +752,7 @@ mod tests {
                     region: None,
                     status: KiroAccountStatus::Active,
                     proxy_url: None,
+                    priority: 0,
                     quota: crate::kiro::KiroQuotaCache::default(),
                 })
                 .await
@@ -744,6 +779,149 @@ mod tests {
     }
 
     #[test]
+    fn list_accounts_orders_by_priority_descending() {
+        run_async(async {
+            let (store, data_dir) = create_test_store();
+            let paths = TokenProxyPaths::from_app_data_dir(data_dir.clone()).expect("test paths");
+            let pool = sqlite::open_write_pool(&paths)
+                .await
+                .expect("open sqlite pool");
+            let columns = sqlx::query("PRAGMA table_info(provider_accounts);")
+                .fetch_all(&pool)
+                .await
+                .expect("read provider_accounts schema");
+            let has_priority = columns
+                .into_iter()
+                .any(|row| row.try_get::<String, _>("name").ok().as_deref() == Some("priority"));
+            if !has_priority {
+                sqlx::query(
+                    "ALTER TABLE provider_accounts ADD COLUMN priority INTEGER NOT NULL DEFAULT 0;",
+                )
+                .execute(&pool)
+                .await
+                .expect("add priority column");
+            }
+
+            let high_expires_at = future_rfc3339(6);
+            let low_expires_at = future_rfc3339(6);
+            sqlx::query(
+                r#"
+INSERT INTO provider_accounts (
+  provider_kind,
+  account_id,
+  email,
+  expires_at,
+  expires_at_ms,
+  auth_method,
+  provider_name,
+  record_json,
+  updated_at_ms,
+  priority
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+"#,
+            )
+            .bind("kiro")
+            .bind("kiro-google-a-low.json")
+            .bind("low@example.com")
+            .bind(low_expires_at.as_str())
+            .bind(0_i64)
+            .bind("google")
+            .bind("kiro")
+            .bind(
+                json!({
+                    "access_token": "access-low",
+                    "refresh_token": "refresh-low",
+                    "profile_arn": "arn:aws:iam::123456789012:user/low",
+                    "expires_at": low_expires_at,
+                    "auth_method": "google",
+                    "provider": "kiro",
+                    "client_id": null,
+                    "client_secret": null,
+                    "email": "low@example.com",
+                    "last_refresh": null,
+                    "start_url": null,
+                    "region": null,
+                    "status": "active",
+                    "proxy_url": null,
+                    "priority": 1,
+                    "quota": {"plan_type": null, "quotas": [], "error": null, "checked_at": null}
+                })
+                .to_string(),
+            )
+            .bind(0_i64)
+            .bind(1_i64)
+            .execute(&pool)
+            .await
+            .expect("insert low priority account");
+
+            sqlx::query(
+                r#"
+INSERT INTO provider_accounts (
+  provider_kind,
+  account_id,
+  email,
+  expires_at,
+  expires_at_ms,
+  auth_method,
+  provider_name,
+  record_json,
+  updated_at_ms,
+  priority
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+"#,
+            )
+            .bind("kiro")
+            .bind("kiro-google-z-high.json")
+            .bind("high@example.com")
+            .bind(high_expires_at.as_str())
+            .bind(0_i64)
+            .bind("google")
+            .bind("kiro")
+            .bind(
+                json!({
+                    "access_token": "access-high",
+                    "refresh_token": "refresh-high",
+                    "profile_arn": "arn:aws:iam::123456789012:user/high",
+                    "expires_at": high_expires_at,
+                    "auth_method": "google",
+                    "provider": "kiro",
+                    "client_id": null,
+                    "client_secret": null,
+                    "email": "high@example.com",
+                    "last_refresh": null,
+                    "start_url": null,
+                    "region": null,
+                    "status": "active",
+                    "proxy_url": null,
+                    "priority": 9,
+                    "quota": {"plan_type": null, "quotas": [], "error": null, "checked_at": null}
+                })
+                .to_string(),
+            )
+            .bind(0_i64)
+            .bind(9_i64)
+            .execute(&pool)
+            .await
+            .expect("insert high priority account");
+
+            let accounts = store.list_accounts().await.expect("list accounts");
+            let ordered_ids = accounts
+                .into_iter()
+                .map(|item| item.account_id)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                ordered_ids,
+                vec![
+                    "kiro-google-z-high.json".to_string(),
+                    "kiro-google-a-low.json".to_string()
+                ]
+            );
+
+            let _ = std::fs::remove_dir_all(data_dir);
+        });
+    }
+
+    #[test]
     fn set_proxy_url_updates_record_value() {
         run_async(async {
             let (store, data_dir) = create_test_store();
@@ -763,6 +941,7 @@ mod tests {
                     region: None,
                     status: KiroAccountStatus::Active,
                     proxy_url: None,
+                    priority: 0,
                     quota: crate::kiro::KiroQuotaCache::default(),
                 })
                 .await
@@ -816,6 +995,7 @@ mod tests {
                     region: None,
                     status: KiroAccountStatus::Active,
                     proxy_url: None,
+                    priority: 0,
                     quota: crate::kiro::KiroQuotaCache::default(),
                 })
                 .await
@@ -859,6 +1039,7 @@ mod tests {
                         region: None,
                         status: KiroAccountStatus::Disabled,
                         proxy_url: None,
+                        priority: 0,
                         quota: crate::kiro::KiroQuotaCache::default(),
                     },
                 )
@@ -882,6 +1063,7 @@ mod tests {
                         region: None,
                         status: KiroAccountStatus::Active,
                         proxy_url: None,
+                        priority: 0,
                         quota: crate::kiro::KiroQuotaCache::default(),
                     },
                 )

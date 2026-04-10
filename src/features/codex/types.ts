@@ -7,6 +7,7 @@ export type CodexAccountSummary = {
   status: CodexAccountStatus;
   auto_refresh_enabled?: boolean;
   proxy_url?: string | null;
+  priority: number;
 };
 
 export type CodexLoginStatus = "waiting" | "success" | "error";

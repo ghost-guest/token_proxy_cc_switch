@@ -19,6 +19,7 @@ export type ProviderAccountPageItem = {
   account_id: string;
   email?: string | null;
   expires_at?: string | null;
+  priority: number;
   status: "active" | "disabled" | "expired" | "cooling_down";
   auth_method?: string | null;
   provider_name?: string | null;

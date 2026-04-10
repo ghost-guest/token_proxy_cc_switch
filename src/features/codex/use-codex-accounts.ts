@@ -6,6 +6,7 @@ import {
   refreshCodexQuotaCache,
   refreshCodexQuotaNow,
   setCodexAutoRefresh,
+  setCodexPriority,
   setCodexStatus,
   setCodexProxyUrl,
   refreshCodexAccount,
@@ -92,6 +93,24 @@ export function useCodexAccounts(options?: UseCodexAccountsOptions) {
     }
   }, []);
 
+  const setPriority = useCallback(async (accountId: string, priority: number) => {
+    setLoading(true);
+    try {
+      const updated = await setCodexPriority(accountId, priority);
+      setAccounts((prev) =>
+        prev.map((item) => (item.account_id === accountId ? { ...item, ...updated } : item))
+      );
+      setError("");
+      return updated;
+    } catch (err) {
+      const message = parseError(err);
+      setError(message);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   const setStatus = useCallback(async (accountId: string, status: "active" | "disabled") => {
     setLoading(true);
     try {
@@ -149,6 +168,7 @@ export function useCodexAccounts(options?: UseCodexAccountsOptions) {
     setAutoRefresh,
     setStatus,
     setProxyUrl,
+    setPriority,
     logout,
     importFile,
     refreshQuotaCache,

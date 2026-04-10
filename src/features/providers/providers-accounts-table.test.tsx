@@ -21,6 +21,7 @@ function buildRow(index: number): ProviderAccountTableRow {
     providerLabel: index % 2 === 0 ? "Kiro" : "Codex",
     displayName: `user-${index}@example.com`,
     accountId: `account-${index}.json`,
+    priority: index,
     status: "active",
     statusLabel: "Active",
     statusVariant: "secondary",
@@ -57,6 +58,7 @@ describe("providers/providers-accounts-table", () => {
         onLogout={vi.fn(async () => undefined)}
         onBatchDelete={vi.fn(async () => undefined)}
         onSaveProxyUrl={vi.fn(async () => undefined)}
+        onSavePriority={vi.fn(async () => undefined)}
         onRefreshQuota={vi.fn(async () => undefined)}
         onToggleStatus={vi.fn(async () => undefined)}
         onToggleAutoRefresh={vi.fn(async () => undefined)}
@@ -64,6 +66,7 @@ describe("providers/providers-accounts-table", () => {
     );
 
     expect(screen.getByRole("columnheader", { name: "ID" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: m.field_priority() })).toBeInTheDocument();
     expect(
       screen.queryByRole("columnheader", { name: m.providers_table_account_id() })
     ).not.toBeInTheDocument();
@@ -88,6 +91,7 @@ describe("providers/providers-accounts-table", () => {
         onLogout={vi.fn(async () => undefined)}
         onBatchDelete={vi.fn(async () => undefined)}
         onSaveProxyUrl={vi.fn(async () => undefined)}
+        onSavePriority={vi.fn(async () => undefined)}
         onRefreshQuota={vi.fn(async () => undefined)}
         onToggleStatus={vi.fn(async () => undefined)}
         onToggleAutoRefresh={vi.fn(async () => undefined)}
@@ -124,6 +128,7 @@ describe("providers/providers-accounts-table", () => {
         onLogout={vi.fn(async () => undefined)}
         onBatchDelete={vi.fn(async () => undefined)}
         onSaveProxyUrl={vi.fn(async () => undefined)}
+        onSavePriority={vi.fn(async () => undefined)}
         onRefreshQuota={vi.fn(async () => undefined)}
         onToggleStatus={vi.fn(async () => undefined)}
         onToggleAutoRefresh={vi.fn(async () => undefined)}
@@ -165,6 +170,7 @@ describe("providers/providers-accounts-table", () => {
           onLogout={onLogout}
           onBatchDelete={onBatchDelete}
           onSaveProxyUrl={onSaveProxyUrl}
+          onSavePriority={vi.fn(async () => undefined)}
           onRefreshQuota={onRefreshQuota}
           onToggleStatus={onToggleStatus}
           onToggleAutoRefresh={vi.fn(async () => undefined)}
@@ -217,6 +223,7 @@ describe("providers/providers-accounts-table", () => {
           onLogout={onLogout}
           onBatchDelete={onBatchDelete}
           onSaveProxyUrl={onSaveProxyUrl}
+          onSavePriority={vi.fn(async () => undefined)}
           onRefreshQuota={onRefreshQuota}
           onToggleStatus={onToggleStatus}
           onToggleAutoRefresh={vi.fn(async () => undefined)}
@@ -260,6 +267,7 @@ describe("providers/providers-accounts-table", () => {
         onLogout={onLogout}
         onBatchDelete={onBatchDelete}
         onSaveProxyUrl={onSaveProxyUrl}
+        onSavePriority={vi.fn(async () => undefined)}
         onRefreshQuota={onRefreshQuota}
         onToggleStatus={onToggleStatus}
         onToggleAutoRefresh={vi.fn(async () => undefined)}
@@ -306,6 +314,7 @@ describe("providers/providers-accounts-table", () => {
         onLogout={onLogout}
         onBatchDelete={onBatchDelete}
         onSaveProxyUrl={onSaveProxyUrl}
+        onSavePriority={vi.fn(async () => undefined)}
         onRefreshQuota={onRefreshQuota}
         onToggleStatus={onToggleStatus}
         onToggleAutoRefresh={vi.fn(async () => undefined)}
@@ -319,7 +328,7 @@ describe("providers/providers-accounts-table", () => {
 
     await user.clear(input);
     await user.type(input, "socks5://127.0.0.1:1080");
-    await user.click(screen.getByRole("button", { name: m.common_save() }));
+    await user.click(screen.getByRole("button", { name: m.providers_save_proxy_url() }));
 
     await waitFor(() => {
       expect(onSaveProxyUrl).toHaveBeenCalledTimes(1);
@@ -366,6 +375,7 @@ describe("providers/providers-accounts-table", () => {
         onLogout={onLogout}
         onBatchDelete={onBatchDelete}
         onSaveProxyUrl={onSaveProxyUrl}
+        onSavePriority={vi.fn(async () => undefined)}
         onRefreshQuota={onRefreshQuota}
         onToggleStatus={onToggleStatus}
         onToggleAutoRefresh={vi.fn(async () => undefined)}
@@ -405,6 +415,7 @@ describe("providers/providers-accounts-table", () => {
         onLogout={onLogout}
         onBatchDelete={onBatchDelete}
         onSaveProxyUrl={onSaveProxyUrl}
+        onSavePriority={vi.fn(async () => undefined)}
         onRefreshQuota={onRefreshQuota}
         onToggleStatus={onToggleStatus}
         onToggleAutoRefresh={vi.fn(async () => undefined)}
@@ -441,6 +452,7 @@ describe("providers/providers-accounts-table", () => {
         onLogout={onLogout}
         onBatchDelete={onBatchDelete}
         onSaveProxyUrl={onSaveProxyUrl}
+        onSavePriority={vi.fn(async () => undefined)}
         onRefreshQuota={onRefreshQuota}
         onToggleStatus={onToggleStatus}
         onToggleAutoRefresh={vi.fn(async () => undefined)}

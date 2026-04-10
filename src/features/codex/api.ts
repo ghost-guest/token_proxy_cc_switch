@@ -65,3 +65,10 @@ export async function setCodexProxyUrl(accountId: string, proxyUrl: string | nul
     proxyUrl,
   });
 }
+
+export async function setCodexPriority(accountId: string, priority: number) {
+  return await invoke<CodexAccountSummary>("codex_set_priority", {
+    accountId,
+    priority,
+  });
+}

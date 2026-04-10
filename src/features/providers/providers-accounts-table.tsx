@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "reac
 
 import { AlertCircle, Eye } from "lucide-react";
 import type { CheckedState } from "@radix-ui/react-checkbox";
+import { toast } from "sonner";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -44,6 +45,7 @@ const DIALOG_PLACEHOLDER = "—";
 const ACCOUNT_COLUMN_WIDTH_CLASS = "w-[10rem]";
 const ACCOUNT_TEXT_WIDTH_CLASS = "max-w-[10rem]";
 const ACCOUNT_ID_COLUMN_WIDTH_CLASS = "w-[4.5rem]";
+const PRIORITY_COLUMN_WIDTH_CLASS = "w-[6rem]";
 const TABLE_TOOLTIP_CONTENT_CLASS = "max-w-[560px] whitespace-pre-wrap break-words";
 
 export type ProviderAccountQuotaDetailItem = {
@@ -58,6 +60,7 @@ export type ProviderAccountTableRow = {
   providerLabel: string;
   displayName: string;
   accountId: string;
+  priority: number;
   status: "active" | "disabled" | "expired" | "cooling_down";
   statusLabel: string;
   statusVariant: BadgeVariant;
@@ -87,6 +90,7 @@ type ProviderAccountDialogProps = {
   onRefreshQuota: (row: ProviderAccountTableRow) => Promise<void>;
   onLogout: (row: ProviderAccountTableRow) => Promise<void>;
   onSaveProxyUrl: (row: ProviderAccountTableRow, proxyUrl: string) => Promise<void>;
+  onSavePriority: (row: ProviderAccountTableRow, priority: number) => Promise<void>;
   onToggleStatus: (row: ProviderAccountTableRow, status: "active" | "disabled") => Promise<void>;
   onToggleAutoRefresh: (row: ProviderAccountTableRow, enabled: boolean) => Promise<void>;
 };
@@ -218,14 +222,17 @@ function ProviderAccountDialog({
   onRefreshQuota,
   onLogout,
   onSaveProxyUrl,
+  onSavePriority,
   onToggleStatus,
   onToggleAutoRefresh,
 }: ProviderAccountDialogProps) {
   const [refreshConfirmOpen, setRefreshConfirmOpen] = useState(false);
   const [proxyUrlDraft, setProxyUrlDraft] = useState<string | null>(null);
+  const [priorityDraft, setPriorityDraft] = useState<string | null>(null);
 
   useLayoutEffect(() => {
     setProxyUrlDraft(null);
+    setPriorityDraft(null);
   }, [open, row]);
 
   const handleRefresh = () => {
@@ -272,7 +279,20 @@ function ProviderAccountDialog({
     void onSaveProxyUrl(row, nextProxyUrl);
   };
 
+  const handleSavePriority = () => {
+    if (!row) {
+      return;
+    }
+    const rawValue = (priorityDraft ?? String(row.priority)).trim();
+    if (!/^-?\d+$/.test(rawValue)) {
+      toast.error(m.error_account_priority_integer({ id: row.accountId }));
+      return;
+    }
+    void onSavePriority(row, Number.parseInt(rawValue, 10));
+  };
+
   const proxyUrlValue = proxyUrlDraft ?? row?.proxyUrlValue ?? "";
+  const priorityValue = priorityDraft ?? String(row?.priority ?? 0);
   const detailFields = row?.detailFields.filter((field) => {
     const label = field.label.trim();
     const value = field.value.trim();
@@ -315,6 +335,35 @@ function ProviderAccountDialog({
               ) : null}
               <div className="space-y-2 border-t border-border/60 pt-3">
                 <Label
+                  htmlFor="provider-account-priority"
+                  className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground"
+                >
+                  {m.field_priority()}
+                </Label>
+                <p className="text-xs text-muted-foreground">{m.account_priority_tip()}</p>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Input
+                    id="provider-account-priority"
+                    type="number"
+                    step="1"
+                    inputMode="numeric"
+                    value={priorityValue}
+                    onChange={(event) => setPriorityDraft(event.target.value)}
+                    disabled={busy}
+                    className="sm:max-w-[10rem]"
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={handleSavePriority}
+                    disabled={busy}
+                  >
+                    {m.providers_save_priority()}
+                  </Button>
+                </div>
+              </div>
+              <div className="space-y-2 border-t border-border/60 pt-3">
+                <Label
                   htmlFor="provider-account-proxy-url"
                   className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground"
                 >
@@ -330,7 +379,7 @@ function ProviderAccountDialog({
                     className="flex-1"
                   />
                   <Button type="button" size="sm" onClick={handleSaveProxyUrl} disabled={busy}>
-                    {m.common_save()}
+                    {m.providers_save_proxy_url()}
                   </Button>
                 </div>
               </div>
@@ -431,6 +480,7 @@ type ProvidersAccountsTableSectionProps = {
   onLogout: (row: ProviderAccountTableRow) => Promise<void>;
   onBatchDelete: (rows: ProviderAccountTableRow[]) => Promise<void>;
   onSaveProxyUrl: (row: ProviderAccountTableRow, proxyUrl: string) => Promise<void>;
+  onSavePriority: (row: ProviderAccountTableRow, priority: number) => Promise<void>;
   onToggleStatus: (row: ProviderAccountTableRow, status: "active" | "disabled") => Promise<void>;
   onToggleAutoRefresh: (row: ProviderAccountTableRow, enabled: boolean) => Promise<void>;
 };
@@ -497,6 +547,10 @@ function AccountDisplayNameCell({ value }: { value: string }) {
   );
 }
 
+function PriorityCell({ value }: { value: number }) {
+  return <span className="font-mono text-xs text-foreground">{value}</span>;
+}
+
 export function ProvidersAccountsTableSection({
   rows,
   loading,
@@ -511,6 +565,7 @@ export function ProvidersAccountsTableSection({
   onLogout,
   onBatchDelete,
   onSaveProxyUrl,
+  onSavePriority,
   onToggleStatus,
   onToggleAutoRefresh,
 }: ProvidersAccountsTableSectionProps) {
@@ -639,6 +694,9 @@ export function ProvidersAccountsTableSection({
                     {m.providers_table_account()}
                   </TableHead>
                   <TableHead className={ACCOUNT_ID_COLUMN_WIDTH_CLASS}>ID</TableHead>
+                  <TableHead className={PRIORITY_COLUMN_WIDTH_CLASS}>
+                    {m.field_priority()}
+                  </TableHead>
                   <TableHead>{m.providers_table_status()}</TableHead>
                   <TableHead>{m.providers_table_expires()}</TableHead>
                   <TableHead>{m.providers_table_plan()}</TableHead>
@@ -665,6 +723,9 @@ export function ProvidersAccountsTableSection({
                     </TableCell>
                     <TableCell className={ACCOUNT_ID_COLUMN_WIDTH_CLASS}>
                       <AccountIdCell value={row.accountId} />
+                    </TableCell>
+                    <TableCell className={PRIORITY_COLUMN_WIDTH_CLASS}>
+                      <PriorityCell value={row.priority} />
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap items-center gap-1">
@@ -735,6 +796,7 @@ export function ProvidersAccountsTableSection({
         onRefreshQuota={onRefreshQuota}
         onLogout={onLogout}
         onSaveProxyUrl={onSaveProxyUrl}
+        onSavePriority={onSavePriority}
         onToggleStatus={onToggleStatus}
         onToggleAutoRefresh={onToggleAutoRefresh}
       />

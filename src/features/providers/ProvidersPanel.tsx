@@ -102,6 +102,7 @@ type ProvidersSectionsProps = {
   onLogout: (row: ProviderAccountTableRow) => Promise<void>;
   onBatchDelete: (rows: ProviderAccountTableRow[]) => Promise<void>;
   onSaveProxyUrl: (row: ProviderAccountTableRow, proxyUrl: string) => Promise<void>;
+  onSavePriority: (row: ProviderAccountTableRow, priority: number) => Promise<void>;
   onToggleStatus: (row: ProviderAccountTableRow, status: "active" | "disabled") => Promise<void>;
   onToggleAutoRefresh: (row: ProviderAccountTableRow, enabled: boolean) => Promise<void>;
 };
@@ -772,79 +773,99 @@ function buildCodexQuotaDetails(quota: ProviderAccountPageItem["quota"] | null) 
   };
 }
 
-function buildKiroRows(
-  accounts: Array<ProviderAccountPageItem & { provider_kind: "kiro" }>
-): ProviderAccountTableRow[] {
-  return accounts.map((account) => {
-    const quota = buildKiroQuotaDetails(account.quota);
-    return {
-      id: `kiro:${account.account_id}`,
-      provider: "kiro",
-      providerLabel: m.providers_kiro_title(),
-      displayName: formatDisplayName(account),
-      accountId: account.account_id,
-      status: account.status,
-      statusLabel: formatKiroStatus(account.status),
-      statusVariant: formatStatusVariant(account.status),
-      expiresAtLabel: formatDateValue(account.expires_at),
-      planType: quota.planType,
-      quotaSummary: quota.quotaSummary,
-      sourceOrMethodLabel: formatKiroAuthMethod(account.auth_method),
-      detailDescription: `${m.providers_kiro_title()} · ${account.account_id}`,
-      detailFields: [
-        { label: m.providers_table_provider(), value: m.providers_kiro_title() },
-        { label: m.providers_table_account(), value: formatDisplayName(account) },
-        { label: m.providers_table_account_id(), value: account.account_id },
-        { label: m.providers_table_status(), value: formatKiroStatus(account.status) },
-        { label: m.providers_table_expires(), value: formatDateValue(account.expires_at) },
-        { label: m.providers_table_plan(), value: quota.planType },
-        { label: m.providers_table_source(), value: formatKiroAuthMethod(account.auth_method) },
-      ],
-      quotaError: quota.quotaError,
-      quotaItems: quota.quotaItems,
-      proxyUrlValue: account.proxy_url ?? "",
-      canRefresh: false,
-      logoutLabel: m.kiro_account_logout(),
-      autoRefreshEnabled: null,
-    };
-  });
+function isKiroProviderAccount(
+  account: ProviderAccountPageItem
+): account is ProviderAccountPageItem & { provider_kind: "kiro" } {
+  return account.provider_kind === "kiro";
 }
 
-function buildCodexRows(
-  accounts: Array<ProviderAccountPageItem & { provider_kind: "codex" }>
-): ProviderAccountTableRow[] {
-  return accounts.map((account) => {
-    const quota = buildCodexQuotaDetails(account.quota);
-    return {
-      id: `codex:${account.account_id}`,
-      provider: "codex",
-      providerLabel: m.providers_codex_title(),
-      displayName: formatDisplayName(account),
-      accountId: account.account_id,
-      status: account.status,
-      statusLabel: formatCodexStatus(account.status),
-      statusVariant: formatStatusVariant(account.status),
-      expiresAtLabel: formatDateValue(account.expires_at ?? null),
-      planType: quota.planType,
-      quotaSummary: quota.quotaSummary,
-      sourceOrMethodLabel: PLACEHOLDER,
-      detailDescription: `${m.providers_codex_title()} · ${account.account_id}`,
-      detailFields: [
-        { label: m.providers_table_provider(), value: m.providers_codex_title() },
-        { label: m.providers_table_account(), value: formatDisplayName(account) },
-        { label: m.providers_table_account_id(), value: account.account_id },
-        { label: m.providers_table_status(), value: formatCodexStatus(account.status) },
-        { label: m.providers_table_expires(), value: formatDateValue(account.expires_at ?? null) },
-        { label: m.providers_table_plan(), value: quota.planType },
-      ],
-      quotaError: quota.quotaError,
-      quotaItems: quota.quotaItems,
-      proxyUrlValue: account.proxy_url ?? "",
-      canRefresh: true,
-      logoutLabel: m.codex_account_logout(),
-      autoRefreshEnabled: account.auto_refresh_enabled ?? true,
-    };
-  });
+function isCodexProviderAccount(
+  account: ProviderAccountPageItem
+): account is ProviderAccountPageItem & { provider_kind: "codex" } {
+  return account.provider_kind === "codex";
+}
+
+function buildKiroRow(
+  account: ProviderAccountPageItem & { provider_kind: "kiro" }
+): ProviderAccountTableRow {
+  const quota = buildKiroQuotaDetails(account.quota);
+  return {
+    id: `kiro:${account.account_id}`,
+    provider: "kiro",
+    providerLabel: m.providers_kiro_title(),
+    displayName: formatDisplayName(account),
+    accountId: account.account_id,
+    priority: account.priority,
+    status: account.status,
+    statusLabel: formatKiroStatus(account.status),
+    statusVariant: formatStatusVariant(account.status),
+    expiresAtLabel: formatDateValue(account.expires_at),
+    planType: quota.planType,
+    quotaSummary: quota.quotaSummary,
+    sourceOrMethodLabel: formatKiroAuthMethod(account.auth_method),
+    detailDescription: `${m.providers_kiro_title()} · ${account.account_id}`,
+    detailFields: [
+      { label: m.providers_table_provider(), value: m.providers_kiro_title() },
+      { label: m.providers_table_account(), value: formatDisplayName(account) },
+      { label: m.providers_table_account_id(), value: account.account_id },
+      { label: m.providers_table_status(), value: formatKiroStatus(account.status) },
+      { label: m.providers_table_expires(), value: formatDateValue(account.expires_at) },
+      { label: m.providers_table_plan(), value: quota.planType },
+      { label: m.providers_table_source(), value: formatKiroAuthMethod(account.auth_method) },
+    ],
+    quotaError: quota.quotaError,
+    quotaItems: quota.quotaItems,
+    proxyUrlValue: account.proxy_url ?? "",
+    canRefresh: false,
+    logoutLabel: m.kiro_account_logout(),
+    autoRefreshEnabled: null,
+  };
+}
+
+function buildCodexRow(
+  account: ProviderAccountPageItem & { provider_kind: "codex" }
+): ProviderAccountTableRow {
+  const quota = buildCodexQuotaDetails(account.quota);
+  return {
+    id: `codex:${account.account_id}`,
+    provider: "codex",
+    providerLabel: m.providers_codex_title(),
+    displayName: formatDisplayName(account),
+    accountId: account.account_id,
+    priority: account.priority,
+    status: account.status,
+    statusLabel: formatCodexStatus(account.status),
+    statusVariant: formatStatusVariant(account.status),
+    expiresAtLabel: formatDateValue(account.expires_at ?? null),
+    planType: quota.planType,
+    quotaSummary: quota.quotaSummary,
+    sourceOrMethodLabel: PLACEHOLDER,
+    detailDescription: `${m.providers_codex_title()} · ${account.account_id}`,
+    detailFields: [
+      { label: m.providers_table_provider(), value: m.providers_codex_title() },
+      { label: m.providers_table_account(), value: formatDisplayName(account) },
+      { label: m.providers_table_account_id(), value: account.account_id },
+      { label: m.providers_table_status(), value: formatCodexStatus(account.status) },
+      { label: m.providers_table_expires(), value: formatDateValue(account.expires_at ?? null) },
+      { label: m.providers_table_plan(), value: quota.planType },
+    ],
+    quotaError: quota.quotaError,
+    quotaItems: quota.quotaItems,
+    proxyUrlValue: account.proxy_url ?? "",
+    canRefresh: true,
+    logoutLabel: m.codex_account_logout(),
+    autoRefreshEnabled: account.auto_refresh_enabled ?? true,
+  };
+}
+
+function buildProviderRow(account: ProviderAccountPageItem): ProviderAccountTableRow {
+  if (isKiroProviderAccount(account)) {
+    return buildKiroRow(account);
+  }
+  if (isCodexProviderAccount(account)) {
+    return buildCodexRow(account);
+  }
+  throw new Error(`Unsupported provider account kind: ${account.provider_kind}`);
 }
 
 function collectErrorMessages(parts: string[]) {
@@ -865,6 +886,7 @@ function ProvidersSections({
   onLogout,
   onBatchDelete,
   onSaveProxyUrl,
+  onSavePriority,
   onToggleStatus,
   onToggleAutoRefresh,
 }: ProvidersSectionsProps) {
@@ -883,6 +905,7 @@ function ProvidersSections({
       onLogout={onLogout}
       onBatchDelete={onBatchDelete}
       onSaveProxyUrl={onSaveProxyUrl}
+      onSavePriority={onSavePriority}
       onToggleStatus={onToggleStatus}
       onToggleAutoRefresh={onToggleAutoRefresh}
     />
@@ -1056,18 +1079,7 @@ function useProvidersPanelState() {
     codexLoginUrl,
   );
   const rows = useMemo(() => {
-    const kiroPageItems = providerAccounts.items.filter(
-      (item): item is ProviderAccountPageItem & { provider_kind: "kiro" } =>
-        item.provider_kind === "kiro"
-    );
-    const codexPageItems = providerAccounts.items.filter(
-      (item): item is ProviderAccountPageItem & { provider_kind: "codex" } =>
-        item.provider_kind === "codex"
-    );
-    return [
-      ...buildKiroRows(kiroPageItems),
-      ...buildCodexRows(codexPageItems),
-    ];
+    return providerAccounts.items.map(buildProviderRow);
   }, [providerAccounts.items]);
   const visibleRows = useMemo(
     () => rows.filter((row) => !optimisticDeletedIds.has(row.id)),
@@ -1172,6 +1184,23 @@ function useProvidersPanelState() {
     },
     [kiroAccounts, codexAccounts, providerAccounts]
   );
+  const handleSavePriority = useCallback(
+    async (row: ProviderAccountTableRow, priority: number) => {
+      try {
+        if (row.provider === "kiro") {
+          await kiroAccounts.setPriority(row.accountId, priority);
+          await kiroAccounts.refresh();
+        } else {
+          await codexAccounts.setPriority(row.accountId, priority);
+          await codexAccounts.refresh();
+        }
+        await providerAccounts.refresh();
+      } catch (error) {
+        toast.error(parseError(error));
+      }
+    },
+    [kiroAccounts, codexAccounts, providerAccounts]
+  );
 
   const handleBatchDelete = useCallback(
     async (rowsToDelete: ProviderAccountTableRow[]) => {
@@ -1212,6 +1241,7 @@ function useProvidersPanelState() {
     onLogout: handleRowLogout,
     onBatchDelete: handleBatchDelete,
     onSaveProxyUrl: handleSaveProxyUrl,
+    onSavePriority: handleSavePriority,
     onToggleStatus: handleAccountStatusToggle,
     onToggleAutoRefresh: handleCodexAutoRefreshToggle,
   };
@@ -1237,6 +1267,7 @@ export function ProvidersPanel() {
         onLogout={state.onLogout}
         onBatchDelete={state.onBatchDelete}
         onSaveProxyUrl={state.onSaveProxyUrl}
+        onSavePriority={state.onSavePriority}
         onToggleStatus={state.onToggleStatus}
         onToggleAutoRefresh={state.onToggleAutoRefresh}
       />

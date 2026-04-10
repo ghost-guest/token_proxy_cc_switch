@@ -11,7 +11,7 @@ use tauri::Manager;
 use crate::proxy::config::ProxyConfigFile;
 
 const CODEX_DISABLE_RESPONSE_STORAGE: bool = true;
-const CODEX_MODEL: &str = "gpt-5.2-codex";
+const CODEX_MODEL: &str = "gpt-5.4";
 const CODEX_DEFAULT_MODEL_PROVIDER: &str = "token_proxy";
 const CODEX_MODEL_REASONING_EFFORT: &str = "xhigh";
 const CODEX_NETWORK_ACCESS: &str = "enabled";
@@ -630,7 +630,7 @@ mod tests {
     fn opencode_provider_uses_readable_model_display_names() {
         let config = build_opencode_provider_config(
             "http://127.0.0.1:9208/v1",
-            &["claude-sonnet-4-5".to_string(), "gpt-5.2-codex".to_string()],
+            &["claude-sonnet-4-5".to_string(), "gpt-5.4".to_string()],
         );
 
         let models = config
@@ -645,7 +645,7 @@ mod tests {
             .and_then(serde_json::Value::as_str)
             .expect("claude display name");
         let gpt_name = models
-            .get("gpt-5.2-codex")
+            .get("gpt-5.4")
             .and_then(serde_json::Value::as_object)
             .and_then(|value| value.get("name"))
             .and_then(serde_json::Value::as_str)

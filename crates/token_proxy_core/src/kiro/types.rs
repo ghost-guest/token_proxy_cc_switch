@@ -29,6 +29,10 @@ pub enum KiroAccountStatus {
     Expired,
 }
 
+fn default_account_priority() -> i32 {
+    0
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct KiroTokenRecord {
     pub access_token: String,
@@ -47,6 +51,8 @@ pub struct KiroTokenRecord {
     pub status: KiroAccountStatus,
     #[serde(default)]
     pub proxy_url: Option<String>,
+    #[serde(default = "default_account_priority")]
+    pub priority: i32,
     #[serde(default)]
     pub quota: KiroQuotaCache,
 }
@@ -92,6 +98,7 @@ pub struct KiroAccountSummary {
     pub expires_at: Option<String>,
     pub status: KiroAccountStatus,
     pub proxy_url: Option<String>,
+    pub priority: i32,
 }
 
 fn default_account_status() -> KiroAccountStatus {
