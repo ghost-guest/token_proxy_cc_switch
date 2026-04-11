@@ -2318,7 +2318,7 @@ fn messages_request_failovers_to_next_kiro_account_before_next_upstream() {
 }
 
 #[test]
-fn messages_request_falls_back_to_next_kiro_upstream_after_all_kiro_accounts_fail() {
+fn messages_request_stops_after_all_kiro_accounts_fail_and_does_not_retry_next_upstream() {
     run_async(async {
         let kiro = spawn_mock_upstream(
             StatusCode::FORBIDDEN,
@@ -2329,7 +2329,7 @@ fn messages_request_falls_back_to_next_kiro_upstream_after_all_kiro_accounts_fai
             }),
         )
         .await;
-        let fallback = spawn_mock_raw_upstream(
+        let next_upstream = spawn_mock_raw_upstream(
             StatusCode::OK,
             build_kiro_event_stream("from downstream fallback"),
             "application/vnd.amazon.eventstream",
@@ -2348,7 +2348,7 @@ fn messages_request_falls_back_to_next_kiro_upstream_after_all_kiro_accounts_fai
                 PROVIDER_KIRO,
                 0,
                 "kiro-fallback-upstream",
-                fallback.base_url.as_str(),
+                next_upstream.base_url.as_str(),
                 FORMATS_MESSAGES,
             ),
         ]);
@@ -2373,16 +2373,16 @@ fn messages_request_falls_back_to_next_kiro_upstream_after_all_kiro_accounts_fai
 
         let (status, json) = send_messages_request(state).await;
         let kiro_requests = kiro.requests();
-        let fallback_requests = fallback.requests();
+        let next_upstream_requests = next_upstream.requests();
 
         kiro.abort();
-        fallback.abort();
+        next_upstream.abort();
         let _ = std::fs::remove_dir_all(&data_dir);
 
-        assert_eq!(status, StatusCode::OK);
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
         assert_eq!(
-            json["content"][0]["text"].as_str(),
-            Some("from downstream fallback")
+            json["error"]["message"].as_str(),
+            Some("Kiro account is not configured.")
         );
         assert_eq!(kiro_requests.len(), 2);
         assert_eq!(
@@ -2394,9 +2394,9 @@ fn messages_request_falls_back_to_next_kiro_upstream_after_all_kiro_accounts_fai
             Some("Bearer kiro-access-b")
         );
         assert_eq!(
-            fallback_requests.len(),
-            1,
-            "next upstream should only run after same-upstream kiro accounts are exhausted"
+            next_upstream_requests.len(),
+            0,
+            "same provider account cooldown now blocks reusing a later kiro upstream in the same request"
         );
     });
 }
@@ -3538,6 +3538,48 @@ fn retry_fallback_plan_switches_chat_between_responses_family_providers() {
     assert_eq!(plan.outbound_path, Some(CODEX_RESPONSES_PATH));
     assert_eq!(plan.request_transform, FormatTransform::ChatToCodex);
     assert_eq!(plan.response_transform, FormatTransform::CodexToChat);
+}
+
+#[test]
+fn retry_fallback_plan_allows_openai_response_chat_to_native_codex_provider() {
+    let config = config_with_providers(&[
+        (PROVIDER_RESPONSES, FORMATS_RESPONSES),
+        (PROVIDER_CODEX, FORMATS_RESPONSES),
+    ]);
+    let plan = resolve_retry_fallback_plan(&config, CHAT_PATH, PROVIDER_RESPONSES)
+        .expect("should fallback to native codex provider");
+    assert_eq!(plan.provider, PROVIDER_CODEX);
+    assert_eq!(plan.outbound_path, Some(CODEX_RESPONSES_PATH));
+    assert_eq!(plan.request_transform, FormatTransform::ChatToCodex);
+    assert_eq!(plan.response_transform, FormatTransform::CodexToChat);
+}
+
+#[test]
+fn retry_fallback_plan_switches_chat_from_openai_to_responses() {
+    let config = config_with_providers(&[
+        (PROVIDER_CHAT, FORMATS_CHAT),
+        (PROVIDER_RESPONSES, FORMATS_ALL),
+    ]);
+    let plan = resolve_retry_fallback_plan(&config, CHAT_PATH, PROVIDER_CHAT)
+        .expect("should fallback to openai responses");
+    assert_eq!(plan.provider, PROVIDER_RESPONSES);
+    assert_eq!(plan.outbound_path, Some(RESPONSES_PATH));
+    assert_eq!(plan.request_transform, FormatTransform::ChatToResponses);
+    assert_eq!(plan.response_transform, FormatTransform::ResponsesToChat);
+}
+
+#[test]
+fn retry_fallback_plan_allows_openai_to_native_responses_provider() {
+    let config = config_with_providers(&[
+        (PROVIDER_CHAT, FORMATS_CHAT),
+        (PROVIDER_RESPONSES, FORMATS_RESPONSES),
+    ]);
+    let plan = resolve_retry_fallback_plan(&config, CHAT_PATH, PROVIDER_CHAT)
+        .expect("should fallback to native responses provider");
+    assert_eq!(plan.provider, PROVIDER_RESPONSES);
+    assert_eq!(plan.outbound_path, Some(RESPONSES_PATH));
+    assert_eq!(plan.request_transform, FormatTransform::ChatToResponses);
+    assert_eq!(plan.response_transform, FormatTransform::ResponsesToChat);
 }
 
 #[test]

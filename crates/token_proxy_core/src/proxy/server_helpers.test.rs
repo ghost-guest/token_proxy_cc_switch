@@ -64,9 +64,8 @@ fn meta_parses_large_request_body_for_stream_and_model() {
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let padding = "x".repeat((2 * 1024 * 1024) + 128);
-        let request = format!(
-            r#"{{"model":"gpt-5.4","stream":true,"input":"hello","padding":"{padding}"}}"#
-        );
+        let request =
+            format!(r#"{{"model":"gpt-5.4","stream":true,"input":"hello","padding":"{padding}"}}"#);
         let body = ReplayableBody::from_body(Body::from(request))
             .await
             .expect("body");
