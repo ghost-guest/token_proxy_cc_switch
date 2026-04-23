@@ -185,6 +185,36 @@ impl MockUpstream {
     }
 }
 
+#[derive(Clone, Debug)]
+struct RecordedMultipartRequest {
+    path: String,
+    body: Bytes,
+    authorization: Option<String>,
+    content_type: Option<String>,
+}
+
+#[derive(Clone)]
+struct MultipartProbeState {
+    response_body: Value,
+    requests: Arc<Mutex<Vec<RecordedMultipartRequest>>>,
+}
+
+struct MultipartProbeUpstream {
+    base_url: String,
+    requests: Arc<Mutex<Vec<RecordedMultipartRequest>>>,
+    task: JoinHandle<()>,
+}
+
+impl MultipartProbeUpstream {
+    fn requests(&self) -> Vec<RecordedMultipartRequest> {
+        self.requests.lock().expect("requests lock").clone()
+    }
+
+    fn abort(self) {
+        self.task.abort();
+    }
+}
+
 #[derive(Clone)]
 struct MockAuthSwitchState {
     requests: Arc<Mutex<Vec<RecordedRequest>>>,
@@ -330,6 +360,64 @@ async fn spawn_mock_raw_upstream(
             .expect("raw mock upstream server should run");
     });
     MockUpstream {
+        base_url: format!("http://{addr}"),
+        requests,
+        task,
+    }
+}
+
+async fn multipart_probe_upstream_handler(
+    State(state): State<Arc<MultipartProbeState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    body: Body,
+) -> axum::response::Response {
+    let bytes = to_bytes(body, usize::MAX)
+        .await
+        .expect("read multipart probe body");
+    state
+        .requests
+        .lock()
+        .expect("requests lock")
+        .push(RecordedMultipartRequest {
+            path: uri.path().to_string(),
+            body: bytes,
+            authorization: headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string),
+            content_type: headers
+                .get(axum::http::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string),
+        });
+    (
+        StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        state.response_body.to_string(),
+    )
+        .into_response()
+}
+
+async fn spawn_multipart_probe_upstream(response_body: Value) -> MultipartProbeUpstream {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let state = Arc::new(MultipartProbeState {
+        response_body,
+        requests: requests.clone(),
+    });
+    let app = Router::new()
+        .route("/{*path}", any(multipart_probe_upstream_handler))
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind multipart probe upstream");
+    let addr: SocketAddr = listener.local_addr().expect("multipart probe local addr");
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("multipart probe server should run");
+    });
+    MultipartProbeUpstream {
         base_url: format!("http://{addr}"),
         requests,
         task,
@@ -3085,6 +3173,117 @@ fn responses_request_falls_back_from_524_to_codex() {
 }
 
 #[test]
+fn responses_request_with_gpt_image_2_preserves_native_payload_for_openai_response() {
+    run_async(async {
+        let responses = spawn_mock_upstream(
+            StatusCode::OK,
+            json!({
+                "id": "resp_img_1",
+                "object": "response",
+                "created_at": 123,
+                "model": "gpt-image-2",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "image_generation_call",
+                        "id": "ig_1",
+                        "result": "ZmFrZS1pbWFnZS1iNjQ="
+                    }
+                ]
+            }),
+        )
+        .await;
+
+        let config = config_with_runtime_upstreams(&[(
+            PROVIDER_RESPONSES,
+            10,
+            "responses-gpt-image-2",
+            responses.base_url.as_str(),
+            FORMATS_RESPONSES,
+        )]);
+        let data_dir = next_test_data_dir("responses_gpt_image_2_native_passthrough");
+        let state = build_test_state_handle(config, data_dir.clone()).await;
+
+        let response = proxy_request(
+            State(state),
+            Method::POST,
+            Uri::from_static(RESPONSES_PATH),
+            axum::http::HeaderMap::new(),
+            Body::from(
+                json!({
+                    "model": "gpt-image-2",
+                    "input": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "input_text",
+                                    "text": "draw small red fox wearing sunglasses"
+                                }
+                            ]
+                        }
+                    ],
+                    "tools": [
+                        {
+                            "type": "image_generation",
+                            "size": "1024x1024",
+                            "quality": "high"
+                        }
+                    ]
+                })
+                .to_string(),
+            ),
+        )
+        .await;
+
+        let response_status = response.status();
+        let response_bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("proxy response bytes");
+        let response_json: Value =
+            serde_json::from_slice(&response_bytes).expect("proxy response json");
+        let requests = responses.requests();
+
+        responses.abort();
+        let _ = std::fs::remove_dir_all(&data_dir);
+
+        assert_eq!(response_status, StatusCode::OK);
+        assert_eq!(response_json["model"].as_str(), Some("gpt-image-2"));
+        assert_eq!(
+            response_json["output"][0]["type"].as_str(),
+            Some("image_generation_call")
+        );
+        assert_eq!(
+            response_json["output"][0]["result"].as_str(),
+            Some("ZmFrZS1pbWFnZS1iNjQ=")
+        );
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].path, RESPONSES_PATH);
+        assert_eq!(requests[0].body["model"].as_str(), Some("gpt-image-2"));
+        assert_eq!(
+            requests[0].body["input"][0]["content"][0]["type"].as_str(),
+            Some("input_text")
+        );
+        assert_eq!(
+            requests[0].body["input"][0]["content"][0]["text"].as_str(),
+            Some("draw small red fox wearing sunglasses")
+        );
+        assert_eq!(
+            requests[0].body["tools"][0]["type"].as_str(),
+            Some("image_generation")
+        );
+        assert_eq!(
+            requests[0].body["tools"][0]["size"].as_str(),
+            Some("1024x1024")
+        );
+        assert_eq!(
+            requests[0].body["tools"][0]["quality"].as_str(),
+            Some("high")
+        );
+    });
+}
+
+#[test]
 fn anthropic_messages_request_routes_to_codex() {
     run_async(async {
         let codex = spawn_mock_upstream(
@@ -4357,6 +4556,87 @@ fn openai_images_route_prefers_openai_provider_over_anthropic_priority() {
     ]);
     let plan = resolve_dispatch_plan(&config, "/v1/images/generations").expect("should dispatch");
     assert_eq!(plan.provider, PROVIDER_CHAT);
+}
+
+#[test]
+fn openai_image_edits_route_prefers_openai_provider_over_anthropic_priority() {
+    let config = config_with_upstreams(&[
+        (PROVIDER_ANTHROPIC, 10, "anthropic", FORMATS_MESSAGES),
+        (PROVIDER_CHAT, 0, "chat", FORMATS_CHAT),
+    ]);
+    let plan = resolve_dispatch_plan(&config, "/v1/images/edits").expect("should dispatch");
+    assert_eq!(plan.provider, PROVIDER_CHAT);
+}
+
+#[test]
+fn openai_image_edits_request_preserves_multipart_passthrough() {
+    run_async(async {
+        let upstream = spawn_multipart_probe_upstream(json!({
+            "created": 123,
+            "data": [
+                {
+                    "b64_json": "ZmFrZS1pbWFnZS1kYXRh"
+                }
+            ]
+        }))
+        .await;
+        let config = config_with_runtime_upstreams(&[(
+            PROVIDER_CHAT,
+            0,
+            "chat-image-edits",
+            upstream.base_url.as_str(),
+            FORMATS_CHAT,
+        )]);
+        let data_dir = next_test_data_dir("openai_image_edits_multipart_passthrough");
+        let state = build_test_state_handle(config, data_dir.clone()).await;
+        let boundary = "tp-boundary-123";
+        let content_type = format!("multipart/form-data; boundary={boundary}");
+        let request_body = format!(
+            "--{boundary}\r\n\
+Content-Disposition: form-data; name=\"model\"\r\n\r\n\
+gpt-image-2\r\n\
+--{boundary}\r\n\
+Content-Disposition: form-data; name=\"prompt\"\r\n\r\n\
+add red hat\r\n\
+--{boundary}\r\n\
+Content-Disposition: form-data; name=\"image\"; filename=\"input.png\"\r\n\
+Content-Type: image/png\r\n\r\n\
+fake-png-bytes\r\n\
+--{boundary}--\r\n"
+        );
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::CONTENT_TYPE,
+            HeaderValue::from_str(&content_type).expect("multipart content-type"),
+        );
+
+        let response = proxy_request(
+            State(state),
+            Method::POST,
+            Uri::from_static("/v1/images/edits"),
+            headers,
+            Body::from(request_body.clone()),
+        )
+        .await;
+        let response_status = response.status();
+        let response_bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("proxy response bytes");
+        let response_json: Value =
+            serde_json::from_slice(&response_bytes).expect("proxy response json");
+        let requests = upstream.requests();
+
+        upstream.abort();
+        let _ = std::fs::remove_dir_all(&data_dir);
+
+        assert_eq!(response_status, StatusCode::OK);
+        assert_eq!(response_json["data"][0]["b64_json"].as_str(), Some("ZmFrZS1pbWFnZS1kYXRh"));
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].path, "/v1/images/edits");
+        assert_eq!(requests[0].authorization.as_deref(), Some("Bearer test-key"));
+        assert_eq!(requests[0].content_type.as_deref(), Some(content_type.as_str()));
+        assert_eq!(requests[0].body, Bytes::from(request_body));
+    });
 }
 
 #[test]
