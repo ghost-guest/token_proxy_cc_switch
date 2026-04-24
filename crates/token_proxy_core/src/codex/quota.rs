@@ -13,8 +13,8 @@ use super::store::CodexAccountStore;
 use super::types::{CodexAccountSummary, CodexQuotaCache, CodexQuotaItem, CodexQuotaSummary};
 
 const CODEX_USAGE_ENDPOINT: &str = "https://chatgpt.com/backend-api/wham/usage";
-// Match Codex CLI UA to avoid edge filtering on some proxies.
-const CODEX_USER_AGENT: &str = "codex_cli_rs/0.50.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464";
+// Match current Codex CLI UA to avoid edge filtering on some proxies.
+const CODEX_USER_AGENT: &str = "codex_cli_rs/0.104.0";
 
 pub async fn fetch_quotas(store: &CodexAccountStore) -> Result<Vec<CodexQuotaSummary>, String> {
     let accounts = store.list_accounts().await?;

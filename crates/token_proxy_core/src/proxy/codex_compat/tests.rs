@@ -10,7 +10,8 @@ use super::super::{
 use super::tool_names::shorten_name_if_needed;
 use super::{
     chat_request_to_codex, codex_response_to_chat, codex_response_to_responses,
-    responses_request_to_codex, stream_codex_to_chat, stream_codex_to_responses,
+    responses_compact_request_to_codex, responses_request_to_codex, stream_codex_to_chat,
+    stream_codex_to_responses,
 };
 
 #[test]
@@ -28,6 +29,67 @@ fn chat_request_to_codex_sets_model_and_stream() {
     assert_eq!(value["model"], "gpt-5-codex");
     assert_eq!(value["stream"], true);
     assert_eq!(value["input"][0]["type"], "message");
+}
+
+#[test]
+fn responses_request_to_codex_normalizes_gpt_5_5_and_sanitizes_oauth_payload() {
+    let input = json!({
+        "model": "openai/gpt 5.5",
+        "stream": false,
+        "store": true,
+        "frequency_penalty": 0.2,
+        "presence_penalty": 0.3,
+        "prompt_cache_retention": "24h",
+        "input": [
+            {
+                "type": "message",
+                "role": "system",
+                "content": [
+                    { "type": "input_text", "text": "system rules" }
+                ]
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "hi" }
+                ]
+            }
+        ]
+    });
+
+    let output = responses_request_to_codex(&Bytes::from(input.to_string()), None)
+        .expect("convert responses request");
+    let value: serde_json::Value = serde_json::from_slice(&output).expect("json");
+
+    assert_eq!(value["model"], "gpt-5.5");
+    assert_eq!(value["stream"], true);
+    assert_eq!(value["store"], false);
+    assert_eq!(value["instructions"], "system rules");
+    assert_eq!(value["input"].as_array().expect("input").len(), 1);
+    assert_eq!(value["input"][0]["role"], "user");
+    assert!(value.get("frequency_penalty").is_none());
+    assert!(value.get("presence_penalty").is_none());
+    assert!(value.get("prompt_cache_retention").is_none());
+}
+
+#[test]
+fn responses_compact_request_to_codex_normalizes_gpt_5_5_and_removes_stream_store() {
+    let input = json!({
+        "model": "gpt-5.5-medium",
+        "stream": true,
+        "store": true,
+        "input": "hi"
+    });
+
+    let output = responses_compact_request_to_codex(&Bytes::from(input.to_string()), None)
+        .expect("convert compact responses request");
+    let value: serde_json::Value = serde_json::from_slice(&output).expect("json");
+
+    assert_eq!(value["model"], "gpt-5.5");
+    assert_eq!(value["instructions"], "You are a helpful coding assistant.");
+    assert!(value.get("stream").is_none());
+    assert!(value.get("store").is_none());
 }
 
 #[test]

@@ -124,9 +124,9 @@ fn parse_object(body: &Bytes) -> Result<Map<String, Value>, String> {
 
 fn resolve_model(object: &Map<String, Value>, model_hint: Option<&str>) -> String {
     if let Some(model) = object.get("model").and_then(Value::as_str) {
-        return model_hint.unwrap_or(model).to_string();
+        return normalize_codex_model(model_hint.unwrap_or(model));
     }
-    model_hint.unwrap_or_default().to_string()
+    normalize_codex_model(model_hint.unwrap_or_default())
 }
 
 fn resolve_reasoning_effort(object: &Map<String, Value>, model: Option<&str>) -> String {
@@ -429,7 +429,10 @@ fn normalize_responses_payload(
         .and_then(Value::as_str)
         .or(model_hint)
         .unwrap_or_default();
-    object.insert("model".to_string(), Value::String(model.to_string()));
+    object.insert(
+        "model".to_string(),
+        Value::String(normalize_codex_model(model)),
+    );
     if !object.contains_key("parallel_tool_calls") {
         object.insert("parallel_tool_calls".to_string(), Value::Bool(true));
     }
@@ -450,16 +453,14 @@ fn normalize_responses_payload(
         "max_completion_tokens",
         "temperature",
         "top_p",
+        "frequency_penalty",
+        "presence_penalty",
         "service_tier",
         "previous_response_id",
         "prompt_cache_retention",
         "safety_identifier",
     ] {
         object.remove(key);
-    }
-
-    if !object.contains_key("instructions") {
-        object.insert("instructions".to_string(), Value::String(String::new()));
     }
 
     let input = match object.get("input") {
@@ -471,7 +472,164 @@ fn normalize_responses_payload(
         Some(Value::Array(items)) => sanitize_responses_input_for_codex(items),
         _ => Vec::new(),
     };
+    let (input, extracted_instructions) = extract_system_messages_from_input(input);
+    merge_extracted_instructions(object, extracted_instructions);
+    ensure_default_instructions(object);
     object.insert("input".to_string(), Value::Array(input));
+}
+
+fn normalize_codex_model(model: &str) -> String {
+    let model = model.trim();
+    if model.is_empty() {
+        return "gpt-5.4".to_string();
+    }
+    let model_id = model.rsplit('/').next().unwrap_or(model).trim();
+    let normalized = model_id.to_ascii_lowercase();
+    let compact = normalized.replace(' ', "-");
+
+    for (alias, target) in CODEX_MODEL_ALIASES {
+        if compact == *alias {
+            return (*target).to_string();
+        }
+    }
+
+    if compact.contains("gpt-5.5") {
+        return "gpt-5.5".to_string();
+    }
+    if compact.contains("gpt-5.4-mini") {
+        return "gpt-5.4-mini".to_string();
+    }
+    if compact.contains("gpt-5.4") {
+        return "gpt-5.4".to_string();
+    }
+    if compact.contains("gpt-5.2") {
+        return "gpt-5.2".to_string();
+    }
+    if compact.contains("gpt-5.3-codex-spark") {
+        return "gpt-5.3-codex-spark".to_string();
+    }
+    if compact.contains("gpt-5.3-codex") || compact.contains("gpt-5.3") {
+        return "gpt-5.3-codex".to_string();
+    }
+
+    model_id.to_string()
+}
+
+const CODEX_MODEL_ALIASES: &[(&str, &str)] = &[
+    ("gpt-5.5", "gpt-5.5"),
+    ("gpt-5.5-none", "gpt-5.5"),
+    ("gpt-5.5-low", "gpt-5.5"),
+    ("gpt-5.5-medium", "gpt-5.5"),
+    ("gpt-5.5-high", "gpt-5.5"),
+    ("gpt-5.5-xhigh", "gpt-5.5"),
+    ("gpt-5-codex", "gpt-5-codex"),
+    ("gpt-5.4", "gpt-5.4"),
+    ("gpt-5.4-none", "gpt-5.4"),
+    ("gpt-5.4-low", "gpt-5.4"),
+    ("gpt-5.4-medium", "gpt-5.4"),
+    ("gpt-5.4-high", "gpt-5.4"),
+    ("gpt-5.4-xhigh", "gpt-5.4"),
+    ("gpt-5.4-chat-latest", "gpt-5.4"),
+    ("gpt-5.4-mini", "gpt-5.4-mini"),
+    ("gpt-5.3", "gpt-5.3-codex"),
+    ("gpt-5.3-none", "gpt-5.3-codex"),
+    ("gpt-5.3-low", "gpt-5.3-codex"),
+    ("gpt-5.3-medium", "gpt-5.3-codex"),
+    ("gpt-5.3-high", "gpt-5.3-codex"),
+    ("gpt-5.3-xhigh", "gpt-5.3-codex"),
+    ("gpt-5.3-codex", "gpt-5.3-codex"),
+    ("gpt-5.3-codex-low", "gpt-5.3-codex"),
+    ("gpt-5.3-codex-medium", "gpt-5.3-codex"),
+    ("gpt-5.3-codex-high", "gpt-5.3-codex"),
+    ("gpt-5.3-codex-xhigh", "gpt-5.3-codex"),
+    ("gpt-5.3-codex-spark", "gpt-5.3-codex-spark"),
+    ("gpt-5.3-codex-spark-low", "gpt-5.3-codex-spark"),
+    ("gpt-5.3-codex-spark-medium", "gpt-5.3-codex-spark"),
+    ("gpt-5.3-codex-spark-high", "gpt-5.3-codex-spark"),
+    ("gpt-5.3-codex-spark-xhigh", "gpt-5.3-codex-spark"),
+    ("gpt-5.2", "gpt-5.2"),
+    ("gpt-5.2-none", "gpt-5.2"),
+    ("gpt-5.2-low", "gpt-5.2"),
+    ("gpt-5.2-medium", "gpt-5.2"),
+    ("gpt-5.2-high", "gpt-5.2"),
+    ("gpt-5.2-xhigh", "gpt-5.2"),
+];
+
+fn extract_system_messages_from_input(items: Vec<Value>) -> (Vec<Value>, Vec<String>) {
+    let mut output = Vec::with_capacity(items.len());
+    let mut instructions = Vec::new();
+
+    for item in items {
+        let Some(object) = item.as_object() else {
+            output.push(item);
+            continue;
+        };
+        if object.get("role").and_then(Value::as_str) != Some("system") {
+            output.push(item);
+            continue;
+        }
+        if let Some(text) = extract_text_from_content(object.get("content")) {
+            instructions.push(text);
+        }
+    }
+
+    (output, instructions)
+}
+
+fn merge_extracted_instructions(object: &mut Map<String, Value>, extracted: Vec<String>) {
+    if extracted.is_empty() {
+        return;
+    }
+    let extracted = extracted.join("\n\n");
+    let existing = object
+        .get("instructions")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let instructions = match existing {
+        Some(existing) => format!("{extracted}\n\n{existing}"),
+        None => extracted,
+    };
+    object.insert("instructions".to_string(), Value::String(instructions));
+}
+
+fn ensure_default_instructions(object: &mut Map<String, Value>) {
+    let has_instructions = object
+        .get("instructions")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    if !has_instructions {
+        object.insert(
+            "instructions".to_string(),
+            Value::String("You are a helpful coding assistant.".to_string()),
+        );
+    }
+}
+
+fn extract_text_from_content(content: Option<&Value>) -> Option<String> {
+    match content? {
+        Value::String(text) => non_empty_text(text),
+        Value::Array(items) => {
+            let text = items
+                .iter()
+                .filter_map(|item| {
+                    item.get("text")
+                        .and_then(Value::as_str)
+                        .or_else(|| item.as_str())
+                })
+                .filter_map(non_empty_text)
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            non_empty_text(&text)
+        }
+        _ => None,
+    }
+}
+
+fn non_empty_text(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
 fn sanitize_responses_input_for_codex(items: &[Value]) -> Vec<Value> {
