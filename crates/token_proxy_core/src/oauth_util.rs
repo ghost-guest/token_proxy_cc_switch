@@ -81,7 +81,7 @@ pub fn expires_at_from_seconds(expires_in: i64) -> String {
         .unwrap_or_else(|_| OffsetDateTime::now_utc().unix_timestamp().to_string())
 }
 
-fn decode_jwt_payload(token: &str) -> Option<serde_json::Value> {
+pub(crate) fn decode_jwt_payload(token: &str) -> Option<serde_json::Value> {
     let mut parts = token.split('.');
     let _header = parts.next()?;
     let payload = parts.next()?;

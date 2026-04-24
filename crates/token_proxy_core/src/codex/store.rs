@@ -7,7 +7,8 @@ use tokio::sync::{Mutex, RwLock};
 
 use crate::app_proxy::AppProxyState;
 use crate::oauth_util::{
-    expires_at_from_seconds, extract_chatgpt_account_id_from_jwt, extract_email_from_jwt,
+    decode_jwt_payload, expires_at_from_seconds, extract_chatgpt_account_id_from_jwt,
+    extract_email_from_jwt,
     normalize_proxy_url, now_rfc3339, sanitize_id_part,
 };
 use crate::paths::TokenProxyPaths;
@@ -262,7 +263,7 @@ impl CodexAccountStore {
         account_id: &str,
         record: CodexTokenRecord,
     ) -> Result<CodexTokenRecord, String> {
-        if !record.is_expired() {
+        if !record_needs_refresh(&record) {
             return Ok(record);
         }
         if !record.auto_refresh_enabled {
@@ -643,6 +644,36 @@ fn fill_record_from_jwt(record: &mut CodexTokenRecord) {
     }
 }
 
+fn record_needs_refresh(record: &CodexTokenRecord) -> bool {
+    record.is_expired() || paid_quota_disagrees_with_free_access_token_claim(record)
+}
+
+fn paid_quota_disagrees_with_free_access_token_claim(record: &CodexTokenRecord) -> bool {
+    if !is_paid_plan(record.quota.plan_type.as_deref()) {
+        return false;
+    }
+    matches!(
+        extract_chatgpt_plan_type_from_jwt(&record.access_token).as_deref(),
+        Some("free")
+    )
+}
+
+fn is_paid_plan(plan_type: Option<&str>) -> bool {
+    let Some(plan_type) = plan_type.map(str::trim).filter(|value| !value.is_empty()) else {
+        return false;
+    };
+    !plan_type.eq_ignore_ascii_case("free")
+}
+
+fn extract_chatgpt_plan_type_from_jwt(token: &str) -> Option<String> {
+    let value = decode_jwt_payload(token)?;
+    value
+        .get("https://api.openai.com/auth")
+        .and_then(|value| value.get("chatgpt_plan_type"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
 fn parse_import_records(contents: &str) -> Result<Vec<CodexTokenRecord>, String> {
     let value: Value = serde_json::from_str(contents)
         .map_err(|err| format!("Invalid Codex account JSON file: {err}"))?;
@@ -907,6 +938,7 @@ fn format_unix_timestamp(value: i64) -> Option<String> {
 mod tests {
     use super::*;
     use crate::app_proxy;
+    use crate::codex::CodexQuotaCache;
     use crate::paths::TokenProxyPaths;
     use crate::proxy::sqlite;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -945,10 +977,67 @@ mod tests {
         format!("header.{encoded}.signature")
     }
 
+    fn build_access_token_with_plan(plan_type: &str) -> String {
+        let payload = json!({
+            "https://api.openai.com/auth": {
+                "chatgpt_plan_type": plan_type,
+            }
+        });
+        let encoded =
+            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).expect("serialize payload"));
+        format!("header.{encoded}.signature")
+    }
+
+    fn build_record_with_quota_and_access_claim(
+        quota_plan_type: &str,
+        access_claim_plan_type: &str,
+    ) -> CodexTokenRecord {
+        CodexTokenRecord {
+            access_token: build_access_token_with_plan(access_claim_plan_type),
+            refresh_token: "refresh-token".to_string(),
+            id_token: build_id_token("paid@example.com", "acct-paid"),
+            auto_refresh_enabled: true,
+            status: CodexAccountStatus::Active,
+            account_id: Some("acct-paid".to_string()),
+            email: Some("paid@example.com".to_string()),
+            expires_at: future_rfc3339(24),
+            last_refresh: None,
+            proxy_url: None,
+            priority: 0,
+            quota: CodexQuotaCache {
+                plan_type: Some(quota_plan_type.to_string()),
+                quotas: Vec::new(),
+                error: None,
+                checked_at: Some(now_rfc3339()),
+            },
+        }
+    }
+
     fn future_rfc3339(hours: i64) -> String {
         (OffsetDateTime::now_utc() + time::Duration::hours(hours))
             .format(&Rfc3339)
             .expect("format expires_at")
+    }
+
+    #[test]
+    fn refresh_is_needed_when_paid_quota_disagrees_with_free_access_token_claim() {
+        let record = build_record_with_quota_and_access_claim("prolite", "free");
+
+        assert!(record_needs_refresh(&record));
+    }
+
+    #[test]
+    fn refresh_is_not_needed_when_free_quota_matches_free_access_token_claim() {
+        let record = build_record_with_quota_and_access_claim("free", "free");
+
+        assert!(!record_needs_refresh(&record));
+    }
+
+    #[test]
+    fn refresh_is_not_needed_when_paid_quota_matches_paid_access_token_claim() {
+        let record = build_record_with_quota_and_access_claim("prolite", "prolite");
+
+        assert!(!record_needs_refresh(&record));
     }
 
     #[test]
