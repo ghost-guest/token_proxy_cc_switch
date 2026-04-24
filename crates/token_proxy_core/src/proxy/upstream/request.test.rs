@@ -165,6 +165,33 @@ fn anthropic_stainless_headers_are_removed_for_responses_fallback() {
 }
 
 #[test]
+fn codex_headers_do_not_send_version_header() {
+    let headers = HeaderMap::new();
+
+    let built = build_request_headers(
+        "codex",
+        "/v1/responses",
+        &headers,
+        http::UpstreamAuthHeader {
+            name: AUTHORIZATION,
+            value: HeaderValue::from_static("Bearer upstream"),
+        },
+        None,
+        None,
+    );
+
+    assert!(!built.contains_key("version"));
+    assert_eq!(
+        built.get("user-agent").and_then(|value| value.to_str().ok()),
+        Some("codex_cli_rs/0.104.0")
+    );
+    assert_eq!(
+        built.get("openai-beta").and_then(|value| value.to_str().ok()),
+        Some("responses=experimental")
+    );
+}
+
+#[test]
 fn anthropic_stainless_headers_are_preserved_for_native_anthropic() {
     let mut headers = HeaderMap::new();
     headers.insert("x-stainless-lang", HeaderValue::from_static("js"));

@@ -875,8 +875,8 @@ fn responses_compact_to_codex_strips_reasoning_include() {
     let value = json_from_bytes(output);
 
     assert!(value.get("include").is_none());
-    assert!(value.get("store").is_none());
-    assert!(value.get("stream").is_none());
+    assert_eq!(value["store"], json!(false));
+    assert_eq!(value["stream"], json!(true));
     assert_eq!(value["model"], json!("gpt-5.4"));
 }
 

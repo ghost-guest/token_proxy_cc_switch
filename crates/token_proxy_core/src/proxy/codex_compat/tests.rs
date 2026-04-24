@@ -88,8 +88,28 @@ fn responses_compact_request_to_codex_normalizes_gpt_5_5_and_removes_stream_stor
 
     assert_eq!(value["model"], "gpt-5.5");
     assert_eq!(value["instructions"], "You are a helpful coding assistant.");
-    assert!(value.get("stream").is_none());
-    assert!(value.get("store").is_none());
+    assert_eq!(value["stream"], true);
+    assert_eq!(value["store"], false);
+    assert!(value.get("include").is_none());
+}
+
+#[test]
+fn responses_compact_request_to_codex_normalizes_openai_message_input() {
+    let input = json!({
+        "model": "gpt-5.5",
+        "input": [
+            { "role": "user", "content": "hi" }
+        ]
+    });
+
+    let output = responses_compact_request_to_codex(&Bytes::from(input.to_string()), None)
+        .expect("convert compact responses request");
+    let value: serde_json::Value = serde_json::from_slice(&output).expect("json");
+
+    assert_eq!(value["input"][0]["type"], "message");
+    assert_eq!(value["input"][0]["role"], "user");
+    assert_eq!(value["input"][0]["content"][0]["type"], "input_text");
+    assert_eq!(value["input"][0]["content"][0]["text"], "hi");
 }
 
 #[test]

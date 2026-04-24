@@ -1,10 +1,8 @@
 use axum::http::header::{HeaderName, HeaderValue};
 use axum::http::HeaderMap;
-const HEADER_VERSION: &str = "0.104.0";
 const HEADER_OPENAI_BETA: &str = "responses=experimental";
 const DEFAULT_USER_AGENT: &str = "codex_cli_rs/0.104.0";
 
-const HEADER_VERSION_NAME: HeaderName = HeaderName::from_static("version");
 const HEADER_OPENAI_BETA_NAME: HeaderName = HeaderName::from_static("openai-beta");
 const HEADER_SESSION_ID_NAME: HeaderName = HeaderName::from_static("session_id");
 const HEADER_USER_AGENT_NAME: HeaderName = HeaderName::from_static("user-agent");
@@ -14,7 +12,6 @@ const HEADER_ORIGINATOR_NAME: HeaderName = HeaderName::from_static("originator")
 const HEADER_ORIGINATOR: &str = "codex_cli_rs";
 
 pub(crate) fn apply_codex_headers(headers: &mut HeaderMap, inbound: &HeaderMap) {
-    ensure_header(headers, inbound, &HEADER_VERSION_NAME, HEADER_VERSION);
     ensure_header(
         headers,
         inbound,

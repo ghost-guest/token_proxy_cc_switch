@@ -436,13 +436,11 @@ fn normalize_responses_payload(
     if !object.contains_key("parallel_tool_calls") {
         object.insert("parallel_tool_calls".to_string(), Value::Bool(true));
     }
+    object.insert("stream".to_string(), Value::Bool(true));
+    object.insert("store".to_string(), Value::Bool(false));
     if strip_reasoning_include {
         object.remove("include");
-        object.remove("store");
-        object.remove("stream");
     } else {
-        object.insert("stream".to_string(), Value::Bool(true));
-        object.insert("store".to_string(), Value::Bool(false));
         object.insert(
             "include".to_string(),
             json!(["reasoning.encrypted_content"]),
@@ -643,6 +641,11 @@ fn sanitize_responses_input_item_for_codex(item: &Value) -> Value {
     let Some(object) = item.as_object() else {
         return item.clone();
     };
+    if object.get("type").is_none() && object.get("role").is_some() && object.get("content").is_some()
+    {
+        let role = object.get("role").and_then(Value::as_str).unwrap_or("user");
+        return map_regular_message(item, role).unwrap_or_else(|| item.clone());
+    }
     if object.get("type").and_then(Value::as_str) != Some("function_call_output") {
         return item.clone();
     }
