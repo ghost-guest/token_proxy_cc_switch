@@ -104,7 +104,10 @@ fn transform_responses_request_to_codex(
             map_tool_choice(&tool_choice, &tool_map),
         );
     }
+    normalize_tool_choice_for_codex(&mut object);
     if let Some(input) = object.get_mut("input") {
+        normalize_input_message_text(input);
+        add_missing_tool_call_names(input);
         rewrite_input_function_names(input, &tool_map);
     }
 
@@ -241,8 +244,8 @@ fn map_message_content(role: &str, content: &Value) -> Vec<Value> {
         }
         Value::Array(items) => {
             for item in items {
-                if let Some(text) = item.get("text").and_then(Value::as_str) {
-                    push_text_part(&mut parts, role, text);
+                if let Some(text) = item.get("text") {
+                    push_text_part(&mut parts, role, &value_to_string(text));
                     continue;
                 }
                 if item.get("type").and_then(Value::as_str) == Some("image_url") && role == "user" {
@@ -372,6 +375,32 @@ fn map_tool_choice(choice: &Value, tool_map: &ToolNameMap) -> Value {
         }
     }
     Value::Object(output)
+}
+
+fn normalize_tool_choice_for_codex(object: &mut Map<String, Value>) {
+    let Some(choice_type) = object
+        .get("tool_choice")
+        .and_then(Value::as_object)
+        .and_then(|choice| choice.get("type"))
+        .and_then(Value::as_str)
+    else {
+        return;
+    };
+    let choice_type = choice_type.trim();
+    if choice_type.is_empty() || codex_tools_contain_type(object.get("tools"), choice_type) {
+        return;
+    }
+    object.insert("tool_choice".to_string(), Value::String("auto".to_string()));
+}
+
+fn codex_tools_contain_type(tools: Option<&Value>, tool_type: &str) -> bool {
+    let Some(items) = tools.and_then(Value::as_array) else {
+        return false;
+    };
+    items
+        .iter()
+        .filter_map(Value::as_object)
+        .any(|tool| tool.get("type").and_then(Value::as_str) == Some(tool_type))
 }
 
 fn apply_text_format(
@@ -641,7 +670,12 @@ fn sanitize_responses_input_item_for_codex(item: &Value) -> Value {
     let Some(object) = item.as_object() else {
         return item.clone();
     };
-    if object.get("type").is_none() && object.get("role").is_some() && object.get("content").is_some()
+    if object.get("role").and_then(Value::as_str) == Some("tool") {
+        return map_responses_tool_role_message(object);
+    }
+    if object.get("type").is_none()
+        && object.get("role").is_some()
+        && object.get("content").is_some()
     {
         let role = object.get("role").and_then(Value::as_str).unwrap_or("user");
         return map_regular_message(item, role).unwrap_or_else(|| item.clone());
@@ -655,6 +689,104 @@ fn sanitize_responses_input_item_for_codex(item: &Value) -> Value {
     // breaks composition without adding value.
     sanitized.remove("output_parts");
     Value::Object(sanitized)
+}
+
+fn map_responses_tool_role_message(object: &Map<String, Value>) -> Value {
+    let call_id = object
+        .get("call_id")
+        .and_then(Value::as_str)
+        .or_else(|| object.get("tool_call_id").and_then(Value::as_str))
+        .or_else(|| object.get("id").and_then(Value::as_str))
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if call_id.is_empty() {
+        let mut fallback = object.clone();
+        fallback.insert("role".to_string(), Value::String("user".to_string()));
+        fallback.remove("tool_call_id");
+        return Value::Object(fallback);
+    }
+
+    let output = extract_text_from_content(object.get("content"))
+        .or_else(|| object.get("output").map(value_to_string))
+        .unwrap_or_default();
+    json!({
+        "type": "function_call_output",
+        "call_id": call_id,
+        "output": output,
+    })
+}
+
+fn normalize_input_message_text(input: &mut Value) {
+    let Some(items) = input.as_array_mut() else {
+        return;
+    };
+    for item in items {
+        let Some(object) = item.as_object_mut() else {
+            continue;
+        };
+        if object.get("type").and_then(Value::as_str) != Some("message") {
+            continue;
+        }
+        let Some(parts) = object.get_mut("content").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        for part in parts {
+            let Some(part_object) = part.as_object_mut() else {
+                continue;
+            };
+            let Some(text) = part_object.get("text") else {
+                continue;
+            };
+            if text.is_string() {
+                continue;
+            }
+            part_object.insert("text".to_string(), Value::String(value_to_string(text)));
+        }
+    }
+}
+
+fn add_missing_tool_call_names(input: &mut Value) {
+    let Some(items) = input.as_array_mut() else {
+        return;
+    };
+    for item in items {
+        let Some(object) = item.as_object_mut() else {
+            continue;
+        };
+        let Some(item_type) = object.get("type").and_then(Value::as_str) else {
+            continue;
+        };
+        if !codex_input_item_requires_name(item_type)
+            || object
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.trim().is_empty())
+        {
+            continue;
+        }
+        let fallback_name = object
+            .get("tool_name")
+            .and_then(Value::as_str)
+            .or_else(|| {
+                object
+                    .get("function")
+                    .and_then(Value::as_object)
+                    .and_then(|function| function.get("name"))
+                    .and_then(Value::as_str)
+            })
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("tool")
+            .to_string();
+        object.insert("name".to_string(), Value::String(fallback_name));
+    }
+}
+
+fn codex_input_item_requires_name(item_type: &str) -> bool {
+    matches!(
+        item_type.trim(),
+        "function_call" | "custom_tool_call" | "mcp_tool_call"
+    )
 }
 
 fn rewrite_input_function_names(input: &mut Value, tool_map: &ToolNameMap) {

@@ -390,3 +390,85 @@ fn responses_request_to_codex_strips_output_parts_from_function_call_output() {
     assert_eq!(input_items.len(), 1);
     assert!(input_items[0].get("output_parts").is_none());
 }
+
+#[test]
+fn responses_request_to_codex_converts_tool_role_message_to_function_call_output() {
+    let input = json!({
+        "model": "gpt-5",
+        "input": [
+            {
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": "ok"
+            }
+        ]
+    });
+    let bytes = Bytes::from(input.to_string());
+    let output = responses_request_to_codex(&bytes, Some("gpt-5-codex")).expect("convert");
+    let value: serde_json::Value = serde_json::from_slice(&output).expect("json");
+    let item = &value["input"][0];
+
+    assert_eq!(item["type"], "function_call_output");
+    assert_eq!(item["call_id"], "call_1");
+    assert_eq!(item["output"], "ok");
+    assert!(item.get("role").is_none());
+}
+
+#[test]
+fn responses_request_to_codex_stringifies_non_string_message_content_text() {
+    let input = json!({
+        "model": "gpt-5",
+        "input": [
+            {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": ["a", "b"] }
+                ]
+            }
+        ]
+    });
+    let bytes = Bytes::from(input.to_string());
+    let output = responses_request_to_codex(&bytes, Some("gpt-5-codex")).expect("convert");
+    let value: serde_json::Value = serde_json::from_slice(&output).expect("json");
+
+    assert_eq!(value["input"][0]["content"][0]["text"], "[\"a\",\"b\"]");
+}
+
+#[test]
+fn responses_request_to_codex_downgrades_unknown_tool_choice_to_auto() {
+    let input = json!({
+        "model": "gpt-5",
+        "input": "hi",
+        "tools": [
+            { "type": "function", "name": "shell" }
+        ],
+        "tool_choice": { "type": "custom" }
+    });
+    let bytes = Bytes::from(input.to_string());
+    let output = responses_request_to_codex(&bytes, Some("gpt-5-codex")).expect("convert");
+    let value: serde_json::Value = serde_json::from_slice(&output).expect("json");
+
+    assert_eq!(value["tool_choice"], "auto");
+}
+
+#[test]
+fn responses_request_to_codex_adds_fallback_name_for_tool_call_input() {
+    let input = json!({
+        "model": "gpt-5",
+        "input": [
+            {
+                "type": "function_call",
+                "call_id": "call_1",
+                "arguments": "{}"
+            }
+        ]
+    });
+    let bytes = Bytes::from(input.to_string());
+    let output = responses_request_to_codex(&bytes, Some("gpt-5-codex")).expect("convert");
+    let value: serde_json::Value = serde_json::from_slice(&output).expect("json");
+
+    assert_eq!(value["input"][0]["type"], "function_call");
+    assert_eq!(value["input"][0]["call_id"], "call_1");
+    assert_eq!(value["input"][0]["name"], "tool");
+}

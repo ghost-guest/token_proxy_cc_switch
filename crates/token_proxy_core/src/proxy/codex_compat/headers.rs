@@ -1,7 +1,7 @@
 use axum::http::header::{HeaderName, HeaderValue};
 use axum::http::HeaderMap;
 const HEADER_OPENAI_BETA: &str = "responses=experimental";
-const DEFAULT_USER_AGENT: &str = "codex_cli_rs/0.104.0";
+const DEFAULT_USER_AGENT: &str = "codex_cli_rs/0.125.0";
 
 const HEADER_OPENAI_BETA_NAME: HeaderName = HeaderName::from_static("openai-beta");
 const HEADER_SESSION_ID_NAME: HeaderName = HeaderName::from_static("session_id");

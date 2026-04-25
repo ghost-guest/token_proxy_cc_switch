@@ -182,11 +182,15 @@ fn codex_headers_do_not_send_version_header() {
 
     assert!(!built.contains_key("version"));
     assert_eq!(
-        built.get("user-agent").and_then(|value| value.to_str().ok()),
-        Some("codex_cli_rs/0.104.0")
+        built
+            .get("user-agent")
+            .and_then(|value| value.to_str().ok()),
+        Some("codex_cli_rs/0.125.0")
     );
     assert_eq!(
-        built.get("openai-beta").and_then(|value| value.to_str().ok()),
+        built
+            .get("openai-beta")
+            .and_then(|value| value.to_str().ok()),
         Some("responses=experimental")
     );
 }
