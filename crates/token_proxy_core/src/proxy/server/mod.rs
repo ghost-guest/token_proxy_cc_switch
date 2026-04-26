@@ -75,6 +75,7 @@ async fn proxy_request(
             &state.config,
             &state.log,
             &headers,
+            &method,
             body,
             capture_request_detail_enabled,
             &path,
@@ -138,6 +139,7 @@ async fn proxy_request(
     let inbound = match prepare_inbound_request(
         &state,
         &headers,
+        &method,
         path,
         query,
         body,

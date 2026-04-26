@@ -138,6 +138,7 @@ Notes:
 
 ## Auth rules (important)
 - Local access: `local_api_key` enabled → require format-specific key. These local auth inputs are stripped and **not** forwarded upstream.
+  - Public whitelist: `GET` / `HEAD` `/v1/models` and `/v1beta/openai/models` do not require local key.
   - OpenAI / Responses: `Authorization: Bearer <key>`
   - Anthropic `/v1/messages`: `x-api-key` or `x-anthropic-api-key`
   - Gemini native API: `x-goog-api-key` or `?key=...`

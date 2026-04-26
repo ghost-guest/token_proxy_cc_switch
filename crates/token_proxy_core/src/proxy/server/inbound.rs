@@ -1,6 +1,6 @@
 use axum::{
     body::Body,
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, Method, StatusCode},
     response::Response,
 };
 use std::{sync::Arc, time::Instant};
@@ -30,6 +30,7 @@ pub(crate) struct InboundRequest {
 pub(super) async fn prepare_inbound_request(
     state: &ProxyState,
     headers: &HeaderMap,
+    method: &Method,
     path: String,
     query: Option<String>,
     body: Body,
@@ -41,6 +42,7 @@ pub(super) async fn prepare_inbound_request(
         &state.config,
         &state.log,
         headers,
+        method,
         body,
         capture_request_detail_enabled,
         &path,
@@ -96,6 +98,7 @@ pub(super) async fn ensure_local_auth_or_respond(
     config: &ProxyConfig,
     log: &Arc<LogWriter>,
     headers: &HeaderMap,
+    method: &Method,
     body: Body,
     capture_request_detail_enabled: bool,
     path: &str,
@@ -103,7 +106,7 @@ pub(super) async fn ensure_local_auth_or_respond(
     request_start: Instant,
     max_body_bytes: usize,
 ) -> Result<Body, Response> {
-    if let Err(message) = http::ensure_local_auth(config, headers, path, query) {
+    if let Err(message) = http::ensure_local_auth(config, headers, method, path, query) {
         tracing::warn!("local auth failed");
         let detail = if capture_request_detail_enabled {
             Some(capture_detail_from_body(headers, body, max_body_bytes).await)

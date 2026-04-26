@@ -5,7 +5,7 @@ use axum::{
             HeaderName, HeaderValue, AUTHORIZATION, CONNECTION, CONTENT_LENGTH, HOST,
             PROXY_AUTHENTICATE, PROXY_AUTHORIZATION, TE, TRAILER, TRANSFER_ENCODING, UPGRADE,
         },
-        HeaderMap, StatusCode,
+        HeaderMap, Method, StatusCode,
     },
     response::Response,
 };
@@ -24,10 +24,13 @@ const X_OPENAI_API_KEY: &str = "x-openai-api-key";
 const X_API_KEY: &str = "x-api-key";
 const X_ANTHROPIC_API_KEY: &str = "x-anthropic-api-key";
 const X_GOOG_API_KEY: &str = "x-goog-api-key";
+const OPENAI_MODELS_INDEX_PATH: &str = "/v1/models";
+const OPENAI_COMPATIBLE_MODELS_INDEX_PATH: &str = "/v1beta/openai/models";
 
 pub(crate) fn ensure_local_auth(
     config: &ProxyConfig,
     headers: &HeaderMap,
+    method: &Method,
     path: &str,
     query: Option<&str>,
 ) -> Result<(), String> {
@@ -35,6 +38,10 @@ pub(crate) fn ensure_local_auth(
         tracing::debug!("no local_api_key configured, skipping local auth");
         return Ok(());
     };
+    if is_public_model_catalog_request(method, path) {
+        tracing::debug!(method = %method, path = %path, "public model catalog request skips local auth");
+        return Ok(());
+    }
     tracing::debug!(path = %path, "local auth required, resolving local key");
     let Some(provided) = resolve_local_auth_token(headers, path, query)? else {
         tracing::warn!(path = %path, "missing local access key");
@@ -51,6 +58,14 @@ pub(crate) fn ensure_local_auth(
     }
     tracing::debug!(path = %path, "local auth passed");
     Ok(())
+}
+
+fn is_public_model_catalog_request(method: &Method, path: &str) -> bool {
+    matches!(method.as_str(), "GET" | "HEAD")
+        && matches!(
+            path,
+            OPENAI_MODELS_INDEX_PATH | OPENAI_COMPATIBLE_MODELS_INDEX_PATH
+        )
 }
 
 pub(crate) fn resolve_client_gemini_api_key(

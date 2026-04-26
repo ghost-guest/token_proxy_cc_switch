@@ -1742,6 +1742,39 @@ fn models_index_aggregates_unique_ids_when_prefix_disabled() {
 }
 
 #[test]
+fn models_index_allows_missing_local_key_when_local_auth_enabled() {
+    run_async(async {
+        let upstream = spawn_model_catalog_upstream(json!({
+            "object": "list",
+            "data": [
+                { "id": "gpt-5", "object": "model" }
+            ]
+        }))
+        .await;
+        let data_dir =
+            next_test_data_dir("models_index_allows_missing_local_key_when_local_auth_enabled");
+        let mut config = config_with_runtime_upstreams(&[(
+            PROVIDER_RESPONSES,
+            0,
+            "alpha",
+            upstream.base_url.as_str(),
+            FORMATS_RESPONSES,
+        )]);
+        config.local_api_key = Some("local-key".to_string());
+        let state = build_test_state_handle(config, data_dir).await;
+
+        let (status, body) = send_models_request(state).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["data"][0]["id"].as_str(), Some("gpt-5"));
+        let requests = upstream.requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].path, "/v1/models");
+
+        upstream.abort();
+    });
+}
+
+#[test]
 fn models_index_adds_prefixed_entries_and_duplicate_alias_when_enabled() {
     run_async(async {
         let upstream_a = spawn_model_catalog_upstream(json!({

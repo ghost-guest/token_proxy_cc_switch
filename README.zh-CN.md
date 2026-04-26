@@ -138,6 +138,7 @@ pnpm exec tsc --noEmit
 
 ## 鉴权规则（重要）
 - 本地访问：设置了 `local_api_key` 必须按接口格式携带本地 key，且这些本地鉴权不会转发给上游
+  - 公开白名单：`GET` / `HEAD` `/v1/models` 与 `/v1beta/openai/models` 不需要本地 key
   - OpenAI / Responses：`Authorization: Bearer <key>`
   - Anthropic `/v1/messages`：`x-api-key` / `x-anthropic-api-key`
   - Gemini 原生 API：`x-goog-api-key` 或 `?key=...`

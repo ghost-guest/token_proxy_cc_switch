@@ -62,7 +62,7 @@ fn local_auth_accepts_anthropic_headers() {
     let config = config_with_local("local-key");
     let mut headers = HeaderMap::new();
     headers.insert("x-api-key", HeaderValue::from_static("local-key"));
-    let result = ensure_local_auth(&config, &headers, "/v1/messages", None);
+    let result = ensure_local_auth(&config, &headers, &Method::POST, "/v1/messages", None);
     assert!(result.is_ok());
 }
 
@@ -71,7 +71,7 @@ fn local_auth_accepts_anthropic_authorization_only() {
     let config = config_with_local("local-key");
     let mut headers = HeaderMap::new();
     headers.insert(AUTHORIZATION, HeaderValue::from_static("Bearer local-key"));
-    let result = ensure_local_auth(&config, &headers, "/v1/messages", None);
+    let result = ensure_local_auth(&config, &headers, &Method::POST, "/v1/messages", None);
     assert!(result.is_ok());
 }
 
@@ -82,6 +82,7 @@ fn local_auth_accepts_gemini_query_key() {
     let result = ensure_local_auth(
         &config,
         &headers,
+        &Method::POST,
         "/v1beta/models/gemini-1.5-flash:generateContent",
         Some("key=local-key"),
     );
@@ -92,7 +93,13 @@ fn local_auth_accepts_gemini_query_key() {
 fn local_auth_accepts_gemini_model_catalog_query_key() {
     let config = config_with_local("local-key");
     let headers = HeaderMap::new();
-    let result = ensure_local_auth(&config, &headers, "/v1beta/models", Some("key=local-key"));
+    let result = ensure_local_auth(
+        &config,
+        &headers,
+        &Method::GET,
+        "/v1beta/models",
+        Some("key=local-key"),
+    );
     assert!(result.is_ok());
 }
 
@@ -103,6 +110,7 @@ fn local_auth_accepts_gemini_count_tokens_query_key() {
     let result = ensure_local_auth(
         &config,
         &headers,
+        &Method::POST,
         "/v1beta/models/gemini-1.5-flash:countTokens",
         Some("key=local-key"),
     );
@@ -116,6 +124,7 @@ fn local_auth_accepts_gemini_upload_files_query_key() {
     let result = ensure_local_auth(
         &config,
         &headers,
+        &Method::POST,
         "/upload/v1beta/files",
         Some("key=local-key"),
     );
@@ -127,7 +136,13 @@ fn local_auth_accepts_openai_authorization() {
     let config = config_with_local("local-key");
     let mut headers = HeaderMap::new();
     headers.insert(AUTHORIZATION, HeaderValue::from_static("Bearer local-key"));
-    let result = ensure_local_auth(&config, &headers, "/v1/chat/completions", None);
+    let result = ensure_local_auth(
+        &config,
+        &headers,
+        &Method::POST,
+        "/v1/chat/completions",
+        None,
+    );
     assert!(result.is_ok());
 }
 
@@ -136,8 +151,44 @@ fn local_auth_accepts_lowercase_bearer_authorization() {
     let config = config_with_local("local-key");
     let mut headers = HeaderMap::new();
     headers.insert(AUTHORIZATION, HeaderValue::from_static("bearer local-key"));
-    let result = ensure_local_auth(&config, &headers, "/v1/chat/completions", None);
+    let result = ensure_local_auth(
+        &config,
+        &headers,
+        &Method::POST,
+        "/v1/chat/completions",
+        None,
+    );
     assert!(result.is_ok());
+}
+
+#[test]
+fn local_auth_allows_openai_models_index_without_key() {
+    let config = config_with_local("local-key");
+    let headers = HeaderMap::new();
+    let result = ensure_local_auth(&config, &headers, &Method::GET, "/v1/models", None);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn local_auth_allows_openai_compatible_models_index_without_key() {
+    let config = config_with_local("local-key");
+    let headers = HeaderMap::new();
+    let result = ensure_local_auth(
+        &config,
+        &headers,
+        &Method::HEAD,
+        "/v1beta/openai/models",
+        None,
+    );
+    assert!(result.is_ok());
+}
+
+#[test]
+fn local_auth_rejects_post_models_index_without_key() {
+    let config = config_with_local("local-key");
+    let headers = HeaderMap::new();
+    let result = ensure_local_auth(&config, &headers, &Method::POST, "/v1/models", None);
+    assert_eq!(result, Err("Missing local access key.".to_string()));
 }
 
 #[test]
