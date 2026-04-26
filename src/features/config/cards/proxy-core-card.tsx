@@ -185,23 +185,6 @@ function ProxyCoreFields({
           {m.proxy_core_upstream_no_data_timeout_secs_help()}
         </p>
       </div>
-      <div className="grid gap-2">
-        <Label htmlFor="model-discovery-refresh-secs">
-          {m.proxy_core_model_discovery_refresh_secs_label()}
-        </Label>
-        <Input
-          id="model-discovery-refresh-secs"
-          value={form.modelDiscoveryRefreshSecs}
-          onChange={(event) =>
-            onChange({ modelDiscoveryRefreshSecs: event.target.value })
-          }
-          placeholder="0"
-          inputMode="numeric"
-        />
-        <p className="text-xs text-muted-foreground">
-          {m.proxy_core_model_discovery_refresh_secs_help()}
-        </p>
-      </div>
     </>
   );
 }

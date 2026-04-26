@@ -33,7 +33,6 @@ fn config_with_addr_and_body_limit(
         max_request_body_bytes,
         retryable_failure_cooldown: Duration::from_secs(15),
         upstream_no_data_timeout: Duration::from_secs(120),
-        model_discovery_refresh_interval: None,
         upstream_strategy: crate::proxy::config::UpstreamStrategyRuntime::default(),
         hot_model_mappings: HashMap::new(),
         upstreams: HashMap::new(),
@@ -327,6 +326,55 @@ fn start_refreshes_model_discovery_cache_without_blocking_proxy_start() {
         assert!(probe.models.contains(&"gpt-5.5".to_string()));
         assert!(probe.models.contains(&"o4-mini".to_string()));
         assert_eq!(upstream.paths(), vec!["/v1/models"]);
+
+        let _ = service.stop().await;
+        upstream.abort();
+        let _ = std::fs::remove_dir_all(data_dir);
+    });
+}
+
+#[test]
+fn refresh_model_discovery_updates_cache_on_demand() {
+    run_async(async {
+        let upstream = spawn_model_catalog_probe_upstream(json!({
+            "object": "list",
+            "data": [
+                { "id": "gpt-5.5", "object": "model" }
+            ]
+        }))
+        .await;
+        let (context, data_dir) = create_test_context();
+        let mut config = test_config_file(0);
+        config.upstreams = vec![upstream_config(
+            "openai-a",
+            "openai-response",
+            upstream.base_url.as_str(),
+        )];
+        crate::proxy::config::write_config(context.paths.as_ref(), config)
+            .await
+            .expect("write config");
+
+        let service = ProxyServiceHandle::new();
+        service.start(&context).await.expect("start proxy");
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if upstream.paths().len() == 1 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("startup discovery should complete");
+
+        let probes = service.refresh_model_discovery().await;
+        let probe = probes
+            .iter()
+            .find(|probe| probe.upstream_id == "openai-a")
+            .expect("openai probe");
+        assert_eq!(probe.status, UpstreamModelProbeStatus::Ok);
+        assert!(probe.models.contains(&"gpt-5.5".to_string()));
+        assert_eq!(upstream.paths(), vec!["/v1/models", "/v1/models"]);
 
         let _ = service.stop().await;
         upstream.abort();

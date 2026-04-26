@@ -40,14 +40,14 @@ pub(super) fn migrate_config_json(root: &mut Value) -> bool {
             matches!(value.trim(), "priority_fill_first" | "priority_round_robin")
         });
     let missing_hot_model_mappings = !root_obj.contains_key("hot_model_mappings");
-    let missing_model_discovery_refresh_secs =
-        !root_obj.contains_key("model_discovery_refresh_secs");
+    let has_legacy_model_discovery_refresh_secs =
+        root_obj.contains_key("model_discovery_refresh_secs");
     let is_legacy_config = had_legacy_enable
         || had_legacy_provider
         || had_legacy_api_key
         || had_legacy_upstream_strategy
         || missing_hot_model_mappings
-        || missing_model_discovery_refresh_secs;
+        || has_legacy_model_discovery_refresh_secs;
 
     // 仅当检测到旧字段或缺少新增必备配置块时才写回，避免无意义改写配置文件。
     if !is_legacy_config {
@@ -62,7 +62,7 @@ pub(super) fn migrate_config_json(root: &mut Value) -> bool {
     changed |= had_legacy_enable;
     changed |= migrate_legacy_upstream_strategy(root_obj);
     changed |= migrate_hot_model_mappings(root_obj);
-    changed |= migrate_model_discovery_refresh_secs(root_obj);
+    changed |= remove_legacy_model_discovery_refresh_secs(root_obj);
 
     let Some(upstreams_value) = root_obj.get_mut("upstreams") else {
         return changed;
@@ -88,15 +88,8 @@ fn migrate_hot_model_mappings(root_obj: &mut Map<String, Value>) -> bool {
     true
 }
 
-fn migrate_model_discovery_refresh_secs(root_obj: &mut Map<String, Value>) -> bool {
-    if root_obj.contains_key("model_discovery_refresh_secs") {
-        return false;
-    }
-    root_obj.insert(
-        "model_discovery_refresh_secs".to_string(),
-        Value::Number(0.into()),
-    );
-    true
+fn remove_legacy_model_discovery_refresh_secs(root_obj: &mut Map<String, Value>) -> bool {
+    root_obj.remove("model_discovery_refresh_secs").is_some()
 }
 
 fn migrate_legacy_upstream_strategy(root_obj: &mut Map<String, Value>) -> bool {

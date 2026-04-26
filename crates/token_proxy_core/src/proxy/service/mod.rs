@@ -101,6 +101,10 @@ impl ProxyServiceHandle {
     pub async fn model_discovery_snapshot(&self) -> Vec<UpstreamModelProbe> {
         self.inner.model_discovery_snapshot().await
     }
+
+    pub async fn refresh_model_discovery(&self) -> Vec<UpstreamModelProbe> {
+        self.inner.refresh_model_discovery().await
+    }
 }
 
 #[derive(Clone, Serialize, Debug)]
@@ -227,6 +231,23 @@ impl ProxyService {
         let mut inner = self.inner.lock().await;
         inner.refresh_if_finished().await;
         inner.model_discovery_snapshot().await
+    }
+
+    async fn refresh_model_discovery(&self) -> Vec<UpstreamModelProbe> {
+        let state_handle = {
+            let mut inner = self.inner.lock().await;
+            inner.refresh_if_finished().await;
+            inner
+                .running
+                .as_ref()
+                .map(|running| running.state_handle.clone())
+        };
+        let Some(state_handle) = state_handle else {
+            return Vec::new();
+        };
+        let state = state_handle.read().await.clone();
+        server::refresh_model_discovery(state.clone()).await;
+        state.model_discovery.snapshot().await
     }
 }
 
@@ -496,15 +517,8 @@ struct RunningProxy {
 
 fn spawn_model_discovery_task(state_handle: ProxyStateHandle) -> JoinHandle<()> {
     tokio::spawn(async move {
-        loop {
-            let state = state_handle.read().await.clone();
-            let refresh_interval = state.config.model_discovery_refresh_interval;
-            server::refresh_model_discovery(state).await;
-            let Some(refresh_interval) = refresh_interval else {
-                break;
-            };
-            tokio::time::sleep(refresh_interval).await;
-        }
+        let state = state_handle.read().await.clone();
+        server::refresh_model_discovery(state).await;
     })
 }
 

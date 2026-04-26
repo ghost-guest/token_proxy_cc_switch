@@ -1,6 +1,6 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DashboardPanel } from "@/features/dashboard/DashboardPanel";
 import type { DashboardSnapshotQuery } from "@/features/dashboard/types";
@@ -31,12 +31,14 @@ vi.mock("@/features/dashboard/components/chart-area-interactive", () => ({
   ),
 }));
 
-const { readDashboardSnapshotMock } = vi.hoisted(() => ({
+const { readDashboardSnapshotMock, refreshDashboardModelDiscoveryMock } = vi.hoisted(() => ({
   readDashboardSnapshotMock: vi.fn(),
+  refreshDashboardModelDiscoveryMock: vi.fn(),
 }));
 
 vi.mock("@/features/dashboard/api", () => ({
   readDashboardSnapshot: readDashboardSnapshotMock,
+  refreshDashboardModelDiscovery: refreshDashboardModelDiscoveryMock,
 }));
 
 function renderPanel() {
@@ -48,8 +50,14 @@ function renderPanel() {
 }
 
 describe("dashboard/DashboardPanel", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
   beforeEach(() => {
     readDashboardSnapshotMock.mockReset();
+    refreshDashboardModelDiscoveryMock.mockReset();
+    refreshDashboardModelDiscoveryMock.mockResolvedValue(undefined);
     readDashboardSnapshotMock.mockImplementation(
       async ({ upstreamId, accountId, publicOnly }: DashboardSnapshotQuery) => {
         if (upstreamId === "alpha" && accountId === "codex-a.json") {
@@ -533,5 +541,28 @@ describe("dashboard/DashboardPanel", () => {
         publicOnly: false,
       }
     );
+  });
+
+  it("refreshes upstream model discovery before reloading the dashboard", async () => {
+    const user = userEvent.setup();
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dashboard-summary-total")).toHaveTextContent(
+        "3"
+      );
+    });
+    expect(refreshDashboardModelDiscoveryMock).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: m.common_refresh() }));
+
+    await waitFor(() => {
+      expect(refreshDashboardModelDiscoveryMock).toHaveBeenCalledTimes(1);
+      expect(readDashboardSnapshotMock).toHaveBeenCalledTimes(2);
+    });
+    expect(
+      refreshDashboardModelDiscoveryMock.mock.invocationCallOrder[0]
+    ).toBeLessThan(readDashboardSnapshotMock.mock.invocationCallOrder[1]);
   });
 });

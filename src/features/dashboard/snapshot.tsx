@@ -13,7 +13,10 @@ import {
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { readDashboardSnapshot } from "@/features/dashboard/api"
+import {
+  readDashboardSnapshot,
+  refreshDashboardModelDiscovery,
+} from "@/features/dashboard/api"
 import {
   DASHBOARD_RANGE_OPTIONS,
   type DashboardTimeRange,
@@ -197,7 +200,16 @@ export function useDashboardSnapshot() {
 
   const refresh = useCallback(() => {
     markLoading()
-    void loadSnapshot()
+    void (async () => {
+      try {
+        await refreshDashboardModelDiscovery()
+      } catch (error) {
+        setStatus("error")
+        setStatusMessage(parseError(error))
+        return
+      }
+      await loadSnapshot()
+    })()
   }, [loadSnapshot, markLoading])
 
   return {

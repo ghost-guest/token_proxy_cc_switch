@@ -8,3 +8,7 @@ import type {
 export async function readDashboardSnapshot(query: DashboardSnapshotQuery) {
   return await invoke<DashboardSnapshot>("read_dashboard_snapshot", query);
 }
+
+export async function refreshDashboardModelDiscovery() {
+  return await invoke("refresh_dashboard_model_discovery");
+}

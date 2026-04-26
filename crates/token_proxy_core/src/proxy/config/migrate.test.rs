@@ -179,7 +179,7 @@ fn migrate_adds_default_hot_model_mappings_when_missing() {
         value["hot_model_mappings"]["models/gemini-3.1-pro-preview"].as_str(),
         Some("gemini-3.1-pro-preview")
     );
-    assert_eq!(value["model_discovery_refresh_secs"].as_u64(), Some(0));
+    assert!(value.get("model_discovery_refresh_secs").is_none());
 }
 
 #[test]
@@ -198,18 +198,18 @@ fn migrate_preserves_custom_hot_model_mappings() {
     );
 
     let changed = migrate_config_json(&mut value);
-    assert!(changed);
+    assert!(!changed);
 
     assert_eq!(
         value["hot_model_mappings"]["custom/alias"].as_str(),
         Some("custom-target")
     );
     assert!(value["hot_model_mappings"].get("openai/gpt-5.5").is_none());
-    assert_eq!(value["model_discovery_refresh_secs"].as_u64(), Some(0));
+    assert!(value.get("model_discovery_refresh_secs").is_none());
 }
 
 #[test]
-fn migrate_preserves_custom_model_discovery_refresh_secs() {
+fn migrate_removes_legacy_model_discovery_refresh_secs() {
     let mut value = parse_json(
         r#"
         {
@@ -225,7 +225,7 @@ fn migrate_preserves_custom_model_discovery_refresh_secs() {
     );
 
     let changed = migrate_config_json(&mut value);
-    assert!(!changed);
+    assert!(changed);
 
-    assert_eq!(value["model_discovery_refresh_secs"].as_u64(), Some(900));
+    assert!(value.get("model_discovery_refresh_secs").is_none());
 }

@@ -111,7 +111,6 @@ export type ProxyConfigFileBase = {
   log_level?: LogLevel;
   retryable_failure_cooldown_secs?: number;
   upstream_no_data_timeout_secs?: number;
-  model_discovery_refresh_secs?: number;
   tray_token_rate: TrayTokenRateConfig;
   upstream_strategy: UpstreamStrategy;
   hot_model_mappings?: Record<string, string>;
@@ -183,7 +182,6 @@ export type ConfigForm = {
   logLevel: LogLevel;
   retryableFailureCooldownSecs: string;
   upstreamNoDataTimeoutSecs: string;
-  modelDiscoveryRefreshSecs: string;
   trayTokenRate: TrayTokenRateConfig;
   upstreamStrategy: {
     order: UpstreamOrderStrategy;

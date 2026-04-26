@@ -38,15 +38,6 @@ describe("config/form", () => {
     expect(validate({ ...EMPTY_FORM, upstreamNoDataTimeoutSecs: "120" }).valid).toBe(true);
   });
 
-  it("validates model discovery refresh as 0 or integer >= 30", () => {
-    expect(validate({ ...EMPTY_FORM, modelDiscoveryRefreshSecs: "-1" }).valid).toBe(false);
-    expect(validate({ ...EMPTY_FORM, modelDiscoveryRefreshSecs: "" }).valid).toBe(false);
-    expect(validate({ ...EMPTY_FORM, modelDiscoveryRefreshSecs: "1" }).valid).toBe(false);
-    expect(validate({ ...EMPTY_FORM, modelDiscoveryRefreshSecs: "29" }).valid).toBe(false);
-    expect(validate({ ...EMPTY_FORM, modelDiscoveryRefreshSecs: "0" }).valid).toBe(true);
-    expect(validate({ ...EMPTY_FORM, modelDiscoveryRefreshSecs: "30" }).valid).toBe(true);
-  });
-
   it("requires upstream id for enabled upstreams", () => {
     const upstream = createEmptyUpstream();
     const result = validate({ ...EMPTY_FORM, upstreams: [upstream] });
@@ -139,7 +130,7 @@ describe("config/form", () => {
     expect(payload.model_list_prefix).toBe(true);
     expect(payload.retryable_failure_cooldown_secs).toBe(15);
     expect(payload.upstream_no_data_timeout_secs).toBe(120);
-    expect(payload.model_discovery_refresh_secs).toBe(0);
+    expect("model_discovery_refresh_secs" in payload).toBe(false);
     expect(payload.upstreams[0]?.id).toBe("upstream-1");
     expect(payload.upstreams[0]?.providers).toEqual(["openai", "openai-response"]);
     expect(payload.upstreams[0]?.base_url).toBe("https://example.com");
@@ -168,15 +159,6 @@ describe("config/form", () => {
     });
 
     expect(payload.retryable_failure_cooldown_secs).toBe(30);
-  });
-
-  it("serializes model discovery refresh seconds", () => {
-    const payload = toPayload({
-      ...EMPTY_FORM,
-      modelDiscoveryRefreshSecs: "300",
-    });
-
-    expect(payload.model_discovery_refresh_secs).toBe(300);
   });
 
   it("defaults upstream no data timeout seconds to 120 when config omits it", () => {
@@ -212,7 +194,6 @@ describe("config/form", () => {
     });
 
     expect(form.upstreamNoDataTimeoutSecs).toBe("120");
-    expect(form.modelDiscoveryRefreshSecs).toBe("0");
     expect(form.modelListPrefix).toBe(false);
     expect(form.upstreams[0]?.apiKeys).toBe("key-a, key-b");
     expect(form.upstreamStrategy).toEqual({

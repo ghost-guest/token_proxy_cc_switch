@@ -28,3 +28,11 @@ pub async fn read_dashboard_snapshot(
     snapshot.model_probes = proxy_service.model_discovery_snapshot().await;
     Ok(snapshot)
 }
+
+#[tauri::command]
+pub async fn refresh_dashboard_model_discovery(
+    proxy_service: tauri::State<'_, proxy::service::ProxyServiceHandle>,
+) -> Result<(), String> {
+    let _ = proxy_service.refresh_model_discovery().await;
+    Ok(())
+}

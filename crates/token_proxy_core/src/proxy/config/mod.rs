@@ -10,7 +10,6 @@ use std::time::{Duration, Instant};
 
 const DEFAULT_MAX_REQUEST_BODY_BYTES: u64 = 20 * 1024 * 1024;
 const MIN_UPSTREAM_NO_DATA_TIMEOUT_SECS: u64 = 3;
-const MIN_MODEL_DISCOVERY_REFRESH_SECS: u64 = 30;
 
 pub use hot_model_mappings::default_hot_model_mappings;
 pub(crate) use hot_model_mappings::expand_model_ids_with_mappings;
@@ -85,9 +84,6 @@ fn build_runtime_config(config: ProxyConfigFile) -> Result<ProxyConfig, String> 
         upstream_no_data_timeout: resolve_upstream_no_data_timeout(
             config.upstream_no_data_timeout_secs,
         )?,
-        model_discovery_refresh_interval: resolve_model_discovery_refresh_interval(
-            config.model_discovery_refresh_secs,
-        )?,
         upstream_strategy: resolve_upstream_strategy(config.upstream_strategy)?,
         hot_model_mappings: config.hot_model_mappings,
         upstreams,
@@ -114,22 +110,6 @@ fn resolve_upstream_no_data_timeout(value: u64) -> Result<Duration, String> {
         return Err("upstream_no_data_timeout_secs is too large.".to_string());
     }
     Ok(duration)
-}
-
-fn resolve_model_discovery_refresh_interval(value: u64) -> Result<Option<Duration>, String> {
-    if value == 0 {
-        return Ok(None);
-    }
-    if value < MIN_MODEL_DISCOVERY_REFRESH_SECS {
-        return Err(format!(
-            "model_discovery_refresh_secs must be 0 or at least {MIN_MODEL_DISCOVERY_REFRESH_SECS}."
-        ));
-    }
-    let duration = Duration::from_secs(value);
-    if Instant::now().checked_add(duration).is_none() {
-        return Err("model_discovery_refresh_secs is too large.".to_string());
-    }
-    Ok(Some(duration))
 }
 
 fn resolve_upstream_strategy(value: UpstreamStrategy) -> Result<UpstreamStrategyRuntime, String> {

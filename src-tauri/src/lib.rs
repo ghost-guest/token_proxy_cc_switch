@@ -23,8 +23,8 @@ use commands::{
     kiro_start_login, prepare_relaunch, preview_client_setup, providers_delete_accounts,
     providers_list_accounts_page, proxy_reload, proxy_restart, proxy_start, proxy_status,
     proxy_stop, read_dashboard_snapshot, read_default_hot_model_mappings, read_proxy_config,
-    read_request_detail_capture, read_request_log_detail, save_proxy_config,
-    set_request_detail_capture, write_claude_code_settings, write_codex_config,
+    read_request_detail_capture, read_request_log_detail, refresh_dashboard_model_discovery,
+    save_proxy_config, set_request_detail_capture, write_claude_code_settings, write_codex_config,
     write_opencode_config,
 };
 
@@ -220,6 +220,7 @@ pub fn run() {
             write_opencode_config,
             save_proxy_config,
             read_dashboard_snapshot,
+            refresh_dashboard_model_discovery,
             read_request_log_detail,
             read_request_detail_capture,
             set_request_detail_capture,

@@ -131,7 +131,6 @@ fn config_with_runtime_upstreams(
         max_request_body_bytes: 20 * 1024 * 1024,
         retryable_failure_cooldown: std::time::Duration::from_secs(15),
         upstream_no_data_timeout: std::time::Duration::from_secs(120),
-        model_discovery_refresh_interval: None,
         upstream_strategy: UpstreamStrategyRuntime {
             order: UpstreamOrderStrategy::RoundRobin,
             dispatch: UpstreamDispatchRuntime::Serial,
