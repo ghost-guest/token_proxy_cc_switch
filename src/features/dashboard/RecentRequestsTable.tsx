@@ -196,20 +196,21 @@ function tokensColumn(): ColumnDef<DashboardRequestItem> {
 function latencyColumn(): ColumnDef<DashboardRequestItem> {
   return {
     id: "latency",
-    header: m.dashboard_table_latency_ms(),
+    header: m.dashboard_table_first_byte_latency_ms(),
     cell: ({ row }) => {
       const item = row.original;
       const latencyText = formatInteger(item.latencyMs);
+      const firstByteLatencyText = formatOptionalLatency(item.upstreamFirstByteMs);
       const tooltip = [
         `${m.dashboard_table_latency_ms()}: ${latencyText}`,
-        `${m.logs_timing_upstream_first_byte_ms()}: ${formatOptionalLatency(item.upstreamFirstByteMs)}`,
+        `${m.logs_timing_upstream_first_byte_ms()}: ${firstByteLatencyText}`,
         `${m.logs_timing_first_client_flush_ms()}: ${formatOptionalLatency(item.firstClientFlushMs)}`,
         `${m.logs_timing_first_output_ms()}: ${formatOptionalLatency(item.firstOutputMs)}`,
       ].join("\n");
       return (
         <CellTooltip content={tooltip}>
           <span className="block w-full truncate text-xs text-muted-foreground text-left">
-            {latencyText}
+            {firstByteLatencyText}
           </span>
         </CellTooltip>
       );

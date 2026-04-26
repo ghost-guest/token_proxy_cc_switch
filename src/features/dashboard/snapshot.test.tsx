@@ -70,6 +70,7 @@ function createSnapshot(
     ],
     series: [],
     recent: [],
+    modelProbes: [],
     truncated: false,
     ...overrides,
   }

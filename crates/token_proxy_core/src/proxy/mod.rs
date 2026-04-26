@@ -14,6 +14,7 @@ mod kiro;
 mod log;
 pub mod logs;
 mod model;
+pub(crate) mod model_discovery;
 mod openai;
 mod openai_compat;
 mod redact;
@@ -48,6 +49,7 @@ struct ProxyState {
     account_selector: account_selector::AccountSelectorRuntime,
     request_detail: Arc<request_detail::RequestDetailCapture>,
     token_rate: Arc<token_rate::TokenRateTracker>,
+    model_discovery: Arc<model_discovery::UpstreamModelDiscoveryCache>,
     kiro_accounts: Arc<KiroAccountStore>,
     codex_accounts: Arc<CodexAccountStore>,
 }

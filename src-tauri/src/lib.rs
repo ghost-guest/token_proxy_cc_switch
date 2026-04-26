@@ -22,9 +22,10 @@ use commands::{
     kiro_refresh_quota_now, kiro_set_priority, kiro_set_proxy_url, kiro_set_status,
     kiro_start_login, prepare_relaunch, preview_client_setup, providers_delete_accounts,
     providers_list_accounts_page, proxy_reload, proxy_restart, proxy_start, proxy_status,
-    proxy_stop, read_dashboard_snapshot, read_proxy_config, read_request_detail_capture,
-    read_request_log_detail, save_proxy_config, set_request_detail_capture,
-    write_claude_code_settings, write_codex_config, write_opencode_config,
+    proxy_stop, read_dashboard_snapshot, read_default_hot_model_mappings, read_proxy_config,
+    read_request_detail_capture, read_request_log_detail, save_proxy_config,
+    set_request_detail_capture, write_claude_code_settings, write_codex_config,
+    write_opencode_config,
 };
 
 type ProxyServiceHandle = proxy::service::ProxyServiceHandle;
@@ -212,6 +213,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             read_proxy_config,
+            read_default_hot_model_mappings,
             preview_client_setup,
             write_claude_code_settings,
             write_codex_config,

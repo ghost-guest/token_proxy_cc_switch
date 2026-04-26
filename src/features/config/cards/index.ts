@@ -5,6 +5,5 @@ export { TrayTokenRateCard } from "./tray-token-rate-card";
 export { UpstreamsCard } from "./upstreams-card";
 export { ConfigFileCard } from "./config-file-card";
 export { ClientSetupCard } from "./client-setup-card";
-export { ValidationCard } from "./validation-card";
 export { UpdateCard } from "./update-card";
 export { ProjectLinksCard } from "./project-links-card";

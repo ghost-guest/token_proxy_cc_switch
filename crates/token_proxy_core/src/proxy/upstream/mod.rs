@@ -60,6 +60,10 @@ pub(super) async fn aggregate_model_catalog_request(
     .await
 }
 
+pub(super) async fn refresh_model_discovery(state: Arc<ProxyState>) {
+    catalog::refresh_model_discovery(state).await;
+}
+
 pub(super) async fn forward_upstream_request(
     state: Arc<ProxyState>,
     method: Method,

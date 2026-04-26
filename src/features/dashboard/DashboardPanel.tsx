@@ -2,6 +2,7 @@ import { AlertCircle } from "lucide-react"
 
 import { ChartAreaInteractive } from "@/features/dashboard/components/chart-area-interactive"
 import { SectionCards } from "@/features/dashboard/components/section-cards"
+import { UpstreamModelProbes } from "@/features/dashboard/components/upstream-model-probes"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   DashboardFilters,
@@ -56,6 +57,8 @@ export function DashboardPanel() {
       />
 
       <SectionCards summary={snapshot?.summary ?? null} />
+
+      <UpstreamModelProbes probes={snapshot?.modelProbes ?? []} />
 
       <div className="px-4 lg:px-6">
         <ChartAreaInteractive

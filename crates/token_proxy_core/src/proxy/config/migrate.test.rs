@@ -155,3 +155,77 @@ fn migrate_legacy_upstream_strategy_string_to_structured_round_robin_serial() {
         })
     );
 }
+
+#[test]
+fn migrate_adds_default_hot_model_mappings_when_missing() {
+    let mut value = parse_json(
+        r#"
+        {
+          "host": "127.0.0.1",
+          "port": 9208,
+          "upstreams": []
+        }
+        "#,
+    );
+
+    let changed = migrate_config_json(&mut value);
+    assert!(changed);
+
+    assert_eq!(
+        value["hot_model_mappings"]["openai/gpt-5.5"].as_str(),
+        Some("gpt-5.5")
+    );
+    assert_eq!(
+        value["hot_model_mappings"]["models/gemini-3.1-pro-preview"].as_str(),
+        Some("gemini-3.1-pro-preview")
+    );
+    assert_eq!(value["model_discovery_refresh_secs"].as_u64(), Some(0));
+}
+
+#[test]
+fn migrate_preserves_custom_hot_model_mappings() {
+    let mut value = parse_json(
+        r#"
+        {
+          "host": "127.0.0.1",
+          "port": 9208,
+          "hot_model_mappings": {
+            "custom/alias": "custom-target"
+          },
+          "upstreams": []
+        }
+        "#,
+    );
+
+    let changed = migrate_config_json(&mut value);
+    assert!(changed);
+
+    assert_eq!(
+        value["hot_model_mappings"]["custom/alias"].as_str(),
+        Some("custom-target")
+    );
+    assert!(value["hot_model_mappings"].get("openai/gpt-5.5").is_none());
+    assert_eq!(value["model_discovery_refresh_secs"].as_u64(), Some(0));
+}
+
+#[test]
+fn migrate_preserves_custom_model_discovery_refresh_secs() {
+    let mut value = parse_json(
+        r#"
+        {
+          "host": "127.0.0.1",
+          "port": 9208,
+          "model_discovery_refresh_secs": 900,
+          "hot_model_mappings": {
+            "custom/alias": "custom-target"
+          },
+          "upstreams": []
+        }
+        "#,
+    );
+
+    let changed = migrate_config_json(&mut value);
+    assert!(!changed);
+
+    assert_eq!(value["model_discovery_refresh_secs"].as_u64(), Some(900));
+}

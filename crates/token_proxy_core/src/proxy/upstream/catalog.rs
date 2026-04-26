@@ -3,6 +3,7 @@ use axum::{
     http::{HeaderMap, Method, StatusCode},
     response::Response,
 };
+use futures_util::{stream, StreamExt};
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
@@ -12,8 +13,22 @@ use std::{
 
 use super::super::http::RequestAuth;
 use super::super::{
-    config::UpstreamRuntime, http, request_body::ReplayableBody, ProxyState, RequestMeta,
+    config::{expand_model_ids_with_mappings, UpstreamRuntime},
+    http,
+    model_discovery::{UpstreamModelProbe, UpstreamModelProbeStatus},
+    request_body::ReplayableBody,
+    ProxyState, RequestMeta,
 };
+use super::{utils::sanitize_upstream_error, AttemptOutcome};
+
+const MODEL_DISCOVERY_MAX_PARALLEL: usize = 8;
+
+#[derive(Clone)]
+struct ModelDiscoveryJob {
+    provider: String,
+    upstream: UpstreamRuntime,
+    account_id: Option<String>,
+}
 
 pub(super) async fn aggregate_model_catalog_request(
     state: Arc<ProxyState>,
@@ -53,10 +68,12 @@ pub(super) async fn aggregate_model_catalog_request(
             )
             .await;
             let mut models = upstream.advertised_model_ids.clone();
+            expand_model_ids_with_mappings(&mut models, &state.config.hot_model_mappings);
             match upstream_model_catalog {
                 Ok(fetched_models) => {
                     successful += 1;
                     merge_model_catalog_ids(&mut models, fetched_models);
+                    expand_model_ids_with_mappings(&mut models, &state.config.hot_model_mappings);
                     sources.push((upstream.id.clone(), models));
                 }
                 Err(err) => {
@@ -105,6 +122,141 @@ fn merge_model_catalog_ids(target: &mut Vec<String>, extra: Vec<String>) {
     }
 }
 
+pub(super) async fn refresh_model_discovery(state: Arc<ProxyState>) {
+    let jobs = collect_model_discovery_jobs(&state);
+    let pending = jobs
+        .iter()
+        .map(|job| {
+            UpstreamModelProbe::pending(
+                job.upstream.id.as_str(),
+                job.provider.as_str(),
+                job.account_id.clone(),
+            )
+        })
+        .collect();
+    state.model_discovery.replace_all(pending).await;
+
+    let completed = stream::iter(jobs.into_iter().enumerate())
+        .map(|(index, job)| {
+            let state = state.clone();
+            async move {
+                let probe = refresh_model_discovery_job(state.as_ref(), job).await;
+                (index, probe)
+            }
+        })
+        .buffer_unordered(MODEL_DISCOVERY_MAX_PARALLEL)
+        .collect::<Vec<_>>()
+        .await;
+
+    for (index, probe) in completed {
+        state.model_discovery.replace_at(index, probe).await;
+    }
+}
+
+fn collect_model_discovery_jobs(state: &ProxyState) -> Vec<ModelDiscoveryJob> {
+    let mut jobs = Vec::new();
+    for (provider, provider_upstreams) in &state.config.upstreams {
+        for group in &provider_upstreams.groups {
+            for upstream in &group.items {
+                jobs.push(ModelDiscoveryJob {
+                    provider: provider.clone(),
+                    upstream: upstream.clone(),
+                    account_id: probe_account_id(upstream),
+                });
+            }
+        }
+    }
+    jobs.sort_by(|left, right| {
+        left.provider
+            .cmp(&right.provider)
+            .then_with(|| left.upstream.id.cmp(&right.upstream.id))
+            .then_with(|| left.account_id.cmp(&right.account_id))
+    });
+    jobs
+}
+
+fn probe_account_id(upstream: &UpstreamRuntime) -> Option<String> {
+    upstream
+        .kiro_account_id
+        .clone()
+        .or_else(|| upstream.codex_account_id.clone())
+        .or_else(|| (upstream.selector_key != upstream.id).then(|| upstream.selector_key.clone()))
+}
+
+async fn refresh_model_discovery_job(
+    state: &ProxyState,
+    job: ModelDiscoveryJob,
+) -> UpstreamModelProbe {
+    let mut models = job.upstream.advertised_model_ids.clone();
+    expand_model_ids_with_mappings(&mut models, &state.config.hot_model_mappings);
+
+    let Some((inbound_path, upstream_path)) = model_catalog_probe_paths(job.provider.as_str())
+    else {
+        return UpstreamModelProbe::completed(
+            job.upstream.id.as_str(),
+            job.provider.as_str(),
+            job.account_id,
+            UpstreamModelProbeStatus::Unsupported,
+            Some("Model list endpoint is not supported for this provider.".to_string()),
+            models,
+        );
+    };
+
+    let meta = RequestMeta {
+        stream: false,
+        original_model: None,
+        mapped_model: None,
+        reasoning_effort: None,
+        estimated_input_tokens: None,
+    };
+    let headers = HeaderMap::new();
+    let request_auth = RequestAuth::default();
+    let empty_body = ReplayableBody::from_bytes(Bytes::new());
+
+    match fetch_upstream_model_catalog(
+        state,
+        job.provider.as_str(),
+        &job.upstream,
+        inbound_path,
+        upstream_path,
+        &headers,
+        &meta,
+        &request_auth,
+        &empty_body,
+    )
+    .await
+    {
+        Ok(fetched_models) => {
+            merge_model_catalog_ids(&mut models, fetched_models);
+            expand_model_ids_with_mappings(&mut models, &state.config.hot_model_mappings);
+            UpstreamModelProbe::completed(
+                job.upstream.id.as_str(),
+                job.provider.as_str(),
+                job.account_id,
+                UpstreamModelProbeStatus::Ok,
+                None,
+                models,
+            )
+        }
+        Err(error) => UpstreamModelProbe::completed(
+            job.upstream.id.as_str(),
+            job.provider.as_str(),
+            job.account_id,
+            UpstreamModelProbeStatus::Failed,
+            Some(error),
+            models,
+        ),
+    }
+}
+
+fn model_catalog_probe_paths(provider: &str) -> Option<(&'static str, &'static str)> {
+    match provider {
+        "openai" | "openai-response" | "anthropic" => Some(("/v1/models", "/v1/models")),
+        "gemini" => Some(("/v1beta/models", "/v1beta/models")),
+        _ => None,
+    }
+}
+
 async fn fetch_upstream_model_catalog(
     state: &ProxyState,
     provider: &str,
@@ -127,7 +279,7 @@ async fn fetch_upstream_model_catalog(
         request_auth,
     )
     .await
-    .map_err(|_| "Failed to prepare upstream model catalog request.".to_string())?;
+    .map_err(model_catalog_prepare_error)?;
 
     let client = state
         .http_clients
@@ -143,7 +295,12 @@ async fn fetch_upstream_model_catalog(
     let response = tokio::time::timeout(state.config.upstream_no_data_timeout, request.send())
         .await
         .map_err(|_| "Timed out fetching upstream model catalog.".to_string())?
-        .map_err(|err| format!("Failed to fetch upstream model catalog: {err}"))?;
+        .map_err(|err| {
+            format!(
+                "Failed to fetch upstream model catalog: {}",
+                sanitize_upstream_error(provider, &err)
+            )
+        })?;
     if !response.status().is_success() {
         return Err(format!(
             "Upstream model catalog returned status {}.",
@@ -156,6 +313,24 @@ async fn fetch_upstream_model_catalog(
         .await
         .map_err(|err| format!("Failed to parse upstream model catalog JSON: {err}"))?;
     Ok(extract_model_ids_from_catalog(&value))
+}
+
+fn model_catalog_prepare_error(outcome: AttemptOutcome) -> String {
+    match outcome {
+        AttemptOutcome::SkippedAuth => {
+            "No API key available for upstream model catalog.".to_string()
+        }
+        AttemptOutcome::Retryable { message, .. } => message,
+        AttemptOutcome::Fatal(response) => {
+            format!(
+                "Failed to prepare upstream model catalog request: status {}.",
+                response.status()
+            )
+        }
+        AttemptOutcome::Success(_) => {
+            "Unexpected upstream model catalog preparation result.".to_string()
+        }
+    }
 }
 
 fn extract_model_ids_from_catalog(value: &Value) -> Vec<String> {

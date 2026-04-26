@@ -139,6 +139,7 @@ describe("dashboard/DashboardPanel", () => {
                 upstreamRequestId: null,
               },
             ],
+            modelProbes: [],
             truncated: false,
           };
         }
@@ -230,6 +231,7 @@ describe("dashboard/DashboardPanel", () => {
                 upstreamRequestId: null,
               },
             ],
+            modelProbes: [],
             truncated: false,
           };
         }
@@ -343,6 +345,7 @@ describe("dashboard/DashboardPanel", () => {
                 upstreamRequestId: null,
               },
             ],
+            modelProbes: [],
             truncated: false,
           };
         }
@@ -428,6 +431,26 @@ describe("dashboard/DashboardPanel", () => {
             },
           ],
           recent: [],
+          modelProbes: [
+            {
+              upstreamId: "alpha",
+              provider: "openai-response",
+              accountId: null,
+              status: "ok",
+              checkedAtTsMs: 1000,
+              error: null,
+              models: ["gpt-5.5", "o4-mini", "gpt-5"],
+            },
+            {
+              upstreamId: "beta",
+              provider: "gemini",
+              accountId: null,
+              status: "failed",
+              checkedAtTsMs: 2000,
+              error: "quota scope denied",
+              models: ["gemini-3.0-pro-preview"],
+            },
+          ],
           truncated: false,
         };
       }
@@ -445,6 +468,10 @@ describe("dashboard/DashboardPanel", () => {
       );
     });
     expect(screen.getByTestId("dashboard-chart-total")).toHaveTextContent("42");
+    expect(screen.getByText(m.dashboard_upstream_models_title())).toBeInTheDocument();
+    expect(screen.getByText("gpt-5.5")).toBeInTheDocument();
+    expect(screen.getByText("gemini-3.0-pro-preview")).toBeInTheDocument();
+    expect(screen.getByText(/quota scope denied/)).toBeInTheDocument();
     expect(readDashboardSnapshotMock).toHaveBeenCalledWith(
       {
         range: { fromTsMs: expect.any(Number), toTsMs: expect.any(Number) },

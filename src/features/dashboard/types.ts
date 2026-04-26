@@ -37,6 +37,22 @@ export type DashboardAccountOption = {
   cachedTokens: number;
 };
 
+export type DashboardUpstreamModelProbeStatus =
+  | "pending"
+  | "ok"
+  | "failed"
+  | "unsupported";
+
+export type DashboardUpstreamModelProbe = {
+  upstreamId: string;
+  provider: string;
+  accountId: string | null;
+  status: DashboardUpstreamModelProbeStatus;
+  checkedAtTsMs: number | null;
+  error: string | null;
+  models: string[];
+};
+
 export type DashboardSeriesPoint = {
   tsMs: number;
   totalRequests: number;
@@ -75,6 +91,7 @@ export type DashboardSnapshot = {
   accounts: DashboardAccountOption[];
   series: DashboardSeriesPoint[];
   recent: DashboardRequestItem[];
+  modelProbes: DashboardUpstreamModelProbe[];
   truncated: boolean;
 };
 

@@ -7,6 +7,7 @@ use crate::proxy;
 #[tauri::command]
 pub async fn read_dashboard_snapshot(
     app: tauri::AppHandle,
+    proxy_service: tauri::State<'_, proxy::service::ProxyServiceHandle>,
     range: proxy::dashboard::DashboardRange,
     offset: Option<u32>,
     upstream_id: Option<String>,
@@ -15,7 +16,7 @@ pub async fn read_dashboard_snapshot(
 ) -> Result<proxy::dashboard::DashboardSnapshot, String> {
     let paths = app.state::<Arc<token_proxy_core::paths::TokenProxyPaths>>();
     let pool = proxy::sqlite::open_read_pool(paths.inner().as_ref()).await?;
-    proxy::dashboard::read_snapshot(
+    let mut snapshot = proxy::dashboard::read_snapshot(
         &pool,
         range,
         offset,
@@ -23,5 +24,7 @@ pub async fn read_dashboard_snapshot(
         account_id,
         public_only.unwrap_or(false),
     )
-    .await
+    .await?;
+    snapshot.model_probes = proxy_service.model_discovery_snapshot().await;
+    Ok(snapshot)
 }

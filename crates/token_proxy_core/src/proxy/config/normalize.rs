@@ -2,8 +2,9 @@ use std::collections::{HashMap, HashSet};
 
 use super::types::InboundApiFormatMask;
 use super::{
-    model_mapping::compile_model_mappings, HeaderOverride, InboundApiFormat, ProviderUpstreams,
-    StaticApiKeyHeaders, UpstreamConfig, UpstreamGroup, UpstreamOverrides, UpstreamRuntime,
+    hot_model_mappings::merge_hot_model_mappings, model_mapping::compile_model_mappings,
+    HeaderOverride, InboundApiFormat, ProviderUpstreams, StaticApiKeyHeaders, UpstreamConfig,
+    UpstreamGroup, UpstreamOverrides, UpstreamRuntime,
 };
 use axum::http::header::{HeaderName, HeaderValue};
 
@@ -19,11 +20,16 @@ pub(super) struct NormalizedUpstream {
 pub(super) fn normalize_upstreams(
     upstreams: &[UpstreamConfig],
     app_proxy_url: Option<&str>,
+    hot_model_mappings: &HashMap<String, String>,
 ) -> Result<Vec<NormalizedUpstream>, String> {
     validate_upstream_ids(upstreams)?;
     let mut normalized = Vec::with_capacity(upstreams.len());
     for upstream in upstreams {
-        normalized.extend(normalize_single_upstream(upstream, app_proxy_url)?);
+        normalized.extend(normalize_single_upstream(
+            upstream,
+            app_proxy_url,
+            hot_model_mappings,
+        )?);
     }
     Ok(normalized)
 }
@@ -80,6 +86,7 @@ fn validate_upstream_ids(upstreams: &[UpstreamConfig]) -> Result<(), String> {
 fn normalize_single_upstream(
     upstream: &UpstreamConfig,
     app_proxy_url: Option<&str>,
+    hot_model_mappings: &HashMap<String, String>,
 ) -> Result<Vec<NormalizedUpstream>, String> {
     if !upstream.enabled {
         return Ok(Vec::new());
@@ -110,7 +117,9 @@ fn normalize_single_upstream(
     let proxy_url =
         normalize_upstream_proxy_url(upstream.proxy_url.as_deref(), app_proxy_url, &upstream.id)?;
     let advertised_model_ids = collect_advertised_model_ids(&upstream.model_mappings);
-    let model_mappings = compile_model_mappings(&upstream.id, &upstream.model_mappings)?;
+    let merged_model_mappings =
+        merge_hot_model_mappings(hot_model_mappings, &upstream.model_mappings);
+    let model_mappings = compile_model_mappings(&upstream.id, &merged_model_mappings)?;
     let header_overrides = normalize_header_overrides(upstream.overrides.as_ref())?;
 
     let mut output = Vec::with_capacity(runtime_providers.len() * api_keys.len().max(1));

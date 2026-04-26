@@ -477,6 +477,13 @@ fn title_case_segment(segment: &str) -> String {
 
 fn collect_opencode_models(config: &ProxyConfigFile) -> Vec<String> {
     let mut models = HashSet::new();
+    for pattern in config.hot_model_mappings.keys() {
+        let value = pattern.trim();
+        if value.is_empty() || value.contains('*') {
+            continue;
+        }
+        models.insert(value.to_string());
+    }
     for upstream in &config.upstreams {
         for pattern in upstream.model_mappings.keys() {
             let value = pattern.trim();

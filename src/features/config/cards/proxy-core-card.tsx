@@ -1,3 +1,6 @@
+import { RotateCcw } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -31,12 +34,13 @@ type ProxyCoreCardProps = {
   showLocalKey: boolean;
   onToggleLocalKey: () => void;
   onChange: (patch: Partial<ConfigForm>) => void;
+  onResetHotModelMappings: () => void;
   proxyService: ProxyServiceViewProps;
 };
 
 type ProxyCoreFieldsProps = Pick<
   ProxyCoreCardProps,
-  "form" | "showLocalKey" | "onToggleLocalKey" | "onChange"
+  "form" | "showLocalKey" | "onToggleLocalKey" | "onChange" | "onResetHotModelMappings"
 >;
 
 function ProxyCoreFields({
@@ -44,6 +48,7 @@ function ProxyCoreFields({
   showLocalKey,
   onToggleLocalKey,
   onChange,
+  onResetHotModelMappings,
 }: ProxyCoreFieldsProps) {
   return (
     <>
@@ -104,6 +109,20 @@ function ProxyCoreFields({
           checked={form.modelListPrefix}
           onCheckedChange={(checked) => onChange({ modelListPrefix: checked })}
         />
+      </div>
+      <div className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-border/60 p-3">
+        <div className="space-y-1">
+          <Label>{m.proxy_core_hot_model_mappings_title()}</Label>
+          <p className="text-xs text-muted-foreground">
+            {m.proxy_core_hot_model_mappings_desc({
+              count: form.hotModelMappings.length,
+            })}
+          </p>
+        </div>
+        <Button type="button" variant="outline" size="sm" onClick={onResetHotModelMappings}>
+          <RotateCcw className="size-4" aria-hidden="true" />
+          {m.proxy_core_hot_model_mappings_reset()}
+        </Button>
       </div>
       <div className="grid gap-2">
         <Label htmlFor="kiro-preferred-endpoint">
@@ -166,6 +185,23 @@ function ProxyCoreFields({
           {m.proxy_core_upstream_no_data_timeout_secs_help()}
         </p>
       </div>
+      <div className="grid gap-2">
+        <Label htmlFor="model-discovery-refresh-secs">
+          {m.proxy_core_model_discovery_refresh_secs_label()}
+        </Label>
+        <Input
+          id="model-discovery-refresh-secs"
+          value={form.modelDiscoveryRefreshSecs}
+          onChange={(event) =>
+            onChange({ modelDiscoveryRefreshSecs: event.target.value })
+          }
+          placeholder="0"
+          inputMode="numeric"
+        />
+        <p className="text-xs text-muted-foreground">
+          {m.proxy_core_model_discovery_refresh_secs_help()}
+        </p>
+      </div>
     </>
   );
 }
@@ -189,6 +225,7 @@ export function ProxyCoreCard({
   showLocalKey,
   onToggleLocalKey,
   onChange,
+  onResetHotModelMappings,
   proxyService,
 }: ProxyCoreCardProps) {
   return (
@@ -203,6 +240,7 @@ export function ProxyCoreCard({
           showLocalKey={showLocalKey}
           onToggleLocalKey={onToggleLocalKey}
           onChange={onChange}
+          onResetHotModelMappings={onResetHotModelMappings}
         />
         <ProxyCoreServiceSection proxyService={proxyService} />
       </CardContent>

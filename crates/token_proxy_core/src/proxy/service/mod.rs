@@ -10,6 +10,7 @@ use tokio::time::timeout;
 
 use super::config::ProxyConfig;
 use super::log::LogWriter;
+use super::model_discovery::UpstreamModelProbe;
 use super::request_detail::RequestDetailCapture;
 use super::server;
 use super::sqlite;
@@ -95,6 +96,10 @@ impl ProxyServiceHandle {
         account_ids: &[String],
     ) -> HashSet<String> {
         self.inner.cooling_account_ids(provider, account_ids).await
+    }
+
+    pub async fn model_discovery_snapshot(&self) -> Vec<UpstreamModelProbe> {
+        self.inner.model_discovery_snapshot().await
     }
 }
 
@@ -217,6 +222,12 @@ impl ProxyService {
         inner.refresh_if_finished().await;
         inner.cooling_account_ids(provider, account_ids).await
     }
+
+    async fn model_discovery_snapshot(&self) -> Vec<UpstreamModelProbe> {
+        let mut inner = self.inner.lock().await;
+        inner.refresh_if_finished().await;
+        inner.model_discovery_snapshot().await
+    }
 }
 
 struct ProxyServiceInner {
@@ -302,9 +313,10 @@ impl ProxyServiceInner {
 
         self.running = Some(RunningProxy {
             addr,
-            state_handle,
+            state_handle: state_handle.clone(),
             shutdown_tx: Some(shutdown_tx),
             task: Some(task),
+            model_discovery_task: Some(spawn_model_discovery_task(state_handle.clone())),
             shutdown_timeout: DEFAULT_SHUTDOWN_TIMEOUT,
         });
         Ok(())
@@ -368,7 +380,7 @@ impl ProxyServiceInner {
 
         let sqlite_pool = self.sqlite_pool.clone();
         let new_state = build_proxy_state(ctx, loaded_config, sqlite_pool).await?;
-        let Some(running) = self.running.as_ref() else {
+        let Some(running) = self.running.as_mut() else {
             tracing::debug!("proxy reload: running cleared before swap");
             return Ok(());
         };
@@ -376,6 +388,11 @@ impl ProxyServiceInner {
             let mut guard = running.state_handle.write().await;
             *guard = new_state;
         }
+        if let Some(task) = running.model_discovery_task.take() {
+            task.abort();
+        }
+        running.model_discovery_task =
+            Some(spawn_model_discovery_task(running.state_handle.clone()));
         tracing::debug!(
             elapsed_ms = start.elapsed().as_millis(),
             "proxy reload applied"
@@ -426,7 +443,18 @@ impl ProxyServiceInner {
             .collect()
     }
 
+    async fn model_discovery_snapshot(&self) -> Vec<UpstreamModelProbe> {
+        let Some(running) = self.running.as_ref() else {
+            return Vec::new();
+        };
+        let state = running.state_handle.read().await.clone();
+        state.model_discovery.snapshot().await
+    }
+
     async fn finish_task(&mut self, mut running: RunningProxy) {
+        if let Some(task) = running.model_discovery_task.take() {
+            task.abort();
+        }
         if let Some(tx) = running.shutdown_tx.take() {
             let _ = tx.send(());
         }
@@ -462,7 +490,22 @@ struct RunningProxy {
     state_handle: ProxyStateHandle,
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
     task: Option<JoinHandle<Result<(), String>>>,
+    model_discovery_task: Option<JoinHandle<()>>,
     shutdown_timeout: Duration,
+}
+
+fn spawn_model_discovery_task(state_handle: ProxyStateHandle) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            let state = state_handle.read().await.clone();
+            let refresh_interval = state.config.model_discovery_refresh_interval;
+            server::refresh_model_discovery(state).await;
+            let Some(refresh_interval) = refresh_interval else {
+                break;
+            };
+            tokio::time::sleep(refresh_interval).await;
+        }
+    })
 }
 
 async fn build_router_state(
@@ -504,6 +547,7 @@ async fn build_proxy_state(
         cursors,
         request_detail,
         token_rate,
+        model_discovery: Arc::new(super::model_discovery::UpstreamModelDiscoveryCache::new()),
         kiro_accounts,
         codex_accounts,
     }))

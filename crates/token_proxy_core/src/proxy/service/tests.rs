@@ -2,10 +2,22 @@ use super::*;
 use crate::app_proxy;
 use crate::logging::LogLevel;
 use crate::paths::TokenProxyPaths;
+use crate::proxy::config::UpstreamConfig;
+use crate::proxy::model_discovery::UpstreamModelProbeStatus;
+use axum::{
+    extract::State,
+    http::{StatusCode, Uri},
+    response::IntoResponse,
+    routing::any,
+    Router,
+};
 use rand::random;
+use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::task::JoinHandle;
 
 fn config_with_addr_and_body_limit(
     host: &str,
@@ -21,7 +33,9 @@ fn config_with_addr_and_body_limit(
         max_request_body_bytes,
         retryable_failure_cooldown: Duration::from_secs(15),
         upstream_no_data_timeout: Duration::from_secs(120),
+        model_discovery_refresh_interval: None,
         upstream_strategy: crate::proxy::config::UpstreamStrategyRuntime::default(),
+        hot_model_mappings: HashMap::new(),
         upstreams: HashMap::new(),
         kiro_preferred_endpoint: None,
     }
@@ -102,6 +116,92 @@ fn test_config_file(port: u16) -> crate::proxy::config::ProxyConfigFile {
     }
 }
 
+#[derive(Clone)]
+struct ModelCatalogProbeState {
+    body: Value,
+    requests: Arc<Mutex<Vec<String>>>,
+}
+
+struct ModelCatalogProbeUpstream {
+    base_url: String,
+    requests: Arc<Mutex<Vec<String>>>,
+    task: JoinHandle<()>,
+}
+
+impl ModelCatalogProbeUpstream {
+    fn paths(&self) -> Vec<String> {
+        self.requests.lock().expect("requests lock").clone()
+    }
+
+    fn abort(self) {
+        self.task.abort();
+    }
+}
+
+async fn model_catalog_probe_handler(
+    State(state): State<Arc<ModelCatalogProbeState>>,
+    uri: Uri,
+) -> axum::response::Response {
+    state
+        .requests
+        .lock()
+        .expect("requests lock")
+        .push(uri.path().to_string());
+    (
+        StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        state.body.to_string(),
+    )
+        .into_response()
+}
+
+async fn spawn_model_catalog_probe_upstream(body: Value) -> ModelCatalogProbeUpstream {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let state = Arc::new(ModelCatalogProbeState {
+        body,
+        requests: requests.clone(),
+    });
+    let app = Router::new()
+        .route("/{*path}", any(model_catalog_probe_handler))
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind model catalog probe upstream");
+    let addr: SocketAddr = listener.local_addr().expect("model catalog local addr");
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("model catalog probe server should run");
+    });
+    ModelCatalogProbeUpstream {
+        base_url: format!("http://{addr}"),
+        requests,
+        task,
+    }
+}
+
+fn upstream_config(id: &str, provider: &str, base_url: &str) -> UpstreamConfig {
+    UpstreamConfig {
+        id: id.to_string(),
+        providers: vec![provider.to_string()],
+        base_url: base_url.to_string(),
+        api_keys: vec!["test-key".to_string()],
+        filter_prompt_cache_retention: false,
+        filter_safety_identifier: false,
+        use_chat_completions_for_responses: false,
+        rewrite_developer_role_to_system: false,
+        kiro_account_id: None,
+        codex_account_id: None,
+        preferred_endpoint: None,
+        proxy_url: None,
+        priority: None,
+        enabled: true,
+        model_mappings: HashMap::new(),
+        convert_from_map: HashMap::new(),
+        overrides: None,
+    }
+}
+
 fn create_test_context() -> (ProxyContext, std::path::PathBuf) {
     let data_dir =
         std::env::temp_dir().join(format!("token-proxy-service-test-{}", random::<u64>()));
@@ -173,6 +273,63 @@ fn apply_saved_config_returns_status_and_error_when_restart_fails() {
 
         let _ = service.stop().await;
         drop(blocker);
+        let _ = std::fs::remove_dir_all(data_dir);
+    });
+}
+
+#[test]
+fn start_refreshes_model_discovery_cache_without_blocking_proxy_start() {
+    run_async(async {
+        let upstream = spawn_model_catalog_probe_upstream(json!({
+            "object": "list",
+            "data": [
+                { "id": "gpt-5.5", "object": "model" },
+                { "id": "o4-mini", "object": "model" }
+            ]
+        }))
+        .await;
+        let (context, data_dir) = create_test_context();
+        let mut config = test_config_file(0);
+        config.upstreams = vec![upstream_config(
+            "openai-a",
+            "openai-response",
+            upstream.base_url.as_str(),
+        )];
+        crate::proxy::config::write_config(context.paths.as_ref(), config)
+            .await
+            .expect("write config");
+
+        let service = ProxyServiceHandle::new();
+        let start_status = service.start(&context).await.expect("start proxy");
+        assert!(matches!(start_status.state, ProxyServiceState::Running));
+
+        let probes = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let probes = service.model_discovery_snapshot().await;
+                if probes
+                    .iter()
+                    .any(|probe| probe.status == UpstreamModelProbeStatus::Ok)
+                {
+                    return probes;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("model discovery should complete");
+
+        let probe = probes
+            .iter()
+            .find(|probe| probe.upstream_id == "openai-a")
+            .expect("openai probe");
+        assert_eq!(probe.provider, "openai-response");
+        assert_eq!(probe.status, UpstreamModelProbeStatus::Ok);
+        assert!(probe.models.contains(&"gpt-5.5".to_string()));
+        assert!(probe.models.contains(&"o4-mini".to_string()));
+        assert_eq!(upstream.paths(), vec!["/v1/models"]);
+
+        let _ = service.stop().await;
+        upstream.abort();
         let _ = std::fs::remove_dir_all(data_dir);
     });
 }

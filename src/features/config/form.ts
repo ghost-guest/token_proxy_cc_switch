@@ -21,6 +21,8 @@ const DEFAULT_TRAY_TOKEN_RATE: TrayTokenRateConfig = {
 
 const MIN_UPSTREAM_NO_DATA_TIMEOUT_SECS = 3;
 const DEFAULT_UPSTREAM_NO_DATA_TIMEOUT_SECS = 120;
+const MIN_MODEL_DISCOVERY_REFRESH_SECS = 30;
+const DEFAULT_MODEL_DISCOVERY_REFRESH_SECS = 0;
 const DEFAULT_HEDGE_DELAY_MS = 2000;
 const DEFAULT_MAX_PARALLEL = 2;
 const MIN_PARALLEL_ATTEMPTS = 2;
@@ -88,8 +90,10 @@ const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "log_level",
   "retryable_failure_cooldown_secs",
   "upstream_no_data_timeout_secs",
+  "model_discovery_refresh_secs",
   "tray_token_rate",
   "upstream_strategy",
+  "hot_model_mappings",
   "upstreams",
 ]);
 
@@ -103,6 +107,7 @@ export const EMPTY_FORM: ConfigForm = {
   logLevel: "silent",
   retryableFailureCooldownSecs: "15",
   upstreamNoDataTimeoutSecs: String(DEFAULT_UPSTREAM_NO_DATA_TIMEOUT_SECS),
+  modelDiscoveryRefreshSecs: String(DEFAULT_MODEL_DISCOVERY_REFRESH_SECS),
   trayTokenRate: { ...DEFAULT_TRAY_TOKEN_RATE },
   upstreamStrategy: {
     order: "fill_first",
@@ -110,6 +115,7 @@ export const EMPTY_FORM: ConfigForm = {
     hedgeDelayMs: String(DEFAULT_HEDGE_DELAY_MS),
     maxParallel: String(DEFAULT_MAX_PARALLEL),
   },
+  hotModelMappings: [],
   upstreams: [],
 };
 
@@ -186,8 +192,12 @@ export function toForm(config: ProxyConfigFile): ConfigForm {
     upstreamNoDataTimeoutSecs: String(
       config.upstream_no_data_timeout_secs ?? DEFAULT_UPSTREAM_NO_DATA_TIMEOUT_SECS,
     ),
+    modelDiscoveryRefreshSecs: String(
+      config.model_discovery_refresh_secs ?? DEFAULT_MODEL_DISCOVERY_REFRESH_SECS,
+    ),
     trayTokenRate: normalizeTrayTokenRate(config.tray_token_rate),
     upstreamStrategy: toUpstreamStrategyForm(config.upstream_strategy),
+    hotModelMappings: toModelMappingForm(config.hot_model_mappings ?? {}),
     upstreams: config.upstreams.map((upstream) => {
       const providers = upstream.providers ?? [];
       const omitNetworkFields = isAccountBackedProviderSet(providers);
@@ -228,8 +238,12 @@ export function toPayload(form: ConfigForm): ProxyConfigFile {
     upstream_no_data_timeout_secs: parseUpstreamNoDataTimeoutSecs(
       form.upstreamNoDataTimeoutSecs,
     ),
+    model_discovery_refresh_secs: parseModelDiscoveryRefreshSecs(
+      form.modelDiscoveryRefreshSecs,
+    ),
     tray_token_rate: form.trayTokenRate,
     upstream_strategy: toUpstreamStrategyPayload(form.upstreamStrategy),
+    hot_model_mappings: toModelMappingPayload(form.hotModelMappings),
     upstreams: form.upstreams.map((upstream) => {
       const providers = normalizeProviders(upstream.providers);
       const apiKeys = parseApiKeysInput(upstream.apiKeys);
@@ -319,9 +333,22 @@ export function validate(form: ConfigForm) {
       message: m.error_upstream_no_data_timeout_secs_integer(),
     };
   }
+  if (!isValidModelDiscoveryRefreshSecs(form.modelDiscoveryRefreshSecs)) {
+    return {
+      valid: false,
+      message: m.error_model_discovery_refresh_secs_integer(),
+    };
+  }
   const upstreamStrategyError = validateUpstreamStrategy(form.upstreamStrategy);
   if (upstreamStrategyError) {
     return { valid: false, message: upstreamStrategyError };
+  }
+  const hotModelMappingError = validateModelMappings(
+    form.hotModelMappings,
+    "hot_model_mappings",
+  );
+  if (hotModelMappingError) {
+    return { valid: false, message: hotModelMappingError };
   }
 
   const ids = new Set<string>();
@@ -713,6 +740,30 @@ function parseUpstreamNoDataTimeoutSecs(value: string) {
   }
   const number = Number.parseInt(trimmed, 10);
   return Number.isFinite(number) ? number : DEFAULT_UPSTREAM_NO_DATA_TIMEOUT_SECS;
+}
+
+function isValidModelDiscoveryRefreshSecs(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (!NON_NEGATIVE_INTEGER_PATTERN.test(trimmed)) {
+    return false;
+  }
+  const number = Number.parseInt(trimmed, 10);
+  return (
+    Number.isFinite(number) &&
+    (number === 0 || number >= MIN_MODEL_DISCOVERY_REFRESH_SECS)
+  );
+}
+
+function parseModelDiscoveryRefreshSecs(value: string) {
+  const trimmed = value.trim();
+  if (!NON_NEGATIVE_INTEGER_PATTERN.test(trimmed)) {
+    return DEFAULT_MODEL_DISCOVERY_REFRESH_SECS;
+  }
+  const number = Number.parseInt(trimmed, 10);
+  return Number.isFinite(number) ? number : DEFAULT_MODEL_DISCOVERY_REFRESH_SECS;
 }
 
 function isPositiveInteger(value: string) {

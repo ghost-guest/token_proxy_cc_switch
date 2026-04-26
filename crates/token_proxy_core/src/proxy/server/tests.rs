@@ -131,10 +131,12 @@ fn config_with_runtime_upstreams(
         max_request_body_bytes: 20 * 1024 * 1024,
         retryable_failure_cooldown: std::time::Duration::from_secs(15),
         upstream_no_data_timeout: std::time::Duration::from_secs(120),
+        model_discovery_refresh_interval: None,
         upstream_strategy: UpstreamStrategyRuntime {
             order: UpstreamOrderStrategy::RoundRobin,
             dispatch: UpstreamDispatchRuntime::Serial,
         },
+        hot_model_mappings: HashMap::new(),
         upstreams: provider_map,
         kiro_preferred_endpoint: None,
     }
@@ -1094,6 +1096,9 @@ async fn build_test_state_handle_with_paths(
             None,
         )),
         token_rate: super::super::token_rate::TokenRateTracker::new(),
+        model_discovery: Arc::new(
+            super::super::model_discovery::UpstreamModelDiscoveryCache::new(),
+        ),
         kiro_accounts,
         codex_accounts,
     });

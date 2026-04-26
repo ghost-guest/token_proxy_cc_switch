@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -39,6 +40,11 @@ pub async fn write_opencode_config(
     app: tauri::AppHandle,
 ) -> Result<client_config::ClientConfigWriteResult, String> {
     client_config::write_opencode_config(app).await
+}
+
+#[tauri::command]
+pub fn read_default_hot_model_mappings() -> HashMap<String, String> {
+    proxy::config::default_hot_model_mappings()
 }
 
 #[tauri::command]

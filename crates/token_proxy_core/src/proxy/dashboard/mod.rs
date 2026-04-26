@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::collections::HashMap;
 
+use super::model_discovery::UpstreamModelProbe;
+
 const RECENT_PAGE_SIZE: u32 = 50;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -97,6 +99,7 @@ pub struct DashboardSnapshot {
     pub accounts: Vec<DashboardAccountStat>,
     pub series: Vec<DashboardSeriesPoint>,
     pub recent: Vec<DashboardRequestItem>,
+    pub model_probes: Vec<UpstreamModelProbe>,
     /// 是否只基于日志文件末尾片段做统计（Step1：true；Step2 SQLite 后应为 false）。
     pub truncated: bool,
 }
@@ -176,6 +179,7 @@ pub async fn read_snapshot(
         accounts,
         series,
         recent,
+        model_probes: Vec::new(),
         truncated: false,
     })
 }

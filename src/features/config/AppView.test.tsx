@@ -23,7 +23,6 @@ vi.mock("@/features/config/cards", () => ({
   TrayTokenRateCard: () => <div data-testid="tray-token-rate-card" />,
   UpdateCard: () => <div data-testid="update-card" />,
   UpstreamsCard: () => <div data-testid="upstreams-card" />,
-  ValidationCard: () => <div data-testid="validation-card" />,
 }));
 
 vi.mock("@/features/dashboard/DashboardPanel", () => ({
@@ -61,6 +60,7 @@ const BASE_APP_VIEW_PROPS = {
   onToggleLocalKey: () => undefined,
   onToggleUpstreamKeys: () => undefined,
   onFormChange: () => undefined,
+  onResetHotModelMappings: () => undefined,
   onStrategyChange: () => undefined,
   onAutoStartChange: () => undefined,
   onAddUpstream: () => undefined,
@@ -150,5 +150,22 @@ describe("config/AppView", () => {
     expect(
       screen.getByText(m.error_upstream_no_data_timeout_secs_integer())
     ).toBeInTheDocument();
+  });
+
+  it("does not render the settings validation card", () => {
+    render(
+      <AppView
+        activeSectionId="settings"
+        {...BASE_APP_VIEW_PROPS}
+        status="idle"
+        statusMessage=""
+        canSave
+        isDirty={false}
+        validation={{ valid: true, message: "" }}
+      />
+    );
+
+    expect(screen.getByTestId("config-file-card")).toBeInTheDocument();
+    expect(screen.queryByTestId("validation-card")).not.toBeInTheDocument();
   });
 });

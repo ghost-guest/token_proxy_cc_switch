@@ -84,10 +84,11 @@ describe("dashboard/RecentRequestsTable", () => {
               mappedModel: null,
               stream: false,
               status: 200,
-              totalTokens: 30,
+              totalTokens: 31,
               outputTokens: 20,
               cachedTokens: 5,
               latencyMs: 30,
+              upstreamFirstByteMs: 12,
               upstreamRequestId: null,
             },
           ]}
@@ -101,11 +102,54 @@ describe("dashboard/RecentRequestsTable", () => {
       screen.getAllByText((content) => content.includes("(ms)"))[0]?.closest("div")
     ).toHaveClass("text-left");
 
-    expect(screen.getAllByText("30")[0]).toHaveClass("text-left");
+    expect(screen.getByText("12")).toHaveClass("text-left");
 
     const table = screen.getByTestId("recent-requests-table");
     const headerGrid = table.firstElementChild;
     expect(headerGrid?.className).not.toContain("1fr");
+  });
+
+  it("shows upstream first-byte latency as the default latency value", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <I18nProvider>
+        <RecentRequestsTable
+          scrollKey="test"
+          items={[
+            {
+              id: 1,
+              tsMs: 100,
+              path: "/responses",
+              provider: "codex",
+              upstreamId: "alpha",
+              accountId: "codex-a.json",
+              model: "gpt-5",
+              mappedModel: null,
+              stream: true,
+              status: 200,
+              totalTokens: 31,
+              outputTokens: 20,
+              cachedTokens: 5,
+              latencyMs: 30,
+              upstreamFirstByteMs: 12,
+              firstClientFlushMs: 18,
+              firstOutputMs: 24,
+              upstreamRequestId: null,
+            },
+          ]}
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByText("First byte latency (ms)")).toBeInTheDocument();
+    expect(screen.getByText("12")).toBeInTheDocument();
+    expect(screen.queryByText("30")).toBeNull();
+
+    await user.hover(screen.getByText("12"));
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip).toHaveTextContent(`${m.dashboard_table_latency_ms()}: 30`);
+    expect(tooltip).toHaveTextContent(`${m.logs_timing_upstream_first_byte_ms()}: 12`);
   });
 
   it("shows output tokens directly in the tokens column", async () => {

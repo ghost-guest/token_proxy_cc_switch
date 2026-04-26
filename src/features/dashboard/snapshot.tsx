@@ -325,7 +325,7 @@ export function DashboardFilters({
                 onUpstreamChange(toUpstreamFilterValue(value))
               }}
             >
-              <SelectTrigger id="dashboard-upstream" className="h-9 w-[220px]">
+              <SelectTrigger id="dashboard-upstream" className="h-9 w-[148px]">
                 <SelectValue placeholder={m.dashboard_upstream_placeholder()} />
               </SelectTrigger>
               <SelectContent>
@@ -351,7 +351,7 @@ export function DashboardFilters({
                 onAccountChange(next.accountId, next.publicOnly)
               }}
             >
-              <SelectTrigger id="dashboard-account" className="h-9 w-[220px]">
+              <SelectTrigger id="dashboard-account" className="h-9 w-[148px]">
                 <SelectValue placeholder={m.dashboard_account_placeholder()} />
               </SelectTrigger>
               <SelectContent>

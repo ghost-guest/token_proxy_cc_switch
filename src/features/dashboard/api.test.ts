@@ -23,6 +23,7 @@ describe("dashboard/api", () => {
       accounts: [],
       series: [],
       recent: [],
+      modelProbes: [],
       truncated: false,
     });
 

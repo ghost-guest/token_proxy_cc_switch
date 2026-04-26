@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { useCallback, useEffect, useRef } from "react";
 
 import { AppView } from "@/features/config/AppView";
 import {
@@ -8,13 +9,14 @@ import {
   useProxyServiceState,
 } from "@/features/config/config-screen-state";
 import { useConfigActions } from "@/features/config/config-screen-actions";
-import { syncAccountBackedUpstreams } from "@/features/config/form";
+import { createModelMapping, syncAccountBackedUpstreams } from "@/features/config/form";
 import { useConfigListActions } from "@/features/config/list-actions";
 import type { ConfigSectionId } from "@/features/config/sections";
 import type { ConfigForm } from "@/features/config/types";
 import { useCodexAccounts } from "@/features/codex/use-codex-accounts";
 import { useKiroAccounts } from "@/features/kiro/use-kiro-accounts";
 import { useUpdater } from "@/features/update/updater";
+import { parseError } from "@/lib/error";
 
 type ConfigScreenProps = {
   activeSectionId: ConfigSectionId;
@@ -36,6 +38,7 @@ type AppViewArgs = {
   listActions: ConfigListActions;
   configActions: ConfigActions;
   proxyActions: ProxyServiceActions;
+  onResetHotModelMappings: () => void;
 };
 
 function buildAppViewProps({
@@ -46,6 +49,7 @@ function buildAppViewProps({
   listActions,
   configActions,
   proxyActions,
+  onResetHotModelMappings,
 }: AppViewArgs) {
   return {
     activeSectionId,
@@ -70,6 +74,7 @@ function buildAppViewProps({
     onToggleLocalKey: () => state.setShowLocalKey((value) => !value),
     onToggleUpstreamKeys: () => state.setShowUpstreamKeys((value) => !value),
     onFormChange: state.updateForm,
+    onResetHotModelMappings,
     onStrategyChange: (value: ConfigForm["upstreamStrategy"]) =>
       state.updateForm({ upstreamStrategy: value }),
     onAutoStartChange: (value: boolean) => state.setAutoStartEnabled(value),
@@ -105,6 +110,27 @@ export function ConfigScreen({ activeSectionId }: ConfigScreenProps) {
     setProxyServiceRequestState: proxyService.setProxyServiceRequestState,
     setProxyServiceMessage: proxyService.setProxyServiceMessage,
   });
+  const {
+    setForm,
+    setStatus,
+    setStatusMessage,
+    updateForm,
+  } = state;
+  const resetHotModelMappings = useCallback(async () => {
+    setStatus("loading");
+    setStatusMessage("");
+    try {
+      const mappings = await invoke<Record<string, string>>("read_default_hot_model_mappings");
+      const hotModelMappings = Object.entries(mappings)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([pattern, target]) => createModelMapping(pattern, target));
+      updateForm({ hotModelMappings });
+      setStatus("idle");
+    } catch (error) {
+      setStatus("error");
+      setStatusMessage(parseError(error));
+    }
+  }, [setStatus, setStatusMessage, updateForm]);
   const { refreshProxyStatus } = proxyActions;
   const configActions = useConfigActions({
     currentPayload: derived.currentPayload,
@@ -155,7 +181,7 @@ export function ConfigScreen({ activeSectionId }: ConfigScreenProps) {
     if (kiroAccounts.loading || codexAccounts.loading) {
       return;
     }
-    state.setForm((prev) => {
+    setForm((prev) => {
       const nextUpstreams = syncAccountBackedUpstreams(prev.upstreams, {
         hasKiroAccount: kiroAccounts.accounts.length > 0,
         hasCodexAccount: codexAccounts.accounts.length > 0,
@@ -173,7 +199,7 @@ export function ConfigScreen({ activeSectionId }: ConfigScreenProps) {
     codexAccounts.loading,
     kiroAccounts.accounts,
     kiroAccounts.loading,
-    state.setForm,
+    setForm,
   ]);
 
   useEffect(() => {
@@ -207,6 +233,7 @@ export function ConfigScreen({ activeSectionId }: ConfigScreenProps) {
     listActions,
     configActions,
     proxyActions,
+    onResetHotModelMappings: resetHotModelMappings,
   });
 
   return <AppView {...appViewProps} />;

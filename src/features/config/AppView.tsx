@@ -24,7 +24,6 @@ import {
   TrayTokenRateCard,
   UpdateCard,
   UpstreamsCard,
-  ValidationCard,
   type StatusBadge,
 } from "@/features/config/cards";
 import type { ProxyServiceViewProps } from "@/features/config/cards/proxy-service-card";
@@ -66,6 +65,7 @@ type AppViewProps = {
   onToggleLocalKey: () => void;
   onToggleUpstreamKeys: () => void;
   onFormChange: (patch: Partial<ConfigForm>) => void;
+  onResetHotModelMappings: () => void;
   onStrategyChange: (value: ConfigForm["upstreamStrategy"]) => void;
   onAutoStartChange: (value: boolean) => void;
   onAddUpstream: (upstream: ConfigForm["upstreams"][number]) => void;
@@ -243,6 +243,7 @@ function ConfigSectionBody({
           showLocalKey={props.showLocalKey}
           onToggleLocalKey={props.onToggleLocalKey}
           onChange={props.onFormChange}
+          onResetHotModelMappings={props.onResetHotModelMappings}
           proxyService={proxyService}
         />
       );
@@ -281,7 +282,6 @@ function ConfigSectionBody({
             value={props.form.trayTokenRate}
             onChange={(nextValue) => props.onFormChange({ trayTokenRate: nextValue })}
           />
-          <ValidationCard form={props.form} validation={props.validation} />
           <ProjectLinksCard />
           <UpdateCard />
         </div>

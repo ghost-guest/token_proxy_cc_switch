@@ -2,6 +2,7 @@ use axum::http::header::{HeaderName, HeaderValue};
 use serde::{de, Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 
+use super::hot_model_mappings::default_hot_model_mappings;
 use super::model_mapping::ModelMappingRules;
 use crate::logging::LogLevel;
 
@@ -48,6 +49,10 @@ fn default_upstream_no_data_timeout_secs() -> u64 {
 
 fn is_default_upstream_no_data_timeout_secs(value: &u64) -> bool {
     *value == default_upstream_no_data_timeout_secs()
+}
+
+fn default_model_discovery_refresh_secs() -> u64 {
+    0
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -236,10 +241,14 @@ pub struct ProxyConfigFile {
         skip_serializing_if = "is_default_upstream_no_data_timeout_secs"
     )]
     pub upstream_no_data_timeout_secs: u64,
+    #[serde(default = "default_model_discovery_refresh_secs")]
+    pub model_discovery_refresh_secs: u64,
     #[serde(default)]
     pub tray_token_rate: TrayTokenRateConfig,
     #[serde(default)]
     pub upstream_strategy: UpstreamStrategy,
+    #[serde(default = "default_hot_model_mappings")]
+    pub hot_model_mappings: HashMap<String, String>,
     #[serde(default)]
     pub upstreams: Vec<UpstreamConfig>,
 }
@@ -257,8 +266,10 @@ impl Default for ProxyConfigFile {
             max_request_body_bytes: None,
             retryable_failure_cooldown_secs: default_retryable_failure_cooldown_secs(),
             upstream_no_data_timeout_secs: default_upstream_no_data_timeout_secs(),
+            model_discovery_refresh_secs: default_model_discovery_refresh_secs(),
             tray_token_rate: TrayTokenRateConfig::default(),
             upstream_strategy: UpstreamStrategy::default(),
+            hot_model_mappings: default_hot_model_mappings(),
             upstreams: Vec::new(),
         }
     }
@@ -302,7 +313,9 @@ pub struct ProxyConfig {
     pub max_request_body_bytes: usize,
     pub retryable_failure_cooldown: std::time::Duration,
     pub upstream_no_data_timeout: std::time::Duration,
+    pub model_discovery_refresh_interval: Option<std::time::Duration>,
     pub upstream_strategy: UpstreamStrategyRuntime,
+    pub hot_model_mappings: HashMap<String, String>,
     pub upstreams: HashMap<String, ProviderUpstreams>,
     pub kiro_preferred_endpoint: Option<KiroPreferredEndpoint>,
 }
