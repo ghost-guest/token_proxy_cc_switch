@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 
-import { readDashboardSnapshot } from "@/features/dashboard/api";
+import {
+  readDashboardSnapshot,
+  refreshDashboardModelDiscovery,
+} from "@/features/dashboard/api";
 
 describe("dashboard/api", () => {
   it("delegates to tauri invoke", async () => {
@@ -43,5 +46,14 @@ describe("dashboard/api", () => {
       accountId: "codex-a.json",
       publicOnly: false,
     });
+  });
+
+  it("delegates model discovery refresh to dashboard command", async () => {
+    const invokeMock = vi.mocked(invoke);
+    invokeMock.mockResolvedValueOnce(undefined);
+
+    await refreshDashboardModelDiscovery();
+
+    expect(invokeMock).toHaveBeenCalledWith("refresh_dashboard_model_discovery");
   });
 });

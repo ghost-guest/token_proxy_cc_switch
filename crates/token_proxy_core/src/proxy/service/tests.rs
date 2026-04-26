@@ -334,6 +334,35 @@ fn start_refreshes_model_discovery_cache_without_blocking_proxy_start() {
 }
 
 #[test]
+fn refresh_model_discovery_uses_codex_builtin_catalog_without_models_endpoint() {
+    run_async(async {
+        let (context, data_dir) = create_test_context();
+        let mut config = test_config_file(0);
+        config.upstreams = vec![upstream_config("codex-a", "codex", "https://example.com")];
+        crate::proxy::config::write_config(context.paths.as_ref(), config)
+            .await
+            .expect("write config");
+
+        let service = ProxyServiceHandle::new();
+        service.start(&context).await.expect("start proxy");
+
+        let probes = service.refresh_model_discovery().await;
+        let probe = probes
+            .iter()
+            .find(|probe| probe.upstream_id == "codex-a")
+            .expect("codex probe");
+        assert_eq!(probe.provider, "codex");
+        assert_eq!(probe.status, UpstreamModelProbeStatus::Ok);
+        assert_eq!(probe.error, None);
+        assert!(probe.models.contains(&"gpt-5.5".to_string()));
+        assert!(probe.models.contains(&"gpt-5.3-codex-spark".to_string()));
+
+        let _ = service.stop().await;
+        let _ = std::fs::remove_dir_all(data_dir);
+    });
+}
+
+#[test]
 fn refresh_model_discovery_updates_cache_on_demand() {
     run_async(async {
         let upstream = spawn_model_catalog_probe_upstream(json!({

@@ -1,9 +1,12 @@
 use axum::{
     body::{Body, Bytes},
-    http::{HeaderMap, StatusCode},
+    http::{
+        header::{CONTENT_LENGTH, CONTENT_TYPE},
+        HeaderMap, HeaderValue, StatusCode,
+    },
     response::Response,
 };
-use serde_json::Value;
+use serde_json::{json, Map, Value};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,6 +18,7 @@ use super::super::super::{
     redact::redact_query_param_value,
     request_body::ReplayableBody,
     server_helpers::log_debug_headers_body,
+    sse::SseEventParser,
     token_rate::RequestTokenTracker,
     usage::extract_usage_from_response,
 };
@@ -28,7 +32,7 @@ const DEBUG_BODY_LOG_LIMIT_BYTES: usize = usize::MAX;
 pub(super) async fn build_buffered_response(
     status: StatusCode,
     upstream_res: reqwest::Response,
-    headers: HeaderMap,
+    mut headers: HeaderMap,
     context: LogContext,
     log: Arc<LogWriter>,
     request_tracker: RequestTokenTracker,
@@ -52,6 +56,25 @@ pub(super) async fn build_buffered_response(
         DEBUG_BODY_LOG_LIMIT_BYTES,
     )
     .await;
+    let bytes = if status.is_success() && is_event_stream_response(&response_headers) {
+        match buffer_event_stream_response(&bytes) {
+            Ok(buffered) => {
+                headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+                headers.remove(CONTENT_LENGTH);
+                buffered
+            }
+            Err(message) => {
+                let usage = UsageSnapshot {
+                    usage: None,
+                    cached_tokens: None,
+                    usage_json: None,
+                };
+                return respond_transform_error(&mut context, usage, log, message);
+            }
+        }
+    } else {
+        bytes
+    };
     let mut usage = extract_usage_from_response(&bytes);
     let response_error = response_error_for_status(status, &bytes);
     let request_body = context.request_body.clone();
@@ -104,6 +127,176 @@ pub(super) async fn build_buffered_response(
         .await;
 
     http::build_response(status, headers, Body::from(output))
+}
+
+pub(super) fn buffer_event_stream_response(bytes: &Bytes) -> Result<Bytes, String> {
+    let mut parser = SseEventParser::new();
+    let mut events = Vec::new();
+    parser.push_chunk(bytes.as_ref(), |event| events.push(event));
+    parser.finish(|event| events.push(event));
+
+    let mut chat_buffer = ChatCompletionBuffer::default();
+    for event in events {
+        if event == "[DONE]" {
+            continue;
+        }
+        let value: Value = serde_json::from_str(&event)
+            .map_err(|err| format!("Invalid event-stream JSON payload: {err}"))?;
+        if let Some(response) = completed_response_from_event(&value) {
+            return serialize_buffered_event(response);
+        }
+        chat_buffer.push_event(&value);
+    }
+
+    if let Some(value) = chat_buffer.into_value() {
+        return serialize_buffered_event(value);
+    }
+
+    Err("No supported event-stream payload found".to_string())
+}
+
+#[derive(Default)]
+struct ChatCompletionBuffer {
+    id: Option<String>,
+    created: Option<Value>,
+    model: Option<String>,
+    role: Option<String>,
+    content: String,
+    finish_reason: Option<Value>,
+    usage: Option<Value>,
+    saw_chunk: bool,
+}
+
+impl ChatCompletionBuffer {
+    fn push_event(&mut self, value: &Value) {
+        let object = value.get("object").and_then(Value::as_str);
+        let choices = value.get("choices").and_then(Value::as_array);
+        if object != Some("chat.completion.chunk") && choices.is_none() {
+            return;
+        }
+
+        let Some(choice) = choices.and_then(|items| items.first()) else {
+            return;
+        };
+        self.saw_chunk = true;
+        self.id = self
+            .id
+            .take()
+            .or_else(|| value.get("id").and_then(Value::as_str).map(str::to_string));
+        self.created = self
+            .created
+            .take()
+            .or_else(|| value.get("created").cloned());
+        self.model = self.model.take().or_else(|| {
+            value
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        });
+        self.usage = value.get("usage").filter(|usage| !usage.is_null()).cloned();
+        if let Some(reason) = choice
+            .get("finish_reason")
+            .filter(|reason| !reason.is_null())
+        {
+            self.finish_reason = Some(reason.clone());
+        }
+
+        let Some(delta) = choice.get("delta").and_then(Value::as_object) else {
+            return;
+        };
+        if let Some(role) = delta.get("role").and_then(Value::as_str) {
+            self.role = Some(role.to_string());
+        }
+        if let Some(content) = delta.get("content").and_then(Value::as_str) {
+            self.content.push_str(content);
+        }
+    }
+
+    fn into_value(self) -> Option<Value> {
+        if !self.saw_chunk {
+            return None;
+        }
+
+        let mut message = Map::new();
+        message.insert(
+            "role".to_string(),
+            Value::String(self.role.unwrap_or_else(|| "assistant".to_string())),
+        );
+        message.insert("content".to_string(), Value::String(self.content));
+
+        let mut choice = Map::new();
+        choice.insert("index".to_string(), json!(0));
+        choice.insert("message".to_string(), Value::Object(message));
+        choice.insert(
+            "finish_reason".to_string(),
+            self.finish_reason.unwrap_or(Value::Null),
+        );
+
+        let mut output = Map::new();
+        output.insert(
+            "id".to_string(),
+            Value::String(self.id.unwrap_or_else(|| "chatcmpl_buffered".to_string())),
+        );
+        output.insert(
+            "object".to_string(),
+            Value::String("chat.completion".to_string()),
+        );
+        output.insert(
+            "created".to_string(),
+            self.created.unwrap_or_else(|| json!(0)),
+        );
+        output.insert(
+            "model".to_string(),
+            Value::String(self.model.unwrap_or_else(|| "unknown".to_string())),
+        );
+        output.insert(
+            "choices".to_string(),
+            Value::Array(vec![Value::Object(choice)]),
+        );
+        if let Some(usage) = self.usage {
+            output.insert("usage".to_string(), usage);
+        }
+        Some(Value::Object(output))
+    }
+}
+
+fn completed_response_from_event(value: &Value) -> Option<Value> {
+    let event_type = value.get("type").and_then(Value::as_str)?;
+    let is_terminal_response = matches!(
+        event_type,
+        "response.completed"
+            | "response.incomplete"
+            | "response.cancelled"
+            | "response.canceled"
+            | "response.failed"
+    );
+    if !is_terminal_response {
+        return None;
+    }
+    value
+        .get("response")
+        .filter(|response| response.is_object())
+        .cloned()
+}
+
+fn serialize_buffered_event(value: Value) -> Result<Bytes, String> {
+    serde_json::to_vec(&value)
+        .map(Bytes::from)
+        .map_err(|err| format!("Failed to serialize buffered event-stream payload: {err}"))
+}
+
+fn is_event_stream_response(headers: &HeaderMap) -> bool {
+    headers
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| {
+            value.split(';').next().is_some_and(|content_type| {
+                content_type
+                    .trim()
+                    .eq_ignore_ascii_case("text/event-stream")
+            })
+        })
+        .unwrap_or(false)
 }
 
 struct ConvertedBody {

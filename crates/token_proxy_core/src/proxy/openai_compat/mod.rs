@@ -173,6 +173,10 @@ fn chat_request_to_responses(body: &Bytes) -> Result<Bytes, String> {
         return Err("Request body must be a JSON object.".to_string());
     };
 
+    if is_responses_shaped_chat_request(object) {
+        return responses_shaped_chat_request_to_responses(object);
+    }
+
     let Some(messages) = object.get("messages").and_then(Value::as_array) else {
         return Err("Chat request must include messages.".to_string());
     };
@@ -260,6 +264,28 @@ fn chat_request_to_responses(body: &Bytes) -> Result<Bytes, String> {
     }
     if object.get("web_search_options").is_some() {
         append_responses_web_search_tool(&mut output, object.get("web_search_options"));
+    }
+
+    serde_json::to_vec(&Value::Object(output))
+        .map(Bytes::from)
+        .map_err(|err| format!("Failed to serialize request: {err}"))
+}
+
+fn is_responses_shaped_chat_request(object: &Map<String, Value>) -> bool {
+    !object.contains_key("messages") && object.contains_key("input")
+}
+
+fn responses_shaped_chat_request_to_responses(
+    object: &Map<String, Value>,
+) -> Result<Bytes, String> {
+    let mut output = object.clone();
+    for key in [
+        "prompt_cache_retention",
+        "safety_identifier",
+        "metadata",
+        "stream_options",
+    ] {
+        output.remove(key);
     }
 
     serde_json::to_vec(&Value::Object(output))

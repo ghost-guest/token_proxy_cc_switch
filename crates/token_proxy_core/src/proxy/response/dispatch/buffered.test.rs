@@ -1,9 +1,24 @@
-use super::buffered::{empty_chat_completion_retry_message, value_is_absent};
-use crate::proxy::log::LogContext;
+use super::buffered::{
+    buffer_event_stream_response, build_buffered_response, empty_chat_completion_retry_message,
+    value_is_absent,
+};
 use crate::proxy::openai_compat::FormatTransform;
-use axum::body::Bytes;
+use crate::proxy::{
+    log::{LogContext, LogWriter},
+    token_rate::TokenRateTracker,
+};
+use axum::{
+    body::{to_bytes, Bytes},
+    http::{
+        header::{CONTENT_LENGTH, CONTENT_TYPE},
+        HeaderMap, HeaderValue, StatusCode,
+    },
+};
 use serde_json::json;
-use std::time::Instant;
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 fn test_context() -> LogContext {
     LogContext {
@@ -35,6 +50,102 @@ fn value_is_absent_accepts_null_empty_string_and_empty_array() {
     assert!(!value_is_absent(Some(
         &json!([{"type":"text","text":"ok"}])
     )));
+}
+
+#[test]
+fn buffer_event_stream_response_converts_chat_completion_chunks_to_json() {
+    let sse = Bytes::from(
+        [
+            "data: {\"id\":\"chatcmpl_1\",\"object\":\"chat.completion.chunk\",\"created\":1770000000,\"model\":\"gpt-5.5\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hello \"},\"finish_reason\":null}]}\n\n",
+            "data: {\"id\":\"chatcmpl_1\",\"object\":\"chat.completion.chunk\",\"created\":1770000000,\"model\":\"gpt-5.5\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"world\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ]
+        .concat(),
+    );
+
+    let output = buffer_event_stream_response(&sse).expect("buffer SSE");
+    let value: serde_json::Value = serde_json::from_slice(&output).expect("json");
+
+    assert_eq!(value["object"], json!("chat.completion"));
+    assert_eq!(value["model"], json!("gpt-5.5"));
+    assert_eq!(value["choices"][0]["message"]["role"], json!("assistant"));
+    assert_eq!(
+        value["choices"][0]["message"]["content"],
+        json!("hello world")
+    );
+    assert_eq!(value["choices"][0]["finish_reason"], json!("stop"));
+}
+
+#[test]
+fn buffer_event_stream_response_returns_completed_responses_object() {
+    let completed = json!({
+        "type": "response.completed",
+        "response": {
+            "id": "resp_1",
+            "object": "response",
+            "created_at": 1770000000_i64,
+            "status": "completed",
+            "model": "gpt-5.5",
+            "output": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        { "type": "output_text", "text": "done" }
+                    ]
+                }
+            ]
+        }
+    });
+    let sse = Bytes::from(format!("data: {completed}\n\ndata: [DONE]\n\n"));
+
+    let output = buffer_event_stream_response(&sse).expect("buffer SSE");
+    let value: serde_json::Value = serde_json::from_slice(&output).expect("json");
+
+    assert_eq!(value["object"], json!("response"));
+    assert_eq!(value["id"], json!("resp_1"));
+    assert_eq!(value["output"][0]["content"][0]["text"], json!("done"));
+}
+
+#[tokio::test]
+async fn buffered_non_stream_event_stream_chat_completion_returns_json() {
+    let sse = [
+        "data: {\"id\":\"chatcmpl_1\",\"object\":\"chat.completion.chunk\",\"created\":1770000000,\"model\":\"gpt-5.5\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n",
+        "data: [DONE]\n\n",
+    ]
+    .concat();
+    let upstream_res = axum::http::Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "text/event-stream")
+        .body(reqwest::Body::from(sse))
+        .expect("response")
+        .into();
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
+    headers.insert(CONTENT_LENGTH, HeaderValue::from_static("999"));
+    let tracker = TokenRateTracker::new().register(None, None).await;
+
+    let response = build_buffered_response(
+        StatusCode::OK,
+        upstream_res,
+        headers,
+        test_context(),
+        Arc::new(LogWriter::new(None)),
+        tracker,
+        FormatTransform::None,
+        None,
+        None,
+        Duration::from_secs(1),
+    )
+    .await;
+    let (parts, body) = response.into_parts();
+    let body = to_bytes(body, usize::MAX).await.expect("body");
+    let value: serde_json::Value = serde_json::from_slice(&body).expect("json");
+
+    assert_eq!(parts.headers.get(CONTENT_TYPE).unwrap(), "application/json");
+    assert!(parts.headers.get(CONTENT_LENGTH).is_none());
+    assert_eq!(value["choices"][0]["message"]["content"], json!("ok"));
+    assert!(!String::from_utf8_lossy(&body).contains("data:"));
 }
 
 #[test]

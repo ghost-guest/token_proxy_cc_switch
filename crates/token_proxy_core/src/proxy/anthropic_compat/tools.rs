@@ -19,6 +19,25 @@ pub(super) fn map_responses_tools_to_anthropic(value: &Value) -> Value {
 fn map_responses_tool(value: &Value) -> Option<Value> {
     let tool = value.as_object()?;
     let tool_type = tool.get("type").and_then(Value::as_str).unwrap_or("");
+    if is_responses_web_search_tool(tool_type, tool.get("name").and_then(Value::as_str)) {
+        let mut out = Map::new();
+        out.insert(
+            "type".to_string(),
+            Value::String("web_search_20250305".to_string()),
+        );
+        out.insert("name".to_string(), Value::String("web_search".to_string()));
+        copy_optional_fields(
+            tool,
+            &mut out,
+            &[
+                "max_uses",
+                "allowed_domains",
+                "blocked_domains",
+                "user_location",
+            ],
+        );
+        return Some(Value::Object(out));
+    }
     if tool_type != "function" {
         return None;
     }
@@ -47,6 +66,25 @@ fn map_responses_tool(value: &Value) -> Option<Value> {
         out.insert("input_schema".to_string(), parameters.clone());
     }
     Some(Value::Object(out))
+}
+
+fn is_responses_web_search_tool(tool_type: &str, tool_name: Option<&str>) -> bool {
+    matches!(
+        tool_type,
+        "google_search" | "web_search" | "web_search_preview" | "web_search_20250305"
+    ) || matches!(tool_name, Some("google_search" | "web_search"))
+}
+
+fn copy_optional_fields(
+    source: &Map<String, Value>,
+    target: &mut Map<String, Value>,
+    fields: &[&str],
+) {
+    for field in fields {
+        if let Some(value) = source.get(*field) {
+            target.insert((*field).to_string(), value.clone());
+        }
+    }
 }
 
 pub(super) fn map_anthropic_tools_to_responses(value: &Value) -> Value {

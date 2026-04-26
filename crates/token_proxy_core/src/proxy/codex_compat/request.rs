@@ -21,11 +21,11 @@ pub(crate) fn chat_request_to_codex(
     model_hint: Option<&str>,
 ) -> Result<Bytes, String> {
     let object = parse_object(body)?;
+    if is_responses_shaped_chat_request(&object) {
+        return transform_responses_request_to_codex(body, model_hint, false);
+    }
+
     let model = resolve_model(&object, model_hint);
-    let stream = object
-        .get("stream")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
     let effort = resolve_reasoning_effort(&object, Some(&model));
     let tool_map = build_tool_name_map(&object);
     let messages = object
@@ -34,8 +34,8 @@ pub(crate) fn chat_request_to_codex(
         .ok_or_else(|| "Chat request must include messages.".to_string())?;
 
     let mut output = Map::new();
-    output.insert("stream".to_string(), Value::Bool(stream));
-    output.insert("model".to_string(), Value::String(model));
+    output.insert("stream".to_string(), Value::Bool(true));
+    output.insert("model".to_string(), Value::String(model.clone()));
     output.insert("instructions".to_string(), Value::String(String::new()));
     output.insert("parallel_tool_calls".to_string(), Value::Bool(true));
     output.insert(
@@ -66,10 +66,15 @@ pub(crate) fn chat_request_to_codex(
     );
 
     output.insert("store".to_string(), Value::Bool(false));
+    reject_codex_spark_non_text_features(&model, &output)?;
 
     serde_json::to_vec(&Value::Object(output))
         .map(Bytes::from)
         .map_err(|err| format!("Failed to serialize request: {err}"))
+}
+
+fn is_responses_shaped_chat_request(object: &Map<String, Value>) -> bool {
+    !object.contains_key("messages") && object.contains_key("input")
 }
 
 pub(crate) fn responses_request_to_codex(
@@ -93,6 +98,11 @@ fn transform_responses_request_to_codex(
 ) -> Result<Bytes, String> {
     let mut object = parse_object(body)?;
     normalize_responses_payload(&mut object, model_hint, strip_reasoning_include);
+    let model = object
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    reject_codex_spark_non_text_features(model, &object)?;
     let tool_map = build_tool_name_map(&object);
 
     if let Some(tools) = object.get("tools").cloned() {
@@ -486,6 +496,8 @@ fn normalize_responses_payload(
         "previous_response_id",
         "prompt_cache_retention",
         "safety_identifier",
+        "metadata",
+        "stream_options",
     ] {
         object.remove(key);
     }
@@ -542,6 +554,66 @@ fn normalize_codex_model(model: &str) -> String {
     model_id.to_string()
 }
 
+fn reject_codex_spark_non_text_features(
+    model: &str,
+    object: &Map<String, Value>,
+) -> Result<(), String> {
+    if model != "gpt-5.3-codex-spark" {
+        return Ok(());
+    }
+    if value_contains_image_input(object.get("input")) {
+        return Err(
+            "gpt-5.3-codex-spark is text-only and does not support image inputs.".to_string(),
+        );
+    }
+    if value_contains_image_generation_tool(object.get("tools")) {
+        return Err(
+            "gpt-5.3-codex-spark is text-only and does not support image generation tools."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn value_contains_image_input(value: Option<&Value>) -> bool {
+    let Some(value) = value else {
+        return false;
+    };
+    match value {
+        Value::Array(items) => items
+            .iter()
+            .any(|item| value_contains_image_input(Some(item))),
+        Value::Object(object) => {
+            let item_type = object.get("type").and_then(Value::as_str);
+            matches!(item_type, Some("input_image" | "image_url"))
+                || object
+                    .values()
+                    .any(|item| value_contains_image_input(Some(item)))
+        }
+        _ => false,
+    }
+}
+
+fn value_contains_image_generation_tool(value: Option<&Value>) -> bool {
+    let Some(value) = value else {
+        return false;
+    };
+    match value {
+        Value::Array(items) => items
+            .iter()
+            .any(|item| value_contains_image_generation_tool(Some(item))),
+        Value::Object(object) => {
+            matches!(
+                object.get("type").and_then(Value::as_str),
+                Some("image_generation" | "image_generation_call")
+            ) || object
+                .values()
+                .any(|item| value_contains_image_generation_tool(Some(item)))
+        }
+        _ => false,
+    }
+}
+
 const CODEX_MODEL_ALIASES: &[(&str, &str)] = &[
     ("gpt-5.5", "gpt-5.5"),
     ("gpt-5.5-none", "gpt-5.5"),
@@ -581,6 +653,22 @@ const CODEX_MODEL_ALIASES: &[(&str, &str)] = &[
     ("gpt-5.2-high", "gpt-5.2"),
     ("gpt-5.2-xhigh", "gpt-5.2"),
 ];
+
+pub(crate) fn supported_codex_model_ids() -> Vec<String> {
+    let mut models = Vec::new();
+    for (alias, target) in CODEX_MODEL_ALIASES {
+        push_unique_codex_model_id(&mut models, alias);
+        push_unique_codex_model_id(&mut models, target);
+    }
+    models
+}
+
+fn push_unique_codex_model_id(models: &mut Vec<String>, value: &str) {
+    let value = value.trim();
+    if !value.is_empty() && models.iter().all(|model| model != value) {
+        models.push(value.to_string());
+    }
+}
 
 fn extract_system_messages_from_input(items: Vec<Value>) -> (Vec<Value>, Vec<String>) {
     let mut output = Vec::with_capacity(items.len());

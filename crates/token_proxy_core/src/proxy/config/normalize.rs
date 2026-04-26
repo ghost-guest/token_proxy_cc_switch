@@ -401,8 +401,10 @@ fn native_inbound_formats_for_provider(provider: &str) -> InboundApiFormatMask {
         // OpenAI endpoints（/v1/chat/completions、/v1/responses）若要走 Kiro，需要显式通过
         // `convert_from_map.kiro` 授权（避免“意外命中 Kiro”）。
         "kiro" => mask.insert(InboundApiFormat::AnthropicMessages),
-        // Codex 的“native”更接近 OpenAI Responses；Chat 通常需要显式允许转换。
-        "codex" => mask.insert(InboundApiFormat::OpenaiResponses),
+        "codex" => {
+            mask.insert(InboundApiFormat::OpenaiChat);
+            mask.insert(InboundApiFormat::OpenaiResponses);
+        }
         _ => {}
     }
     mask

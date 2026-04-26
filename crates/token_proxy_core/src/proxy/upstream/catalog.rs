@@ -13,6 +13,7 @@ use std::{
 
 use super::super::http::RequestAuth;
 use super::super::{
+    codex_compat::supported_codex_model_ids,
     config::{expand_model_ids_with_mappings, UpstreamRuntime},
     http,
     model_discovery::{UpstreamModelProbe, UpstreamModelProbeStatus},
@@ -188,16 +189,25 @@ async fn refresh_model_discovery_job(
     job: ModelDiscoveryJob,
 ) -> UpstreamModelProbe {
     let mut models = job.upstream.advertised_model_ids.clone();
+    merge_model_catalog_ids(&mut models, builtin_model_ids(job.provider.as_str()));
     expand_model_ids_with_mappings(&mut models, &state.config.hot_model_mappings);
 
     let Some((inbound_path, upstream_path)) = model_catalog_probe_paths(job.provider.as_str())
     else {
+        let (status, error) = if models.is_empty() {
+            (
+                UpstreamModelProbeStatus::Unsupported,
+                Some("Model list endpoint is not supported for this provider.".to_string()),
+            )
+        } else {
+            (UpstreamModelProbeStatus::Ok, None)
+        };
         return UpstreamModelProbe::completed(
             job.upstream.id.as_str(),
             job.provider.as_str(),
             job.account_id,
-            UpstreamModelProbeStatus::Unsupported,
-            Some("Model list endpoint is not supported for this provider.".to_string()),
+            status,
+            error,
             models,
         );
     };
@@ -246,6 +256,13 @@ async fn refresh_model_discovery_job(
             Some(error),
             models,
         ),
+    }
+}
+
+fn builtin_model_ids(provider: &str) -> Vec<String> {
+    match provider {
+        "codex" => supported_codex_model_ids(),
+        _ => Vec::new(),
     }
 }
 

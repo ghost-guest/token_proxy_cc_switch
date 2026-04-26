@@ -261,7 +261,7 @@ where
                 self.push_chunk(json!({ "role": "assistant", "reasoning_content": "\n\n" }));
             }
             "response.output_item.done" => {
-                self.handle_function_call_item(&value);
+                self.handle_output_item_done(&value, token_texts);
             }
             "response.completed" => {
                 self.finish_reason = Some(self.resolve_finish_reason());
@@ -271,6 +271,11 @@ where
             }
             _ => {}
         }
+    }
+
+    fn handle_output_item_done(&mut self, value: &Value, token_texts: &mut Vec<String>) {
+        self.handle_function_call_item(value);
+        self.handle_image_generation_item(value, token_texts);
     }
 
     fn update_from_created(&mut self, value: &Value) {
@@ -319,6 +324,21 @@ where
         });
         self.context.mark_first_output();
         self.push_chunk(json!({ "role": "assistant", "tool_calls": [tool_call] }));
+    }
+
+    fn handle_image_generation_item(&mut self, value: &Value, token_texts: &mut Vec<String>) {
+        let Some(item) = value.get("item").and_then(Value::as_object) else {
+            return;
+        };
+        if item.get("type").and_then(Value::as_str) != Some("image_generation_call") {
+            return;
+        }
+        let Some(text) = image_generation_call_text(item) else {
+            return;
+        };
+        self.context.mark_first_output();
+        token_texts.push(text.clone());
+        self.push_chunk(json!({ "role": "assistant", "content": text }));
     }
 
     fn push_preamble_keepalive(&mut self) {
@@ -539,7 +559,7 @@ where
         if event_type == "response.created" {
             self.update_from_created(&value);
         }
-        if matches!(event_type, "response.completed" | "response.incomplete") {
+        if is_responses_terminal_event(event_type) {
             self.saw_terminal_event = true;
         }
         restore_tool_names_in_event(&mut value, &self.tool_name_map);
@@ -758,16 +778,43 @@ fn is_codex_business_output_event(value: &Value) -> bool {
             .get("delta")
             .and_then(Value::as_str)
             .is_some_and(|delta| !delta.is_empty()),
-        Some("response.output_item.done") => {
-            value
-                .get("item")
-                .and_then(Value::as_object)
-                .and_then(|item| item.get("type"))
-                .and_then(Value::as_str)
-                == Some("function_call")
-        }
+        Some("response.output_item.done") => value
+            .get("item")
+            .and_then(Value::as_object)
+            .and_then(|item| item.get("type"))
+            .and_then(Value::as_str)
+            .is_some_and(|item_type| {
+                matches!(item_type, "function_call" | "image_generation_call")
+            }),
         _ => false,
     }
+}
+
+fn image_generation_call_text(item: &Map<String, Value>) -> Option<String> {
+    if let Some(result) = item.get("result").and_then(Value::as_str) {
+        if !result.trim().is_empty() {
+            return Some(format!(
+                "![generated image](data:image/png;base64,{result})"
+            ));
+        }
+    }
+    if let Some(url) = item.get("url").and_then(Value::as_str) {
+        if !url.trim().is_empty() {
+            return Some(format!("![generated image]({url})"));
+        }
+    }
+    None
+}
+
+fn is_responses_terminal_event(event_type: &str) -> bool {
+    matches!(
+        event_type,
+        "response.completed"
+            | "response.incomplete"
+            | "response.cancelled"
+            | "response.canceled"
+            | "response.failed"
+    )
 }
 
 fn chat_chunk_sse(

@@ -233,6 +233,31 @@ fn responses_request_to_anthropic_maps_tool_choice_and_tool_result() {
 }
 
 #[test]
+fn responses_request_to_anthropic_maps_google_search_tool() {
+    let http_clients = ProxyHttpClients::new().expect("http clients");
+
+    let input = bytes_from_json(json!({
+        "model": "gpt-4.1",
+        "tools": [
+            { "type": "google_search", "name": "google_search" }
+        ],
+        "input": [
+            { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "latest docs" }] }
+        ]
+    }));
+
+    let output = run_async(async {
+        responses_request_to_anthropic(&input, &http_clients)
+            .await
+            .expect("transform")
+    });
+    let value = json_from_bytes(output);
+
+    assert_eq!(value["tools"][0]["type"], json!("web_search_20250305"));
+    assert_eq!(value["tools"][0]["name"], json!("web_search"));
+}
+
+#[test]
 fn responses_request_to_anthropic_preserves_structured_tool_result_parts_and_error() {
     let http_clients = ProxyHttpClients::new().expect("http clients");
 

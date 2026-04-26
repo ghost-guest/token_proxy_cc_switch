@@ -32,6 +32,66 @@ fn chat_request_to_codex_sets_model_and_stream() {
 }
 
 #[test]
+fn chat_request_to_codex_forces_upstream_streaming() {
+    let input = json!({
+        "model": "gpt-5",
+        "stream": false,
+        "messages": [
+            { "role": "user", "content": "hi" }
+        ]
+    });
+
+    let output = chat_request_to_codex(&Bytes::from(input.to_string()), Some("gpt-5-codex"))
+        .expect("convert");
+    let value: serde_json::Value = serde_json::from_slice(&output).expect("json");
+
+    assert_eq!(value["stream"], true);
+}
+
+#[test]
+fn chat_request_to_codex_accepts_responses_shaped_body() {
+    let input = json!({
+        "model": "openai/gpt 5.5",
+        "stream": false,
+        "input": [
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{ "type": "input_text", "text": "hi" }]
+            }
+        ],
+        "metadata": { "client": "cursor" },
+        "stream_options": { "include_usage": true },
+        "prompt_cache_retention": "24h",
+        "safety_identifier": "sid_1"
+    });
+
+    let output = chat_request_to_codex(&Bytes::from(input.to_string()), None)
+        .expect("convert responses-shaped chat request");
+    let value: serde_json::Value = serde_json::from_slice(&output).expect("json");
+
+    assert_eq!(value["model"], "gpt-5.5");
+    assert_eq!(value["stream"], true);
+    assert_eq!(value["store"], false);
+    assert_eq!(value["instructions"], "You are a helpful coding assistant.");
+    assert_eq!(value["input"][0]["role"], "user");
+    assert!(value.get("messages").is_none());
+    assert!(value.get("metadata").is_none());
+    assert!(value.get("stream_options").is_none());
+    assert!(value.get("prompt_cache_retention").is_none());
+    assert!(value.get("safety_identifier").is_none());
+}
+
+#[test]
+fn chat_request_to_codex_rejects_missing_messages_without_input() {
+    let input = json!({ "model": "gpt-5" });
+    let error = chat_request_to_codex(&Bytes::from(input.to_string()), None)
+        .expect_err("should reject malformed chat request");
+
+    assert!(error.contains("messages"), "error: {error}");
+}
+
+#[test]
 fn responses_request_to_codex_normalizes_gpt_5_5_and_sanitizes_oauth_payload() {
     let input = json!({
         "model": "openai/gpt 5.5",
@@ -149,6 +209,35 @@ fn codex_response_to_chat_restores_tool_name() {
 }
 
 #[test]
+fn codex_response_to_chat_preserves_image_generation_call_result() {
+    let response = json!({
+        "type": "response.completed",
+        "response": {
+            "id": "resp_img",
+            "created_at": 123,
+            "model": "gpt-5.5",
+            "status": "completed",
+            "output": [
+                {
+                    "type": "image_generation_call",
+                    "id": "img_1",
+                    "status": "completed",
+                    "result": "BASE64PNG"
+                }
+            ]
+        }
+    });
+    let bytes = Bytes::from(response.to_string());
+    let output = codex_response_to_chat(&bytes, None).expect("convert");
+    let value: serde_json::Value = serde_json::from_slice(&output).expect("json");
+    let content = value["choices"][0]["message"]["content"]
+        .as_str()
+        .expect("content");
+
+    assert!(content.contains("data:image/png;base64,BASE64PNG"));
+}
+
+#[test]
 fn codex_response_to_responses_rejects_json_error_payload() {
     let bytes = Bytes::from(
         json!({
@@ -235,6 +324,42 @@ async fn stream_codex_to_responses_emits_compatible_terminal_event_when_upstream
 }
 
 #[tokio::test]
+async fn stream_codex_to_responses_accepts_canceled_terminal_event() {
+    let upstream = futures_util::stream::iter(vec![
+        Ok::<Bytes, std::io::Error>(Bytes::from(
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_cancel\",\"model\":\"gpt-5.5\"}}\n\n",
+        )),
+        Ok::<Bytes, std::io::Error>(Bytes::from(
+            "data: {\"type\":\"response.canceled\",\"response\":{\"id\":\"resp_cancel\",\"status\":\"cancelled\",\"model\":\"gpt-5.5\"}}\n\n",
+        )),
+        Ok::<Bytes, std::io::Error>(Bytes::from("data: [DONE]\n\n")),
+    ]);
+    let tracker = TokenRateTracker::new().register(None, None).await;
+    let context = test_log_context();
+    let log = Arc::new(LogWriter::new(None));
+
+    let chunks = stream_codex_to_responses(upstream, context, log, tracker)
+        .collect::<Vec<_>>()
+        .await;
+    let text = join_stream_chunks(&chunks);
+
+    assert!(
+        text.contains("\"type\":\"response.canceled\""),
+        "chunks: {text}"
+    );
+    assert!(text.contains("\"status\":\"cancelled\""), "chunks: {text}");
+    assert!(
+        !text.contains("Codex upstream stream disconnected before response.completed"),
+        "chunks: {text}"
+    );
+    assert!(
+        !text.contains("\"incomplete_details\":{\"reason\":\"error\"}"),
+        "chunks: {text}"
+    );
+    assert!(text.contains("data: [DONE]"), "chunks: {text}");
+}
+
+#[tokio::test]
 async fn stream_codex_to_chat_emits_error_event_for_invalid_json_event() {
     let upstream = futures_util::stream::iter(vec![Ok::<Bytes, std::io::Error>(Bytes::from(
         "data: not-json\n\n",
@@ -250,6 +375,36 @@ async fn stream_codex_to_chat_emits_error_event_for_invalid_json_event() {
 
     assert!(text.contains("\"error\":{"), "chunks: {text}");
     assert!(text.contains("invalid JSON stream event"), "chunks: {text}");
+    assert!(text.contains("data: [DONE]"), "chunks: {text}");
+}
+
+#[tokio::test]
+async fn stream_codex_to_chat_emits_image_generation_call_result() {
+    let upstream = futures_util::stream::iter(vec![
+        Ok::<Bytes, std::io::Error>(Bytes::from(
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_img\",\"model\":\"gpt-5.5\"}}\n\n",
+        )),
+        Ok::<Bytes, std::io::Error>(Bytes::from(
+            "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"image_generation_call\",\"id\":\"img_1\",\"status\":\"completed\",\"result\":\"BASE64PNG\"}}\n\n",
+        )),
+        Ok::<Bytes, std::io::Error>(Bytes::from(
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_img\",\"status\":\"completed\"}}\n\n",
+        )),
+        Ok::<Bytes, std::io::Error>(Bytes::from("data: [DONE]\n\n")),
+    ]);
+    let tracker = TokenRateTracker::new().register(None, None).await;
+    let context = test_log_context();
+    let log = Arc::new(LogWriter::new(None));
+
+    let chunks = stream_codex_to_chat(upstream, context, log, tracker)
+        .collect::<Vec<_>>()
+        .await;
+    let text = join_stream_chunks(&chunks);
+
+    assert!(
+        text.contains("data:image/png;base64,BASE64PNG"),
+        "chunks: {text}"
+    );
     assert!(text.contains("data: [DONE]"), "chunks: {text}");
 }
 
@@ -305,6 +460,27 @@ fn chat_request_to_codex_skips_missing_tool_names() {
         Some("function")
     );
     assert!(tool_choice.get("name").is_none());
+}
+
+#[test]
+fn chat_request_to_codex_rejects_spark_image_url() {
+    let input = json!({
+        "model": "gpt-5.3-codex-spark",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "describe" },
+                    { "type": "image_url", "image_url": { "url": "data:image/png;base64,AAAA" } }
+                ]
+            }
+        ]
+    });
+    let bytes = Bytes::from(input.to_string());
+    let error = chat_request_to_codex(&bytes, None).expect_err("should reject image input");
+
+    assert!(error.contains("gpt-5.3-codex-spark"), "error: {error}");
+    assert!(error.contains("text-only"), "error: {error}");
 }
 
 #[test]
@@ -390,6 +566,45 @@ fn responses_request_to_codex_strips_output_parts_from_function_call_output() {
     let input_items = value["input"].as_array().expect("input array");
     assert_eq!(input_items.len(), 1);
     assert!(input_items[0].get("output_parts").is_none());
+}
+
+#[test]
+fn responses_request_to_codex_rejects_spark_input_image() {
+    let input = json!({
+        "model": "gpt-5.3-codex-spark",
+        "input": [
+            {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "describe" },
+                    { "type": "input_image", "image_url": "data:image/png;base64,AAAA" }
+                ]
+            }
+        ]
+    });
+    let bytes = Bytes::from(input.to_string());
+    let error = responses_request_to_codex(&bytes, None).expect_err("should reject image input");
+
+    assert!(error.contains("gpt-5.3-codex-spark"), "error: {error}");
+    assert!(error.contains("text-only"), "error: {error}");
+}
+
+#[test]
+fn responses_request_to_codex_rejects_spark_image_generation_tool() {
+    let input = json!({
+        "model": "gpt-5.3-codex-spark",
+        "input": "draw icon",
+        "tools": [
+            { "type": "image_generation" }
+        ]
+    });
+    let bytes = Bytes::from(input.to_string());
+    let error =
+        responses_request_to_codex(&bytes, None).expect_err("should reject image generation");
+
+    assert!(error.contains("gpt-5.3-codex-spark"), "error: {error}");
+    assert!(error.contains("text-only"), "error: {error}");
 }
 
 #[test]

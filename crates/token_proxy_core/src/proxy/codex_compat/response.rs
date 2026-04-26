@@ -215,11 +215,39 @@ fn extract_response_output(
                     tool_calls.push(tool_call);
                 }
             }
+            Some("image_generation_call") => {
+                if let Some(text) = image_generation_call_text(item) {
+                    append_content_text(&mut content_text, &text);
+                }
+            }
             _ => {}
         }
     }
 
     (content_text, reasoning_text, tool_calls)
+}
+
+fn append_content_text(content: &mut String, text: &str) {
+    if !content.is_empty() {
+        content.push_str("\n\n");
+    }
+    content.push_str(text);
+}
+
+fn image_generation_call_text(item: &Map<String, Value>) -> Option<String> {
+    if let Some(result) = item.get("result").and_then(Value::as_str) {
+        if !result.trim().is_empty() {
+            return Some(format!(
+                "![generated image](data:image/png;base64,{result})"
+            ));
+        }
+    }
+    if let Some(url) = item.get("url").and_then(Value::as_str) {
+        if !url.trim().is_empty() {
+            return Some(format!("![generated image]({url})"));
+        }
+    }
+    None
 }
 
 fn extract_reasoning_summary(item: &Map<String, Value>) -> String {

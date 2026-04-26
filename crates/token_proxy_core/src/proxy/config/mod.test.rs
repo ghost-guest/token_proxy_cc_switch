@@ -90,6 +90,43 @@ fn build_runtime_config_keeps_openai_responses_provider_when_chat_compat_disable
 }
 
 #[test]
+fn build_runtime_config_codex_accepts_chat_and_responses_by_default() {
+    let mut config = ProxyConfigFile::default();
+    config.upstreams = vec![UpstreamConfig {
+        id: "codex-account".to_string(),
+        providers: vec!["codex".to_string()],
+        base_url: String::new(),
+        api_keys: Vec::new(),
+        filter_prompt_cache_retention: false,
+        filter_safety_identifier: false,
+        use_chat_completions_for_responses: false,
+        rewrite_developer_role_to_system: false,
+        kiro_account_id: None,
+        codex_account_id: None,
+        preferred_endpoint: None,
+        proxy_url: None,
+        priority: Some(0),
+        enabled: true,
+        model_mappings: HashMap::new(),
+        convert_from_map: HashMap::new(),
+        overrides: None,
+    }];
+
+    let runtime = build_runtime_config(config).expect("runtime config");
+    let codex = runtime
+        .provider_upstreams("codex")
+        .expect("codex runtime upstream");
+    let item = codex
+        .groups
+        .first()
+        .and_then(|group| group.items.first())
+        .expect("runtime item");
+
+    assert!(item.supports_inbound(InboundApiFormat::OpenaiChat));
+    assert!(item.supports_inbound(InboundApiFormat::OpenaiResponses));
+}
+
+#[test]
 fn build_runtime_config_maps_upstream_no_data_timeout_secs() {
     let mut config = ProxyConfigFile::default();
     config.upstream_no_data_timeout_secs = 3;

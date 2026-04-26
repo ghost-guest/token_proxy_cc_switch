@@ -53,6 +53,50 @@ fn chat_request_to_responses_maps_common_fields() {
 }
 
 #[test]
+fn chat_request_to_responses_accepts_responses_shaped_body_when_transforming() {
+    let http_clients = ProxyHttpClients::new().expect("http clients");
+    let input_items = json!([
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{ "type": "input_text", "text": "hi" }]
+        }
+    ]);
+    let input = bytes_from_json(json!({
+        "model": "gpt-5.5",
+        "input": input_items,
+        "stream": true,
+        "service_tier": "priority",
+        "metadata": { "client": "cursor" },
+        "stream_options": { "include_usage": true },
+        "prompt_cache_retention": "24h",
+        "safety_identifier": "sid_1"
+    }));
+
+    let output = run_async(async {
+        transform_request_body(
+            FormatTransform::ChatToResponses,
+            &input,
+            &http_clients,
+            None,
+        )
+        .await
+        .expect("transform")
+    });
+    let value = json_from_bytes(output);
+
+    assert_eq!(value["model"], json!("gpt-5.5"));
+    assert_eq!(value["input"], input_items);
+    assert_eq!(value["stream"], json!(true));
+    assert_eq!(value["service_tier"], json!("priority"));
+    assert!(value.get("messages").is_none());
+    assert!(value.get("metadata").is_none());
+    assert!(value.get("stream_options").is_none());
+    assert!(value.get("prompt_cache_retention").is_none());
+    assert!(value.get("safety_identifier").is_none());
+}
+
+#[test]
 fn responses_request_to_chat_maps_tools_and_tool_choice() {
     let http_clients = ProxyHttpClients::new().expect("http clients");
     let parameters = json!({

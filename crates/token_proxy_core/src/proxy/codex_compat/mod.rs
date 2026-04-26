@@ -10,6 +10,7 @@ mod tool_names;
 pub(crate) use headers::apply_codex_headers;
 pub(crate) use request::{
     chat_request_to_codex, responses_compact_request_to_codex, responses_request_to_codex,
+    supported_codex_model_ids,
 };
 pub(crate) use response::{codex_response_to_chat, codex_response_to_responses};
 pub(crate) use stream::{

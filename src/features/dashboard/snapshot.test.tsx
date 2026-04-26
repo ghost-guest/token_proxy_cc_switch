@@ -1,15 +1,17 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { useDashboardSnapshot } from "@/features/dashboard/snapshot"
 import type { DashboardSnapshot } from "@/features/dashboard/types"
 
-const { readDashboardSnapshotMock } = vi.hoisted(() => ({
+const { readDashboardSnapshotMock, refreshDashboardModelDiscoveryMock } = vi.hoisted(() => ({
   readDashboardSnapshotMock: vi.fn(),
+  refreshDashboardModelDiscoveryMock: vi.fn(),
 }))
 
 vi.mock("@/features/dashboard/api", () => ({
   readDashboardSnapshot: readDashboardSnapshotMock,
+  refreshDashboardModelDiscovery: refreshDashboardModelDiscoveryMock,
 }))
 
 function createSnapshot(
@@ -85,6 +87,7 @@ function HookHarness() {
     accountOptions,
     onUpstreamChange,
     onAccountChange,
+    refresh,
   } =
     useDashboardSnapshot()
 
@@ -115,6 +118,9 @@ function HookHarness() {
       <button type="button" onClick={() => onAccountChange(null, true)}>
         filter-public
       </button>
+      <button type="button" onClick={refresh}>
+        refresh-dashboard
+      </button>
     </div>
   )
 }
@@ -122,9 +128,11 @@ function HookHarness() {
 describe("dashboard/useDashboardSnapshot", () => {
   beforeEach(() => {
     readDashboardSnapshotMock.mockReset()
+    refreshDashboardModelDiscoveryMock.mockReset()
   })
 
   afterEach(() => {
+    cleanup()
     vi.clearAllMocks()
   })
 
@@ -240,5 +248,26 @@ describe("dashboard/useDashboardSnapshot", () => {
     })
 
     expect(screen.getByTestId("selected-account")).toHaveTextContent("codex-a.json")
+  })
+
+  it("runs model discovery only from dashboard refresh", async () => {
+    readDashboardSnapshotMock
+      .mockResolvedValueOnce(createSnapshot())
+      .mockResolvedValueOnce(createSnapshot())
+    refreshDashboardModelDiscoveryMock.mockResolvedValueOnce(undefined)
+
+    render(<HookHarness />)
+
+    await waitFor(() => {
+      expect(readDashboardSnapshotMock).toHaveBeenCalledTimes(1)
+    })
+    expect(refreshDashboardModelDiscoveryMock).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole("button", { name: "refresh-dashboard" }))
+
+    await waitFor(() => {
+      expect(refreshDashboardModelDiscoveryMock).toHaveBeenCalledTimes(1)
+      expect(readDashboardSnapshotMock).toHaveBeenCalledTimes(2)
+    })
   })
 })
