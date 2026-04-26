@@ -58,14 +58,14 @@ export function DashboardPanel() {
 
       <SectionCards summary={snapshot?.summary ?? null} />
 
-      <UpstreamModelProbes probes={snapshot?.modelProbes ?? []} />
-
       <div className="px-4 lg:px-6">
         <ChartAreaInteractive
           series={snapshot?.series ?? []}
           range={activeRange}
         />
       </div>
+
+      <UpstreamModelProbes probes={snapshot?.modelProbes ?? []} />
     </div>
   )
 }

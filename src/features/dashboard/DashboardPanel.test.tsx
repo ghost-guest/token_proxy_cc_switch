@@ -467,8 +467,14 @@ describe("dashboard/DashboardPanel", () => {
         "3"
       );
     });
-    expect(screen.getByTestId("dashboard-chart-total")).toHaveTextContent("42");
-    expect(screen.getByText(m.dashboard_upstream_models_title())).toBeInTheDocument();
+    const chart = screen.getByTestId("dashboard-chart-total");
+    const upstreamModelsTitle = screen.getByText(m.dashboard_upstream_models_title());
+    expect(chart).toHaveTextContent("42");
+    expect(upstreamModelsTitle).toBeInTheDocument();
+    expect(
+      chart.compareDocumentPosition(upstreamModelsTitle) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
     expect(screen.getByText("gpt-5.5")).toBeInTheDocument();
     expect(screen.getByText("gemini-3.0-pro-preview")).toBeInTheDocument();
     expect(screen.getByText(/quota scope denied/)).toBeInTheDocument();
