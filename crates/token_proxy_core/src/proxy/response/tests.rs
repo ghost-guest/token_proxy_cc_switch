@@ -83,6 +83,7 @@ async fn setup_responses_stream() -> (Arc<LogWriter>, LogContext, SqlitePool) {
         request_headers: None,
         request_body: None,
         ttfb_ms: None,
+        timings: Default::default(),
         start: Instant::now(),
     };
     (log, context, sqlite_pool)
@@ -200,6 +201,7 @@ fn stream_with_logging_persists_log_when_client_drops_stream_early() {
             request_headers: None,
             request_body: None,
             ttfb_ms: None,
+            timings: Default::default(),
             start: Instant::now(),
         };
         let upstream = futures_util::stream::iter(vec![
@@ -407,6 +409,7 @@ fn stream_chat_to_responses_handles_chunk_boundaries_and_emits_created_delta_don
             request_headers: None,
             request_body: None,
             ttfb_ms: None,
+            timings: Default::default(),
             start: Instant::now(),
         };
 
@@ -541,6 +544,7 @@ fn stream_chat_to_responses_preserves_reasoning_and_audio_in_completed_response(
             request_headers: None,
             request_body: None,
             ttfb_ms: None,
+            timings: Default::default(),
             start: Instant::now(),
         };
 
@@ -622,6 +626,7 @@ fn stream_chat_to_responses_preserves_thinking_blocks_with_encrypted_content() {
             request_headers: None,
             request_body: None,
             ttfb_ms: None,
+            timings: Default::default(),
             start: Instant::now(),
         };
 
@@ -688,6 +693,7 @@ fn stream_chat_to_responses_emits_function_call_events_and_includes_them_in_comp
             request_headers: None,
             request_body: None,
             ttfb_ms: None,
+            timings: Default::default(),
             start: Instant::now(),
         };
 

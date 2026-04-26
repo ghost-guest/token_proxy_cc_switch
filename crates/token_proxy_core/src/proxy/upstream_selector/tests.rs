@@ -7,6 +7,7 @@ fn runtime(id: &str, selector_key: &str) -> UpstreamRuntime {
         selector_key: selector_key.to_string(),
         base_url: "https://example.com".to_string(),
         api_key: Some("test-key".to_string()),
+        api_key_headers: None,
         filter_prompt_cache_retention: false,
         filter_safety_identifier: false,
         rewrite_developer_role_to_system: false,

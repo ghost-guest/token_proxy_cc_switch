@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::SqlitePool;
 use std::{
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -51,6 +51,53 @@ pub(crate) struct LogEntry {
     pub(crate) request_body: Option<String>,
     pub(crate) response_error: Option<String>,
     pub(crate) latency_ms: u128,
+    pub(crate) upstream_first_byte_ms: Option<u128>,
+    pub(crate) first_client_flush_ms: Option<u128>,
+    pub(crate) first_output_ms: Option<u128>,
+}
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct RequestTimingSnapshot {
+    pub(crate) upstream_first_byte_ms: Option<u128>,
+    pub(crate) first_client_flush_ms: Option<u128>,
+    pub(crate) first_output_ms: Option<u128>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct RequestTimings {
+    inner: Arc<Mutex<RequestTimingSnapshot>>,
+}
+
+impl RequestTimings {
+    fn mark_upstream_first_byte(&self, value: u128) {
+        self.mark_once(|snapshot| &mut snapshot.upstream_first_byte_ms, value);
+    }
+
+    fn mark_first_client_flush(&self, value: u128) {
+        self.mark_once(|snapshot| &mut snapshot.first_client_flush_ms, value);
+    }
+
+    fn mark_first_output(&self, value: u128) {
+        self.mark_once(|snapshot| &mut snapshot.first_output_ms, value);
+    }
+
+    fn snapshot(&self) -> RequestTimingSnapshot {
+        self.inner.lock().map(|guard| *guard).unwrap_or_default()
+    }
+
+    fn mark_once(
+        &self,
+        select: impl FnOnce(&mut RequestTimingSnapshot) -> &mut Option<u128>,
+        value: u128,
+    ) {
+        let Ok(mut guard) = self.inner.lock() else {
+            return;
+        };
+        let slot = select(&mut guard);
+        if slot.is_none() {
+            *slot = Some(value);
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -69,7 +116,32 @@ pub(crate) struct LogContext {
     // Time-to-first-byte (TTFB) measured from `start`.
     // For streaming responses, this is recorded when we receive the first upstream chunk.
     pub(crate) ttfb_ms: Option<u128>,
+    pub(crate) timings: RequestTimings,
     pub(crate) start: Instant,
+}
+
+impl LogContext {
+    pub(crate) fn mark_upstream_first_byte(&mut self) {
+        let value = self.start.elapsed().as_millis();
+        if self.ttfb_ms.is_none() {
+            self.ttfb_ms = Some(value);
+        }
+        self.timings.mark_upstream_first_byte(value);
+    }
+
+    pub(crate) fn mark_first_client_flush(&mut self) {
+        self.timings
+            .mark_first_client_flush(self.start.elapsed().as_millis());
+    }
+
+    pub(crate) fn mark_first_output(&mut self) {
+        self.timings
+            .mark_first_output(self.start.elapsed().as_millis());
+    }
+
+    pub(crate) fn timing_snapshot(&self) -> RequestTimingSnapshot {
+        self.timings.snapshot()
+    }
 }
 
 pub(crate) struct LogWriter {
@@ -103,6 +175,13 @@ pub(crate) fn build_log_entry(
     usage: UsageSnapshot,
     response_error: Option<String>,
 ) -> LogEntry {
+    let timing = context.timing_snapshot();
+    let upstream_first_byte_ms = timing.upstream_first_byte_ms.or(context.ttfb_ms);
+    let latency_ms = timing
+        .first_output_ms
+        .or(timing.first_client_flush_ms)
+        .or(upstream_first_byte_ms)
+        .unwrap_or_else(|| context.start.elapsed().as_millis());
     LogEntry {
         ts_ms: now_ms(),
         path: context.path.clone(),
@@ -120,9 +199,10 @@ pub(crate) fn build_log_entry(
         request_headers: context.request_headers.clone(),
         request_body: context.request_body.clone(),
         response_error,
-        latency_ms: context
-            .ttfb_ms
-            .unwrap_or_else(|| context.start.elapsed().as_millis()),
+        latency_ms,
+        upstream_first_byte_ms,
+        first_client_flush_ms: timing.first_client_flush_ms,
+        first_output_ms: timing.first_output_ms,
     }
 }
 
@@ -162,8 +242,11 @@ INSERT INTO request_logs (
   request_headers,
   request_body,
   response_error,
-  latency_ms
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+  latency_ms,
+  upstream_first_byte_ms,
+  first_client_flush_ms,
+  first_output_ms
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 "#,
     )
     .bind(to_i64_u128(entry.ts_ms))
@@ -185,6 +268,9 @@ INSERT INTO request_logs (
     .bind(entry.request_body.as_deref())
     .bind(entry.response_error.as_deref())
     .bind(to_i64_u128(entry.latency_ms))
+    .bind(entry.upstream_first_byte_ms.map(to_i64_u128))
+    .bind(entry.first_client_flush_ms.map(to_i64_u128))
+    .bind(entry.first_output_ms.map(to_i64_u128))
     .execute(pool)
     .await?;
 

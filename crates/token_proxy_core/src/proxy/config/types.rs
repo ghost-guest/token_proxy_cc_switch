@@ -339,11 +339,38 @@ pub struct UpstreamGroup {
 }
 
 #[derive(Clone)]
+pub(crate) struct StaticApiKeyHeaders {
+    raw: HeaderValue,
+    bearer: HeaderValue,
+}
+
+impl StaticApiKeyHeaders {
+    pub(crate) fn new(upstream_id: &str, key: &str) -> Result<Self, String> {
+        let raw = HeaderValue::from_str(key).map_err(|_| {
+            format!("Upstream {upstream_id} API key contains invalid header characters.")
+        })?;
+        let bearer = HeaderValue::from_str(&format!("Bearer {key}")).map_err(|_| {
+            format!("Upstream {upstream_id} API key contains invalid header characters.")
+        })?;
+        Ok(Self { raw, bearer })
+    }
+
+    pub(crate) fn raw(&self) -> HeaderValue {
+        self.raw.clone()
+    }
+
+    pub(crate) fn bearer(&self) -> HeaderValue {
+        self.bearer.clone()
+    }
+}
+
+#[derive(Clone)]
 pub struct UpstreamRuntime {
     pub(crate) id: String,
     pub(crate) selector_key: String,
     pub(crate) base_url: String,
     pub(crate) api_key: Option<String>,
+    pub(crate) api_key_headers: Option<StaticApiKeyHeaders>,
     pub(crate) filter_prompt_cache_retention: bool,
     pub(crate) filter_safety_identifier: bool,
     pub(crate) rewrite_developer_role_to_system: bool,

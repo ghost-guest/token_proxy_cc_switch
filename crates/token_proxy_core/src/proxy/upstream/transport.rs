@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use axum::http::{HeaderMap, Method, StatusCode};
-use reqwest::{Client, Proxy};
+use reqwest::Client;
 use tokio::time::timeout;
 
 use super::request_body;
@@ -87,25 +87,6 @@ async fn send_codex_request(
     request_detail: Option<&RequestDetailSnapshot>,
     start_time: Instant,
 ) -> Result<reqwest::Response, AttemptOutcome> {
-    let Some(proxy_url) = proxy_url else {
-        return send_upstream_request_once(
-            state,
-            method,
-            provider,
-            upstream,
-            inbound_path,
-            upstream_path_with_query,
-            upstream_url,
-            proxy_url,
-            request_headers,
-            body,
-            meta,
-            selected_account_id,
-            request_detail,
-            start_time,
-        )
-        .await;
-    };
     send_codex_with_fallback(
         state,
         method,
@@ -206,7 +187,7 @@ async fn send_codex_with_fallback(
     selected_account_id: Option<&str>,
     request_detail: Option<&RequestDetailSnapshot>,
     start_time: Instant,
-    proxy_url: &str,
+    proxy_url: Option<&str>,
 ) -> Result<reqwest::Response, AttemptOutcome> {
     // Codex 代理回退：socks5h / http1_only，缓解 DNS/ALPN/TLS 兼容问题。
     let attempts = build_codex_send_attempts(proxy_url);
@@ -271,14 +252,15 @@ async fn send_codex_attempt(
         DEBUG_UPSTREAM_LOG_LIMIT_BYTES,
     )
     .await;
-    let client = build_codex_client(attempt.proxy_url.as_deref(), attempt.http1_only).map_err(
-        |message| {
+    let client = state
+        .http_clients
+        .codex_client_for_proxy_url(attempt.proxy_url.as_deref(), attempt.http1_only)
+        .map_err(|message| {
             CodexAttemptError::Fatal(AttemptOutcome::Fatal(http::error_response(
                 StatusCode::BAD_GATEWAY,
                 message,
             )))
-        },
-    )?;
+        })?;
     let upstream_body =
         request_body::build_upstream_body(provider, upstream, upstream_path_with_query, body, meta)
             .await
@@ -392,8 +374,15 @@ enum CodexAttemptError {
     Fatal(AttemptOutcome),
 }
 
-fn build_codex_send_attempts(proxy_url: &str) -> Vec<CodexSendAttempt> {
+fn build_codex_send_attempts(proxy_url: Option<&str>) -> Vec<CodexSendAttempt> {
     let mut attempts = Vec::new();
+    let Some(proxy_url) = proxy_url else {
+        attempts.push(CodexSendAttempt {
+            proxy_url: None,
+            http1_only: false,
+        });
+        return attempts;
+    };
     attempts.push(CodexSendAttempt {
         proxy_url: Some(proxy_url.to_string()),
         http1_only: false,
@@ -420,23 +409,6 @@ fn upgrade_socks5(proxy_url: &str) -> Option<String> {
         return Some(value.replacen("socks5://", "socks5h://", 1));
     }
     None
-}
-
-fn build_codex_client(proxy_url: Option<&str>, http1_only: bool) -> Result<Client, String> {
-    let mut builder = Client::builder();
-    if let Some(proxy_url) = proxy_url.map(str::trim).filter(|value| !value.is_empty()) {
-        let proxy = Proxy::all(proxy_url)
-            .map_err(|_| "proxy_url is invalid or not supported.".to_string())?;
-        builder = builder.proxy(proxy);
-    } else {
-        builder = builder.no_proxy();
-    }
-    if http1_only {
-        builder = builder.http1_only();
-    }
-    builder
-        .build()
-        .map_err(|err| format!("Failed to build Codex upstream client: {err}"))
 }
 
 fn should_retry_codex_send(err: &reqwest::Error) -> bool {

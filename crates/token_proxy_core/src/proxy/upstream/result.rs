@@ -350,6 +350,7 @@ pub(super) fn log_upstream_error_if_needed(
         request_headers,
         request_body,
         ttfb_ms: None,
+        timings: Default::default(),
         start: start_time,
     };
     let usage = UsageSnapshot {

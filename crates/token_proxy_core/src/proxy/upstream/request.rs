@@ -119,13 +119,21 @@ pub(super) fn resolve_gemini_upstream(
     upstream_url: &str,
 ) -> Result<(String, http::UpstreamAuthHeader), AttemptOutcome> {
     let query_key = extract_query_param(upstream_path_with_query, GEMINI_API_KEY_QUERY);
-    let selected = upstream
-        .api_key
-        .as_deref()
-        .or_else(|| request_auth.gemini_api_key.as_deref())
-        .or_else(|| query_key.as_deref());
+    let selected = if let Some(api_key) = upstream.api_key.as_deref() {
+        Some((
+            api_key,
+            upstream
+                .api_key_headers
+                .as_ref()
+                .map(|headers| headers.raw()),
+        ))
+    } else if let Some(api_key) = request_auth.gemini_api_key.as_deref() {
+        Some((api_key, None))
+    } else {
+        query_key.as_deref().map(|api_key| (api_key, None))
+    };
 
-    let Some(api_key) = selected else {
+    let Some((api_key, precompiled_header_value)) = selected else {
         return Err(AttemptOutcome::SkippedAuth);
     };
 
@@ -152,12 +160,15 @@ pub(super) fn resolve_gemini_upstream(
         }
     };
 
-    let value = HeaderValue::from_str(api_key).map_err(|_| {
-        AttemptOutcome::Fatal(http::error_response(
-            StatusCode::UNAUTHORIZED,
-            "Upstream API key contains invalid characters.",
-        ))
-    })?;
+    let value = match precompiled_header_value {
+        Some(value) => value,
+        None => HeaderValue::from_str(api_key).map_err(|_| {
+            AttemptOutcome::Fatal(http::error_response(
+                StatusCode::UNAUTHORIZED,
+                "Upstream API key contains invalid characters.",
+            ))
+        })?,
+    };
 
     Ok((
         upstream_url,

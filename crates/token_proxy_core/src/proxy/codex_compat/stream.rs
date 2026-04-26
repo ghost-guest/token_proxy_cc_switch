@@ -34,11 +34,23 @@ impl CodexPreludeInspector {
     pub(crate) fn inspect_chunk(&mut self, chunk: &[u8]) -> CodexPreludeDecision {
         let mut events = Vec::new();
         self.parser.push_chunk(chunk, |data| events.push(data));
+        let mut saw_releasable_preamble = false;
         for data in events {
             let decision = inspect_codex_prelude_event(&data);
-            if !matches!(decision, CodexPreludeDecision::Pending) {
-                return decision;
+            match decision {
+                CodexPreludeDecision::Pending => {
+                    saw_releasable_preamble = true;
+                }
+                CodexPreludeDecision::RetryableError(message) => {
+                    return CodexPreludeDecision::RetryableError(message);
+                }
+                CodexPreludeDecision::ReadyForPassThrough => {
+                    return CodexPreludeDecision::ReadyForPassThrough;
+                }
             }
+        }
+        if saw_releasable_preamble {
+            return CodexPreludeDecision::ReadyForPassThrough;
         }
         CodexPreludeDecision::Pending
     }
@@ -154,6 +166,7 @@ where
     async fn step(mut self) -> Result<Option<(Bytes, Self)>, std::io::Error> {
         loop {
             if let Some(next) = self.out.pop_front() {
+                self.context.mark_first_client_flush();
                 return Ok(Some((next, self)));
             }
             if self.upstream_ended {
@@ -162,9 +175,7 @@ where
 
             match self.upstream.next().await {
                 Some(Ok(chunk)) => {
-                    if self.context.ttfb_ms.is_none() {
-                        self.context.ttfb_ms = Some(self.context.start.elapsed().as_millis());
-                    }
+                    self.context.mark_upstream_first_byte();
                     self.collector.push_chunk(&chunk);
                     let mut events = Vec::new();
                     self.parser.push_chunk(&chunk, |data| events.push(data));
@@ -223,15 +234,25 @@ where
         match event_type {
             "response.created" => {
                 self.update_from_created(&value);
+                self.push_preamble_keepalive();
+            }
+            "response.in_progress" => {
+                self.push_preamble_keepalive();
             }
             "response.output_text.delta" => {
                 if let Some(delta) = value.get("delta").and_then(Value::as_str) {
+                    if !delta.is_empty() {
+                        self.context.mark_first_output();
+                    }
                     token_texts.push(delta.to_string());
                     self.push_chunk(json!({ "role": "assistant", "content": delta }));
                 }
             }
             "response.reasoning_summary_text.delta" => {
                 if let Some(delta) = value.get("delta").and_then(Value::as_str) {
+                    if !delta.is_empty() {
+                        self.context.mark_first_output();
+                    }
                     token_texts.push(delta.to_string());
                     self.push_chunk(json!({ "role": "assistant", "reasoning_content": delta }));
                 }
@@ -296,7 +317,13 @@ where
             "type": "function",
             "function": { "name": restored, "arguments": arguments }
         });
+        self.context.mark_first_output();
         self.push_chunk(json!({ "role": "assistant", "tool_calls": [tool_call] }));
+    }
+
+    fn push_preamble_keepalive(&mut self) {
+        self.out
+            .push_back(Bytes::from(": token-proxy-codex-preamble\n\n"));
     }
 
     fn push_chunk(&mut self, delta: Value) {
@@ -434,6 +461,7 @@ where
     async fn step(mut self) -> Result<Option<(Bytes, Self)>, std::io::Error> {
         loop {
             if let Some(next) = self.out.pop_front() {
+                self.context.mark_first_client_flush();
                 return Ok(Some((next, self)));
             }
             if self.upstream_ended {
@@ -442,9 +470,7 @@ where
 
             match self.upstream.next().await {
                 Some(Ok(chunk)) => {
-                    if self.context.ttfb_ms.is_none() {
-                        self.context.ttfb_ms = Some(self.context.start.elapsed().as_millis());
-                    }
+                    self.context.mark_upstream_first_byte();
                     self.collector.push_chunk(&chunk);
                     let mut events = Vec::new();
                     self.parser.push_chunk(&chunk, |data| events.push(data));
@@ -517,6 +543,9 @@ where
             self.saw_terminal_event = true;
         }
         restore_tool_names_in_event(&mut value, &self.tool_name_map);
+        if is_codex_business_output_event(&value) {
+            self.context.mark_first_output();
+        }
         if let Some(delta) = extract_output_text_delta(&value) {
             token_texts.push(delta.to_string());
         }
@@ -721,6 +750,24 @@ fn extract_output_text_delta(value: &Value) -> Option<&str> {
         return None;
     }
     value.get("delta").and_then(Value::as_str)
+}
+
+fn is_codex_business_output_event(value: &Value) -> bool {
+    match value.get("type").and_then(Value::as_str) {
+        Some("response.output_text.delta" | "response.reasoning_summary_text.delta") => value
+            .get("delta")
+            .and_then(Value::as_str)
+            .is_some_and(|delta| !delta.is_empty()),
+        Some("response.output_item.done") => {
+            value
+                .get("item")
+                .and_then(Value::as_object)
+                .and_then(|item| item.get("type"))
+                .and_then(Value::as_str)
+                == Some("function_call")
+        }
+        _ => false,
+    }
 }
 
 fn chat_chunk_sse(

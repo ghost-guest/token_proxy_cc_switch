@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use super::types::InboundApiFormatMask;
 use super::{
     model_mapping::compile_model_mappings, HeaderOverride, InboundApiFormat, ProviderUpstreams,
-    UpstreamConfig, UpstreamGroup, UpstreamOverrides, UpstreamRuntime,
+    StaticApiKeyHeaders, UpstreamConfig, UpstreamGroup, UpstreamOverrides, UpstreamRuntime,
 };
 use axum::http::header::{HeaderName, HeaderValue};
 
@@ -134,11 +134,16 @@ fn normalize_single_upstream(
         }
 
         for (index, api_key) in api_keys.iter().enumerate() {
+            let api_key_headers = api_key
+                .as_deref()
+                .map(|key| StaticApiKeyHeaders::new(&upstream.id, key))
+                .transpose()?;
             let runtime = UpstreamRuntime {
                 id: upstream.id.trim().to_string(),
                 selector_key: build_selector_key(&upstream.id, api_keys.len(), index),
                 base_url: base_url.clone(),
                 api_key: api_key.clone(),
+                api_key_headers,
                 filter_prompt_cache_retention: upstream.filter_prompt_cache_retention,
                 filter_safety_identifier: upstream.filter_safety_identifier,
                 rewrite_developer_role_to_system: upstream.rewrite_developer_role_to_system,

@@ -72,6 +72,7 @@ pub(super) async fn build_proxy_response(
         request_headers,
         request_body,
         ttfb_ms: None,
+        timings: Default::default(),
         start,
     };
     let model_override = meta.model_override();
@@ -159,6 +160,7 @@ pub(super) async fn build_proxy_response_buffered(
         request_headers,
         request_body,
         ttfb_ms: None,
+        timings: Default::default(),
         start,
     };
     let model_override = meta.model_override();

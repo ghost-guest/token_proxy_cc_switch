@@ -458,6 +458,7 @@ async fn prepare_upstream_stream(
     loop {
         match upstream.next().await {
             Some(Ok(chunk)) => {
+                context.mark_upstream_first_byte();
                 buffered_chunks.push(chunk);
                 let latest = buffered_chunks.last().expect("buffered chunk just pushed");
                 if let Some(inspector) = codex_prelude.as_mut() {
@@ -516,9 +517,7 @@ fn codex_prelude_retry_response(
     context: &mut LogContext,
     log: &Arc<LogWriter>,
 ) -> Response {
-    if context.ttfb_ms.is_none() {
-        context.ttfb_ms = Some(context.start.elapsed().as_millis());
-    }
+    context.mark_upstream_first_byte();
     context.status = StatusCode::BAD_GATEWAY.as_u16();
     let empty_usage = UsageSnapshot {
         usage: None,
@@ -549,9 +548,7 @@ fn chain_buffered_chunks(
     upstream: UpstreamBytesStream,
     context: &mut LogContext,
 ) -> UpstreamBytesStream {
-    if context.ttfb_ms.is_none() {
-        context.ttfb_ms = Some(context.start.elapsed().as_millis());
-    }
+    context.mark_upstream_first_byte();
     futures_util::stream::iter(
         chunks
             .into_iter()
@@ -642,6 +639,88 @@ fn log_response_stream_if_debug(stream: ResponseStream) -> ResponseStream {
             item
         })
         .boxed()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderMap;
+    use futures_util::stream;
+    use std::io;
+    use tokio::time::sleep;
+
+    fn test_context() -> LogContext {
+        LogContext {
+            path: "/v1/responses".to_string(),
+            provider: PROVIDER_CODEX.to_string(),
+            upstream_id: "codex-test".to_string(),
+            account_id: Some("codex-a.json".to_string()),
+            model: Some("gpt-5.5".to_string()),
+            mapped_model: None,
+            stream: true,
+            status: 200,
+            upstream_request_id: None,
+            request_headers: None,
+            request_body: None,
+            ttfb_ms: None,
+            timings: Default::default(),
+            start: std::time::Instant::now(),
+        }
+    }
+
+    fn reqwest_response_from_delayed_chunks(
+        chunks: Vec<(Duration, &'static str)>,
+    ) -> reqwest::Response {
+        let stream = stream::unfold((0usize, chunks), |(index, chunks)| async move {
+            let (delay, chunk) = chunks.get(index)?;
+            sleep(*delay).await;
+            Some((
+                Ok::<Bytes, io::Error>(Bytes::from_static(chunk.as_bytes())),
+                (index + 1, chunks),
+            ))
+        });
+        let body = reqwest::Body::wrap_stream(stream);
+        axum::http::Response::builder()
+            .status(StatusCode::OK)
+            .body(body)
+            .expect("http response")
+            .into()
+    }
+
+    #[tokio::test]
+    async fn codex_prelude_releases_after_first_preamble_event() {
+        let upstream_res = reqwest_response_from_delayed_chunks(vec![
+            (
+                Duration::ZERO,
+                "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\"}}\n\n",
+            ),
+            (
+                Duration::from_millis(200),
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n",
+            ),
+        ]);
+        let mut context = test_context();
+        let log = Arc::new(LogWriter::new(None));
+
+        let prepared = tokio::time::timeout(
+            Duration::from_millis(80),
+            prepare_upstream_stream(
+                StatusCode::OK,
+                &HeaderMap::new(),
+                upstream_res,
+                FormatTransform::CodexToResponses,
+                &mut context,
+                &log,
+                Duration::from_secs(30),
+            ),
+        )
+        .await;
+
+        assert!(
+            prepared.is_ok(),
+            "Codex prelude should release before first output event"
+        );
+    }
 }
 
 fn stream_with_optional_model_override<E>(

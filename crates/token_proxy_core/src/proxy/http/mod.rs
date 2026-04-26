@@ -13,7 +13,7 @@ use reqwest::header::HeaderMap as ReqwestHeaderMap;
 use serde_json::json;
 
 use super::{
-    config::{ProxyConfig, UpstreamRuntime},
+    config::{ProxyConfig, StaticApiKeyHeaders, UpstreamRuntime},
     gemini,
     server_helpers::is_anthropic_path,
 };
@@ -280,23 +280,13 @@ pub(crate) fn resolve_upstream_auth(
 
     match provider {
         "anthropic" => {
-            if let Some(key) = upstream.api_key.as_ref() {
+            if let Some(api_key_headers) = resolve_static_api_key_headers(upstream)? {
                 tracing::debug!("using upstream.api_key for Anthropic");
                 if let Some(request_header) = request_auth.anthropic_request_auth.as_ref() {
                     let value = if request_header.name == AUTHORIZATION {
-                        bearer_header(key).ok_or_else(|| {
-                            error_response(
-                                StatusCode::UNAUTHORIZED,
-                                "Upstream API key contains invalid characters.",
-                            )
-                        })?
+                        api_key_headers.bearer()
                     } else {
-                        HeaderValue::from_str(key).map_err(|_| {
-                            error_response(
-                                StatusCode::UNAUTHORIZED,
-                                "Upstream API key contains invalid characters.",
-                            )
-                        })?
+                        api_key_headers.raw()
                     };
                     return Ok(Some(UpstreamAuthHeader {
                         name: request_header.name.clone(),
@@ -304,15 +294,9 @@ pub(crate) fn resolve_upstream_auth(
                     }));
                 }
 
-                let value = HeaderValue::from_str(key).map_err(|_| {
-                    error_response(
-                        StatusCode::UNAUTHORIZED,
-                        "Upstream API key contains invalid characters.",
-                    )
-                })?;
                 return Ok(Some(UpstreamAuthHeader {
                     name: HeaderName::from_static(X_API_KEY),
-                    value,
+                    value: api_key_headers.raw(),
                 }));
             }
 
@@ -339,17 +323,11 @@ pub(crate) fn resolve_upstream_auth(
             }))
         }
         _ => {
-            if let Some(key) = upstream.api_key.as_ref() {
+            if let Some(api_key_headers) = resolve_static_api_key_headers(upstream)? {
                 tracing::debug!(provider = %provider, "using upstream.api_key");
-                let value = bearer_header(key).ok_or_else(|| {
-                    error_response(
-                        StatusCode::UNAUTHORIZED,
-                        "Upstream API key contains invalid characters.",
-                    )
-                })?;
                 return Ok(Some(UpstreamAuthHeader {
                     name: AUTHORIZATION,
-                    value,
+                    value: api_key_headers.bearer(),
                 }));
             }
 
@@ -373,6 +351,25 @@ pub(crate) fn resolve_upstream_auth(
             Ok(None)
         }
     }
+}
+
+fn resolve_static_api_key_headers(
+    upstream: &UpstreamRuntime,
+) -> Result<Option<StaticApiKeyHeaders>, Response> {
+    if let Some(headers) = upstream.api_key_headers.as_ref() {
+        return Ok(Some(headers.clone()));
+    }
+    let Some(key) = upstream.api_key.as_deref() else {
+        return Ok(None);
+    };
+    StaticApiKeyHeaders::new(&upstream.id, key)
+        .map(Some)
+        .map_err(|_| {
+            error_response(
+                StatusCode::UNAUTHORIZED,
+                "Upstream API key contains invalid characters.",
+            )
+        })
 }
 
 pub(crate) fn bearer_header(value: &str) -> Option<HeaderValue> {

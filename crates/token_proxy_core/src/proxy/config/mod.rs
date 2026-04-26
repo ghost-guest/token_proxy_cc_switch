@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 const DEFAULT_MAX_REQUEST_BODY_BYTES: u64 = 20 * 1024 * 1024;
 const MIN_UPSTREAM_NO_DATA_TIMEOUT_SECS: u64 = 3;
 
+pub(crate) use types::StaticApiKeyHeaders;
 pub use types::{
     ConfigResponse, HeaderOverride, InboundApiFormat, KiroPreferredEndpoint, ProviderUpstreams,
     ProxyConfig, ProxyConfigFile, TrayTokenRateConfig, TrayTokenRateFormat, UpstreamConfig,

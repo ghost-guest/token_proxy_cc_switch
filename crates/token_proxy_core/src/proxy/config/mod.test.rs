@@ -248,6 +248,34 @@ fn build_runtime_config_expands_multiple_api_keys_into_multiple_runtime_upstream
 }
 
 #[test]
+fn build_runtime_config_rejects_api_key_that_cannot_be_precompiled_as_header() {
+    let mut config = ProxyConfigFile::default();
+    config.upstreams = vec![UpstreamConfig {
+        id: "bad-openai".to_string(),
+        providers: vec!["openai".to_string()],
+        base_url: "https://api.openai.com".to_string(),
+        api_keys: vec!["bad\nkey".to_string()],
+        filter_prompt_cache_retention: false,
+        filter_safety_identifier: false,
+        use_chat_completions_for_responses: false,
+        rewrite_developer_role_to_system: false,
+        kiro_account_id: None,
+        codex_account_id: None,
+        preferred_endpoint: None,
+        proxy_url: None,
+        priority: Some(0),
+        enabled: true,
+        model_mappings: HashMap::new(),
+        convert_from_map: HashMap::new(),
+        overrides: None,
+    }];
+
+    let result = build_runtime_config(config);
+
+    assert!(result.is_err());
+}
+
+#[test]
 fn build_runtime_config_rejects_unsupported_provider() {
     let mut config = ProxyConfigFile::default();
     config.upstreams = vec![UpstreamConfig {

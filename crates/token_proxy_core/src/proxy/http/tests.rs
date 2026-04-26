@@ -41,6 +41,7 @@ fn upstream_without_key() -> UpstreamRuntime {
         selector_key: "anthropic-test".to_string(),
         base_url: "https://api.anthropic.com".to_string(),
         api_key: None,
+        api_key_headers: None,
         filter_prompt_cache_retention: false,
         filter_safety_identifier: false,
         rewrite_developer_role_to_system: false,

@@ -4,13 +4,12 @@ use axum::{
 };
 use serde_json::{Map, Value};
 
+#[cfg(test)]
+use super::openai_compat::{PROVIDER_RESPONSES, RESPONSES_PATH};
 use super::{
     gemini,
     http_client::ProxyHttpClients,
-    openai_compat::{
-        transform_request_body, FormatTransform, CHAT_PATH, PROVIDER_CHAT, PROVIDER_RESPONSES,
-        RESPONSES_PATH,
-    },
+    openai_compat::{transform_request_body, FormatTransform, CHAT_PATH, PROVIDER_CHAT},
     request_body::ReplayableBody,
     request_token_estimate, RequestMeta,
 };
@@ -314,6 +313,7 @@ pub(crate) async fn maybe_force_openai_stream_options_include_usage(
     Ok(outbound_body)
 }
 
+#[cfg(test)]
 pub(crate) async fn maybe_rewrite_openai_reasoning_effort_from_model_suffix(
     provider: &str,
     outbound_path: &str,
@@ -369,11 +369,13 @@ pub(crate) async fn maybe_rewrite_openai_reasoning_effort_from_model_suffix(
     Ok(Some(ReplayableBody::from_bytes(outbound_bytes)))
 }
 
+#[cfg(test)]
 fn should_apply_openai_reasoning_effort(provider: &str, outbound_path: &str) -> bool {
     (provider == PROVIDER_CHAT && outbound_path == CHAT_PATH)
         || (provider == PROVIDER_RESPONSES && outbound_path == RESPONSES_PATH)
 }
 
+#[cfg(test)]
 fn apply_openai_reasoning_effort_to_body(
     provider: &str,
     outbound_path: &str,
@@ -399,6 +401,7 @@ fn apply_openai_reasoning_effort_to_body(
     }
 }
 
+#[cfg(test)]
 fn ensure_json_object_field<'a>(
     object: &'a mut Map<String, Value>,
     key: &str,

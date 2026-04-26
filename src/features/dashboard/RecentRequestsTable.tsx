@@ -198,9 +198,16 @@ function latencyColumn(): ColumnDef<DashboardRequestItem> {
     id: "latency",
     header: m.dashboard_table_latency_ms(),
     cell: ({ row }) => {
-      const latencyText = formatInteger(row.original.latencyMs);
+      const item = row.original;
+      const latencyText = formatInteger(item.latencyMs);
+      const tooltip = [
+        `${m.dashboard_table_latency_ms()}: ${latencyText}`,
+        `${m.logs_timing_upstream_first_byte_ms()}: ${formatOptionalLatency(item.upstreamFirstByteMs)}`,
+        `${m.logs_timing_first_client_flush_ms()}: ${formatOptionalLatency(item.firstClientFlushMs)}`,
+        `${m.logs_timing_first_output_ms()}: ${formatOptionalLatency(item.firstOutputMs)}`,
+      ].join("\n");
       return (
-        <CellTooltip content={latencyText}>
+        <CellTooltip content={tooltip}>
           <span className="block w-full truncate text-xs text-muted-foreground text-left">
             {latencyText}
           </span>
@@ -208,6 +215,10 @@ function latencyColumn(): ColumnDef<DashboardRequestItem> {
       );
     },
   };
+}
+
+function formatOptionalLatency(value: number | null | undefined) {
+  return value == null ? CELL_PLACEHOLDER : formatInteger(value);
 }
 
 function buildColumns(formatter: Intl.DateTimeFormat) {

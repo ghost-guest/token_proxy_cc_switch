@@ -21,6 +21,9 @@ export type RequestLogDetail = {
   totalTokens: number | null;
   cachedTokens: number | null;
   latencyMs: number;
+  upstreamFirstByteMs?: number | null;
+  firstClientFlushMs?: number | null;
+  firstOutputMs?: number | null;
   upstreamRequestId: string | null;
   // 详情扩展字段
   usageJson: string | null;

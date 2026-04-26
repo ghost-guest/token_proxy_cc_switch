@@ -154,6 +154,18 @@ function BasicInfoSection({ detail, formatter }: BasicInfoSectionProps) {
           label={m.dashboard_table_latency_ms()}
           value={formatInteger(detail.latencyMs)}
         />
+        <DetailField
+          label={m.logs_timing_upstream_first_byte_ms()}
+          value={formatOptionalInteger(detail.upstreamFirstByteMs)}
+        />
+        <DetailField
+          label={m.logs_timing_first_client_flush_ms()}
+          value={formatOptionalInteger(detail.firstClientFlushMs)}
+        />
+        <DetailField
+          label={m.logs_timing_first_output_ms()}
+          value={formatOptionalInteger(detail.firstOutputMs)}
+        />
         <DetailField label={m.logs_detail_upstream_request_id()} value={detail.upstreamRequestId} />
       </div>
     </div>
@@ -205,6 +217,9 @@ function formatDetailAsText(detail: RequestLogDetail, formatter: Intl.DateTimeFo
   lines.push(`${m.dashboard_table_status()}: ${detail.status}`);
   lines.push(`${m.logs_detail_stream()}: ${detail.stream ? m.logs_detail_stream_yes() : m.logs_detail_stream_no()}`);
   lines.push(`${m.dashboard_table_latency_ms()}: ${formatInteger(detail.latencyMs)}`);
+  lines.push(`${m.logs_timing_upstream_first_byte_ms()}: ${formatOptionalInteger(detail.upstreamFirstByteMs)}`);
+  lines.push(`${m.logs_timing_first_client_flush_ms()}: ${formatOptionalInteger(detail.firstClientFlushMs)}`);
+  lines.push(`${m.logs_timing_first_output_ms()}: ${formatOptionalInteger(detail.firstOutputMs)}`);
   lines.push(`${m.logs_detail_upstream_request_id()}: ${detail.upstreamRequestId?.trim() || DETAIL_PLACEHOLDER}`);
 
   if (detail.usageJson?.trim()) {
@@ -232,6 +247,10 @@ function formatDetailAsText(detail: RequestLogDetail, formatter: Intl.DateTimeFo
   }
 
   return lines.join("\n");
+}
+
+function formatOptionalInteger(value: number | null | undefined) {
+  return value == null ? DETAIL_PLACEHOLDER : formatInteger(value);
 }
 
 type RequestDetailSheetProps = {

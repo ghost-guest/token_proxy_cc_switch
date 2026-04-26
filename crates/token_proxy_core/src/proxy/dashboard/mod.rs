@@ -82,6 +82,9 @@ pub struct DashboardRequestItem {
     pub output_tokens: Option<u64>,
     pub cached_tokens: Option<u64>,
     pub latency_ms: u64,
+    pub upstream_first_byte_ms: Option<u64>,
+    pub first_client_flush_ms: Option<u64>,
+    pub first_output_ms: Option<u64>,
     pub upstream_request_id: Option<String>,
 }
 
@@ -639,6 +642,9 @@ SELECT
   output_tokens,
   cached_tokens,
   latency_ms,
+  upstream_first_byte_ms,
+  first_client_flush_ms,
+  first_output_ms,
   upstream_request_id
 FROM request_logs
 WHERE (?1 IS NULL OR ts_ms >= ?1)
@@ -676,6 +682,9 @@ LIMIT ?3 OFFSET ?4;
         let output_tokens: Option<i64> = row.try_get("output_tokens").ok()?;
         let cached_tokens: Option<i64> = row.try_get("cached_tokens").ok()?;
         let latency_ms: i64 = row.try_get("latency_ms").unwrap_or(0);
+        let upstream_first_byte_ms: Option<i64> = row.try_get("upstream_first_byte_ms").ok()?;
+        let first_client_flush_ms: Option<i64> = row.try_get("first_client_flush_ms").ok()?;
+        let first_output_ms: Option<i64> = row.try_get("first_output_ms").ok()?;
         let upstream_request_id: Option<String> = row.try_get("upstream_request_id").ok()?;
         Some(DashboardRequestItem {
             id: i64_to_u64(id),
@@ -692,6 +701,9 @@ LIMIT ?3 OFFSET ?4;
             output_tokens: output_tokens.map(i64_to_u64),
             cached_tokens: cached_tokens.map(i64_to_u64),
             latency_ms: i64_to_u64(latency_ms),
+            upstream_first_byte_ms: upstream_first_byte_ms.map(i64_to_u64),
+            first_client_flush_ms: first_client_flush_ms.map(i64_to_u64),
+            first_output_ms: first_output_ms.map(i64_to_u64),
             upstream_request_id,
         })
     })

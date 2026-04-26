@@ -21,6 +21,7 @@ fn stream_gemini_to_anthropic_emits_single_input_json_delta_for_tool_calls() {
             request_headers: None,
             request_body: None,
             ttfb_ms: None,
+            timings: Default::default(),
             start: Instant::now(),
         };
 
@@ -143,6 +144,7 @@ fn stream_responses_to_chat_persists_log_when_client_drops_stream_early() {
             request_headers: None,
             request_body: None,
             ttfb_ms: None,
+            timings: Default::default(),
             start: Instant::now(),
         };
         let upstream = futures_util::stream::iter(vec![
@@ -196,6 +198,7 @@ fn stream_responses_to_anthropic_emits_thinking_from_reasoning_summary_events() 
             request_headers: None,
             request_body: None,
             ttfb_ms: None,
+            timings: Default::default(),
             start: Instant::now(),
         };
 
@@ -270,6 +273,7 @@ fn stream_responses_to_anthropic_emits_redacted_thinking_from_encrypted_reasonin
             request_headers: None,
             request_body: None,
             ttfb_ms: None,
+            timings: Default::default(),
             start: Instant::now(),
         };
 
@@ -493,6 +497,7 @@ fn stream_anthropic_to_responses_emits_reasoning_summary_events_and_snapshot() {
             request_headers: None,
             request_body: None,
             ttfb_ms: None,
+            timings: Default::default(),
             start: Instant::now(),
         };
 
@@ -596,6 +601,7 @@ fn stream_anthropic_to_responses_maps_redacted_thinking_to_encrypted_reasoning()
             request_headers: None,
             request_body: None,
             ttfb_ms: None,
+            timings: Default::default(),
             start: Instant::now(),
         };
 
@@ -667,6 +673,7 @@ fn stream_anthropic_to_responses_maps_max_tokens_to_incomplete_event() {
             request_headers: None,
             request_body: None,
             ttfb_ms: None,
+            timings: Default::default(),
             start: Instant::now(),
         };
 
@@ -748,6 +755,7 @@ fn stream_chat_to_gemini_waits_for_complete_tool_call_arguments() {
             request_headers: None,
             request_body: None,
             ttfb_ms: None,
+            timings: Default::default(),
             start: Instant::now(),
         };
 

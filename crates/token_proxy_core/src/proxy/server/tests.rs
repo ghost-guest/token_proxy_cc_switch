@@ -84,6 +84,7 @@ fn config_with_runtime_upstreams(
             selector_key: (*id).to_string(),
             base_url: (*base_url).to_string(),
             api_key: Some("test-key".to_string()),
+            api_key_headers: None,
             filter_prompt_cache_retention: false,
             filter_safety_identifier: false,
             rewrite_developer_role_to_system: false,
@@ -4630,11 +4631,20 @@ fake-png-bytes\r\n\
         let _ = std::fs::remove_dir_all(&data_dir);
 
         assert_eq!(response_status, StatusCode::OK);
-        assert_eq!(response_json["data"][0]["b64_json"].as_str(), Some("ZmFrZS1pbWFnZS1kYXRh"));
+        assert_eq!(
+            response_json["data"][0]["b64_json"].as_str(),
+            Some("ZmFrZS1pbWFnZS1kYXRh")
+        );
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].path, "/v1/images/edits");
-        assert_eq!(requests[0].authorization.as_deref(), Some("Bearer test-key"));
-        assert_eq!(requests[0].content_type.as_deref(), Some(content_type.as_str()));
+        assert_eq!(
+            requests[0].authorization.as_deref(),
+            Some("Bearer test-key")
+        );
+        assert_eq!(
+            requests[0].content_type.as_deref(),
+            Some(content_type.as_str())
+        );
         assert_eq!(requests[0].body, Bytes::from(request_body));
     });
 }

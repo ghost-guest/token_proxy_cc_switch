@@ -80,9 +80,7 @@ where
     async fn step(mut self) -> Result<Option<(Bytes, Self)>, std::io::Error> {
         match self.upstream.next().await {
             Some(Ok(chunk)) => {
-                if self.context.ttfb_ms.is_none() {
-                    self.context.ttfb_ms = Some(self.context.start.elapsed().as_millis());
-                }
+                self.context.mark_upstream_first_byte();
                 self.collector.push_chunk(&chunk);
                 let provider = self.context.provider.as_str();
                 let mut texts = Vec::new();
@@ -92,8 +90,12 @@ where
                     }
                 });
                 for text in texts {
+                    if !text.is_empty() {
+                        self.context.mark_first_output();
+                    }
                     self.token_tracker.add_output_text(&text).await;
                 }
+                self.context.mark_first_client_flush();
                 Ok(Some((chunk, self)))
             }
             Some(Err(err)) => {
@@ -203,6 +205,7 @@ where
     async fn step(mut self) -> Result<Option<(Bytes, Self)>, std::io::Error> {
         loop {
             if let Some(next) = self.out.pop_front() {
+                self.context.mark_first_client_flush();
                 return Ok(Some((next, self)));
             }
             if self.upstream_ended {
@@ -212,9 +215,7 @@ where
 
             match self.upstream.next().await {
                 Some(Ok(chunk)) => {
-                    if self.context.ttfb_ms.is_none() {
-                        self.context.ttfb_ms = Some(self.context.start.elapsed().as_millis());
-                    }
+                    self.context.mark_upstream_first_byte();
                     self.collector.push_chunk(&chunk);
                     let mut events = Vec::new();
                     self.parser.push_chunk(&chunk, |data| events.push(data));
@@ -226,6 +227,9 @@ where
                         self.push_event_output(&data);
                     }
                     for text in texts {
+                        if !text.is_empty() {
+                            self.context.mark_first_output();
+                        }
                         self.token_tracker.add_output_text(&text).await;
                     }
                 }

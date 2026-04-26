@@ -21,6 +21,9 @@ pub struct RequestLogDetail {
     pub total_tokens: Option<i64>,
     pub cached_tokens: Option<i64>,
     pub latency_ms: i64,
+    pub upstream_first_byte_ms: Option<i64>,
+    pub first_client_flush_ms: Option<i64>,
+    pub first_output_ms: Option<i64>,
     pub upstream_request_id: Option<String>,
     // 详情扩展字段
     pub usage_json: Option<String>,
@@ -51,6 +54,9 @@ SELECT
   total_tokens,
   cached_tokens,
   latency_ms,
+  upstream_first_byte_ms,
+  first_client_flush_ms,
+  first_output_ms,
   upstream_request_id,
   usage_json,
   request_headers,
@@ -98,6 +104,18 @@ LIMIT 1;
             .ok()
             .flatten(),
         latency_ms: row.try_get::<i64, _>("latency_ms").unwrap_or_default(),
+        upstream_first_byte_ms: row
+            .try_get::<Option<i64>, _>("upstream_first_byte_ms")
+            .ok()
+            .flatten(),
+        first_client_flush_ms: row
+            .try_get::<Option<i64>, _>("first_client_flush_ms")
+            .ok()
+            .flatten(),
+        first_output_ms: row
+            .try_get::<Option<i64>, _>("first_output_ms")
+            .ok()
+            .flatten(),
         upstream_request_id: row
             .try_get::<Option<String>, _>("upstream_request_id")
             .ok()

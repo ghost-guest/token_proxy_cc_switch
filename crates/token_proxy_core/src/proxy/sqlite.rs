@@ -99,7 +99,10 @@ CREATE TABLE IF NOT EXISTS request_logs (
   request_headers TEXT,
   request_body TEXT,
   response_error TEXT,
-  latency_ms INTEGER NOT NULL
+  latency_ms INTEGER NOT NULL,
+  upstream_first_byte_ms INTEGER,
+  first_client_flush_ms INTEGER,
+  first_output_ms INTEGER
 );
 "#,
     )
@@ -240,6 +243,27 @@ async fn ensure_request_logs_columns(pool: &SqlitePool) -> Result<(), String> {
             .map_err(|err| format!("Failed to add account_id column: {err}"))?;
     }
 
+    if !columns.contains("upstream_first_byte_ms") {
+        sqlx::query("ALTER TABLE request_logs ADD COLUMN upstream_first_byte_ms INTEGER;")
+            .execute(pool)
+            .await
+            .map_err(|err| format!("Failed to add upstream_first_byte_ms column: {err}"))?;
+    }
+
+    if !columns.contains("first_client_flush_ms") {
+        sqlx::query("ALTER TABLE request_logs ADD COLUMN first_client_flush_ms INTEGER;")
+            .execute(pool)
+            .await
+            .map_err(|err| format!("Failed to add first_client_flush_ms column: {err}"))?;
+    }
+
+    if !columns.contains("first_output_ms") {
+        sqlx::query("ALTER TABLE request_logs ADD COLUMN first_output_ms INTEGER;")
+            .execute(pool)
+            .await
+            .map_err(|err| format!("Failed to add first_output_ms column: {err}"))?;
+    }
+
     Ok(())
 }
 
@@ -358,6 +382,29 @@ async fn migrate_provider_account_status(pool: &SqlitePool) -> Result<(), String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn request_logs_schema_includes_stream_timing_columns() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect sqlite");
+
+        init_schema(&pool).await.expect("init schema");
+
+        let columns = sqlx::query("PRAGMA table_info(request_logs);")
+            .fetch_all(&pool)
+            .await
+            .expect("read schema")
+            .into_iter()
+            .filter_map(|row| row.try_get::<String, _>("name").ok())
+            .collect::<std::collections::HashSet<_>>();
+
+        assert!(columns.contains("upstream_first_byte_ms"));
+        assert!(columns.contains("first_client_flush_ms"));
+        assert!(columns.contains("first_output_ms"));
+    }
 
     #[tokio::test]
     async fn init_schema_creates_provider_accounts_table() {

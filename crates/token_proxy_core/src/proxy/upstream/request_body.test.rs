@@ -12,6 +12,7 @@ fn test_upstream(
         selector_key: "test".to_string(),
         base_url: "https://api.openai.com".to_string(),
         api_key: None,
+        api_key_headers: None,
         filter_prompt_cache_retention,
         filter_safety_identifier,
         rewrite_developer_role_to_system,
@@ -251,4 +252,54 @@ async fn developer_role_rewrite_is_noop_for_bigmodel_responses_when_disabled() {
             Err(_) => panic!("rewrite result"),
         };
     assert!(rewritten.is_none());
+}
+
+#[tokio::test]
+async fn json_transform_pipeline_applies_reasoning_filters_and_role_rewrite_together() {
+    let upstream = test_upstream(true, true, true);
+    let meta = RequestMeta {
+        stream: true,
+        original_model: Some("gpt-5".to_string()),
+        mapped_model: None,
+        reasoning_effort: Some("high".to_string()),
+        estimated_input_tokens: None,
+    };
+    let body = ReplayableBody::from_bytes(Bytes::from_static(
+        br#"{"model":"gpt-5-reasoning-high","prompt_cache_retention":"24h","safety_identifier":"sid_1","input":[{"type":"message","role":"developer","content":[{"type":"input_text","text":"be precise"}]},{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]}"#,
+    ));
+
+    let rewritten = match build_json_transformed_body(
+        "openai-response",
+        &upstream,
+        "/v1/responses",
+        &body,
+        &meta,
+    )
+    .await
+    {
+        Ok(Some(value)) => value,
+        Ok(None) => panic!("combined transform should rewrite"),
+        Err(_) => panic!("transform result"),
+    };
+    let bytes = rewritten
+        .read_bytes_if_small(1024)
+        .await
+        .expect("read rewritten bytes")
+        .expect("rewritten body exists");
+    let value: Value = serde_json::from_slice(&bytes).expect("json");
+    let input = value["input"].as_array().expect("input");
+
+    assert_eq!(value.get("model").and_then(Value::as_str), Some("gpt-5"));
+    assert_eq!(
+        value
+            .get("reasoning")
+            .and_then(Value::as_object)
+            .and_then(|reasoning| reasoning.get("effort"))
+            .and_then(Value::as_str),
+        Some("high")
+    );
+    assert!(value.get("prompt_cache_retention").is_none());
+    assert!(value.get("safety_identifier").is_none());
+    assert_eq!(input[0]["role"], "system");
+    assert_eq!(input[1]["role"], "user");
 }

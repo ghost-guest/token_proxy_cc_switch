@@ -16,9 +16,7 @@ pub(super) async fn read_upstream_bytes_with_ttfb(
 
     while let Some(item) = upstream.next().await {
         let chunk = item?;
-        if context.ttfb_ms.is_none() {
-            context.ttfb_ms = Some(context.start.elapsed().as_millis());
-        }
+        context.mark_upstream_first_byte();
         out.extend_from_slice(chunk.as_ref());
     }
 

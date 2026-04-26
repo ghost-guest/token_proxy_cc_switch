@@ -96,7 +96,10 @@ async fn setup_test_db() -> SqlitePool {
             request_headers TEXT,
             request_body TEXT,
             response_error TEXT,
-            latency_ms INTEGER NOT NULL
+            latency_ms INTEGER NOT NULL,
+            upstream_first_byte_ms INTEGER,
+            first_client_flush_ms INTEGER,
+            first_output_ms INTEGER
         );
         "#,
     )

@@ -8,8 +8,7 @@ use tokio::sync::{Mutex, RwLock};
 use crate::app_proxy::AppProxyState;
 use crate::oauth_util::{
     decode_jwt_payload, expires_at_from_seconds, extract_chatgpt_account_id_from_jwt,
-    extract_email_from_jwt,
-    normalize_proxy_url, now_rfc3339, sanitize_id_part,
+    extract_email_from_jwt, normalize_proxy_url, now_rfc3339, sanitize_id_part,
 };
 use crate::paths::TokenProxyPaths;
 use crate::provider_accounts;

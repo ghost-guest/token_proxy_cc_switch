@@ -124,6 +124,7 @@ where
     async fn step(mut self) -> Result<Option<(Bytes, Self)>, std::io::Error> {
         loop {
             if let Some(next) = self.out.pop_front() {
+                self.context.mark_first_client_flush();
                 return Ok(Some((next, self)));
             }
 
@@ -133,9 +134,7 @@ where
 
             match self.upstream.next().await {
                 Some(Ok(chunk)) => {
-                    if self.context.ttfb_ms.is_none() {
-                        self.context.ttfb_ms = Some(self.context.start.elapsed().as_millis());
-                    }
+                    self.context.mark_upstream_first_byte();
                     self.collector.push_chunk(&chunk);
                     let mut events = Vec::new();
                     self.parser.push_chunk(&chunk, |data| events.push(data));
@@ -144,6 +143,9 @@ where
                         self.handle_event(&data, &mut texts);
                     }
                     for text in texts {
+                        if !text.is_empty() {
+                            self.context.mark_first_output();
+                        }
                         self.token_tracker.add_output_text(&text).await;
                     }
                 }

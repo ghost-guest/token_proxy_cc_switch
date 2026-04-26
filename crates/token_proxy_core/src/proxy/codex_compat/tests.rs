@@ -267,6 +267,7 @@ fn test_log_context() -> LogContext {
         request_headers: None,
         request_body: None,
         ttfb_ms: None,
+        timings: Default::default(),
         start: Instant::now(),
     }
 }

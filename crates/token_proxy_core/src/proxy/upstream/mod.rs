@@ -41,8 +41,6 @@ use super::{
     request_detail::RequestDetailSnapshot, ProxyState, RequestMeta,
 };
 
-const REQUEST_MODEL_MAPPING_LIMIT_BYTES: usize = 4 * 1024 * 1024;
-
 pub(super) async fn aggregate_model_catalog_request(
     state: Arc<ProxyState>,
     provider: &str,

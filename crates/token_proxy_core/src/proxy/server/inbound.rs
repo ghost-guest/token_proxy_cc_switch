@@ -203,6 +203,7 @@ pub(super) fn log_request_error(
         request_headers,
         request_body,
         ttfb_ms: None,
+        timings: Default::default(),
         start,
     };
     let usage = UsageSnapshot {
