@@ -37,6 +37,12 @@ struct LoggingStreamState<S> {
     logged: bool,
 }
 
+#[derive(Default)]
+struct StreamObservation {
+    starts_client_output: bool,
+    texts: Vec<String>,
+}
+
 impl<S> LoggingStreamState<S> {
     fn write_log_once(&mut self, response_error: Option<String>) {
         if self.logged {
@@ -83,16 +89,14 @@ where
                 self.context.mark_upstream_first_byte();
                 self.collector.push_chunk(&chunk);
                 let provider = self.context.provider.as_str();
-                let mut texts = Vec::new();
+                let mut observation = StreamObservation::default();
                 self.parser.push_chunk(&chunk, |data| {
-                    if let Some(text) = extract_stream_text(provider, &data) {
-                        texts.push(text);
-                    }
+                    observe_stream_data(provider, &data, &mut observation);
                 });
-                for text in texts {
-                    if !text.is_empty() {
-                        self.context.mark_first_output();
-                    }
+                if observation.starts_client_output {
+                    self.context.mark_first_output();
+                }
+                for text in observation.texts {
                     self.token_tracker.add_output_text(&text).await;
                 }
                 self.context.mark_first_client_flush();
@@ -100,13 +104,14 @@ where
             }
             Some(Err(err)) => {
                 let provider = self.context.provider.as_str();
-                let mut texts = Vec::new();
+                let mut observation = StreamObservation::default();
                 self.parser.finish(|data| {
-                    if let Some(text) = extract_stream_text(provider, &data) {
-                        texts.push(text);
-                    }
+                    observe_stream_data(provider, &data, &mut observation);
                 });
-                for text in texts {
+                if observation.starts_client_output {
+                    self.context.mark_first_output();
+                }
+                for text in observation.texts {
                     self.token_tracker.add_output_text(&text).await;
                 }
                 self.write_log_once(None);
@@ -114,13 +119,14 @@ where
             }
             None => {
                 let provider = self.context.provider.as_str();
-                let mut texts = Vec::new();
+                let mut observation = StreamObservation::default();
                 self.parser.finish(|data| {
-                    if let Some(text) = extract_stream_text(provider, &data) {
-                        texts.push(text);
-                    }
+                    observe_stream_data(provider, &data, &mut observation);
                 });
-                for text in texts {
+                if observation.starts_client_output {
+                    self.context.mark_first_output();
+                }
+                for text in observation.texts {
                     self.token_tracker.add_output_text(&text).await;
                 }
                 self.write_log_once(None);
@@ -219,17 +225,15 @@ where
                     self.collector.push_chunk(&chunk);
                     let mut events = Vec::new();
                     self.parser.push_chunk(&chunk, |data| events.push(data));
-                    let mut texts = Vec::new();
+                    let mut observation = StreamObservation::default();
                     for data in events {
-                        if let Some(text) = extract_stream_text(&self.context.provider, &data) {
-                            texts.push(text);
-                        }
+                        observe_stream_data(&self.context.provider, &data, &mut observation);
                         self.push_event_output(&data);
                     }
-                    for text in texts {
-                        if !text.is_empty() {
-                            self.context.mark_first_output();
-                        }
+                    if observation.starts_client_output {
+                        self.context.mark_first_output();
+                    }
+                    for text in observation.texts {
                         self.token_tracker.add_output_text(&text).await;
                     }
                 }
@@ -241,14 +245,15 @@ where
                     self.upstream_ended = true;
                     let mut events = Vec::new();
                     self.parser.finish(|data| events.push(data));
-                    let mut texts = Vec::new();
+                    let mut observation = StreamObservation::default();
                     for data in events {
-                        if let Some(text) = extract_stream_text(&self.context.provider, &data) {
-                            texts.push(text);
-                        }
+                        observe_stream_data(&self.context.provider, &data, &mut observation);
                         self.push_event_output(&data);
                     }
-                    for text in texts {
+                    if observation.starts_client_output {
+                        self.context.mark_first_output();
+                    }
+                    for text in observation.texts {
                         self.token_tracker.add_output_text(&text).await;
                     }
                 }
@@ -273,23 +278,47 @@ fn rewrite_sse_data(data: &str, model_override: &str) -> String {
         .unwrap_or_else(|| data.to_string())
 }
 
-fn extract_stream_text(provider: &str, data: &str) -> Option<String> {
+fn observe_stream_data(provider: &str, data: &str, observation: &mut StreamObservation) {
     if data == "[DONE]" {
-        return None;
+        return;
     }
     let Ok(value) = serde_json::from_str::<Value>(data) else {
-        return None;
+        return;
     };
+    if openai_responses_data_starts_client_output(provider, &value) {
+        observation.starts_client_output = true;
+    }
+    if let Some(text) = extract_stream_text_from_value(provider, &value) {
+        if !text.is_empty() {
+            observation.starts_client_output = true;
+        }
+        observation.texts.push(text);
+    }
+}
 
+fn extract_stream_text_from_value(provider: &str, value: &Value) -> Option<String> {
     match provider {
         PROVIDER_OPENAI | PROVIDER_OPENAI_RESPONSES | PROVIDER_CODEX => {
-            extract_openai_stream_text(&value)
+            extract_openai_stream_text(value)
         }
-        PROVIDER_ANTHROPIC => extract_anthropic_stream_text(&value),
-        PROVIDER_GEMINI => extract_gemini_stream_text(&value),
+        PROVIDER_ANTHROPIC => extract_anthropic_stream_text(value),
+        PROVIDER_GEMINI => extract_gemini_stream_text(value),
         _ => None,
     }
-    .or_else(|| extract_fallback_stream_text(&value))
+    .or_else(|| extract_fallback_stream_text(value))
+}
+
+fn openai_responses_data_starts_client_output(provider: &str, value: &Value) -> bool {
+    if !matches!(provider, PROVIDER_OPENAI_RESPONSES | PROVIDER_CODEX) {
+        return false;
+    }
+    let Some(event_type) = value.get("type").and_then(Value::as_str) else {
+        return false;
+    };
+    !matches!(
+        event_type.trim(),
+        "" | "response.created" | "response.in_progress" | "response.failed" | "error"
+    )
 }
 
 fn extract_openai_stream_text(value: &Value) -> Option<String> {

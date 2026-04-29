@@ -8,7 +8,7 @@ use super::utils::{is_retryable_error, is_retryable_status, sanitize_upstream_er
 use super::AttemptOutcome;
 use crate::proxy::config::ProviderUpstreams;
 use crate::proxy::http;
-use crate::proxy::log::{build_log_entry, LogContext, LogWriter, UsageSnapshot};
+use crate::proxy::log::{build_log_entry, LogContext, LogWriter, RequestTimings, UsageSnapshot};
 use crate::proxy::openai_compat::FormatTransform;
 use crate::proxy::request_detail::RequestDetailSnapshot;
 use crate::proxy::response::{
@@ -48,6 +48,7 @@ pub(super) async fn handle_upstream_result(
     log: Arc<LogWriter>,
     token_rate: Arc<TokenRateTracker>,
     start_time: Instant,
+    timings: RequestTimings,
     client_gemini_api_key: Option<&str>,
     response_transform: FormatTransform,
     request_detail: Option<RequestDetailSnapshot>,
@@ -74,6 +75,7 @@ pub(super) async fn handle_upstream_result(
                 log,
                 token_rate,
                 start_time,
+                timings.clone(),
                 &proxy_base_url,
                 client_gemini_api_key,
                 response_transform,
@@ -101,6 +103,7 @@ pub(super) async fn handle_upstream_result(
                 log,
                 token_rate,
                 start_time,
+                timings,
                 &proxy_base_url,
                 client_gemini_api_key,
                 response_transform,

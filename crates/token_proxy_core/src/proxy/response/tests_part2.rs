@@ -1,9 +1,48 @@
 use axum::body::Bytes;
 use futures_util::StreamExt;
 use serde_json::{json, Value};
+use sqlx::Row;
 use std::{sync::Arc, time::Instant};
 
 use crate::proxy::log::{LogContext, LogWriter};
+
+#[test]
+fn stream_with_logging_marks_first_output_on_responses_non_preamble_event() {
+    super::run_async(async {
+        let (log, context, sqlite_pool) = super::setup_responses_stream().await;
+        let upstream = futures_util::stream::iter(vec![
+            Ok::<Bytes, std::io::Error>(Bytes::from(
+                "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\"}}\n\n",
+            )),
+            Ok(Bytes::from(
+                "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"reasoning\",\"id\":\"rs_1\"}}\n\n",
+            )),
+            Ok(Bytes::from("data: [DONE]\n\n")),
+        ]);
+        let token_tracker = crate::proxy::token_rate::TokenRateTracker::new()
+            .register(None, None)
+            .await;
+        let chunks: Vec<Bytes> =
+            super::super::streaming::stream_with_logging(upstream, context, log, token_tracker)
+                .map(|item| item.expect("stream item"))
+                .collect()
+                .await;
+
+        assert_eq!(chunks.len(), 3);
+        super::wait_for_log_rows(&sqlite_pool, 1).await;
+        let row = sqlx::query("SELECT first_output_ms FROM request_logs ORDER BY id LIMIT 1")
+            .fetch_one(&sqlite_pool)
+            .await
+            .expect("request log row");
+        let first_output_ms = row
+            .try_get::<Option<i64>, _>("first_output_ms")
+            .expect("first_output_ms");
+        assert!(
+            first_output_ms.is_some(),
+            "first non-preamble Responses event should count as client output"
+        );
+    });
+}
 
 #[test]
 fn stream_gemini_to_anthropic_emits_single_input_json_delta_for_tool_calls() {

@@ -6,6 +6,7 @@ use super::kiro_result::{finalize_response, handle_response_action, ResponseActi
 use super::AttemptOutcome;
 use crate::proxy::http;
 use crate::proxy::kiro::KiroEndpointConfig;
+use crate::proxy::log::RequestTimings;
 use crate::proxy::openai_compat::FormatTransform;
 use crate::proxy::request_body::ReplayableBody;
 use crate::proxy::{config::UpstreamRuntime, request_detail::RequestDetailSnapshot};
@@ -159,7 +160,7 @@ async fn attempt_endpoint(
     };
 
     for attempt in 0..=MAX_KIRO_RETRIES {
-        let (response, start_time) =
+        let (response, start_time, timings) =
             match send_endpoint_request(context, endpoint, &payload.payload).await {
                 Ok(result) => result,
                 Err(outcome) => return EndpointOutcome::Done(outcome),
@@ -191,6 +192,7 @@ async fn attempt_endpoint(
                         response,
                         false,
                         start_time,
+                        timings,
                     )
                     .await,
                 );
@@ -209,8 +211,9 @@ async fn send_endpoint_request(
     context: &KiroContext<'_>,
     endpoint: &KiroEndpointConfig,
     payload: &[u8],
-) -> Result<(reqwest::Response, Instant), AttemptOutcome> {
+) -> Result<(reqwest::Response, Instant, RequestTimings), AttemptOutcome> {
     let start_time = Instant::now();
+    let timings = RequestTimings::default();
     let response = match send_kiro_request(
         &context.client,
         context.method.clone(),
@@ -224,7 +227,10 @@ async fn send_endpoint_request(
     )
     .await
     {
-        Ok(response) => response,
+        Ok(response) => {
+            timings.mark_upstream_response_headers(start_time.elapsed().as_millis());
+            response
+        }
         Err(err) => {
             let outcome = handle_send_error(
                 context.state,
@@ -241,7 +247,7 @@ async fn send_endpoint_request(
             return Err(outcome);
         }
     };
-    Ok((response, start_time))
+    Ok((response, start_time, timings))
 }
 
 fn should_failover_kiro_account(outcome: &AttemptOutcome) -> bool {

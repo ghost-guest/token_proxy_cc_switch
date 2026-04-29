@@ -7,12 +7,14 @@ use super::super::{
 };
 use super::{attempt, result, AttemptOutcome};
 use crate::proxy::http;
+use crate::proxy::log::RequestTimings;
 
 pub(super) struct UpstreamAttempt {
     pub(super) response: reqwest::Response,
     pub(super) selected_account_id: Option<String>,
     pub(super) meta: RequestMeta,
     pub(super) start_time: std::time::Instant,
+    pub(super) timings: RequestTimings,
 }
 
 pub(super) struct UpstreamAttemptFailure {
@@ -107,6 +109,7 @@ pub(super) async fn finalize_attempt(
         state.log.clone(),
         state.token_rate.clone(),
         attempt.start_time,
+        attempt.timings,
         client_gemini_api_key,
         response_transform,
         request_detail,

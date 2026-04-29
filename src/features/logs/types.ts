@@ -22,6 +22,8 @@ export type RequestLogDetail = {
   cachedTokens: number | null;
   latencyMs: number;
   upstreamFirstByteMs?: number | null;
+  upstreamResponseHeadersMs?: number | null;
+  upstreamFirstBodyChunkMs?: number | null;
   firstClientFlushMs?: number | null;
   firstOutputMs?: number | null;
   upstreamRequestId: string | null;

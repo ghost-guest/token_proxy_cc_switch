@@ -22,6 +22,8 @@ pub struct RequestLogDetail {
     pub cached_tokens: Option<i64>,
     pub latency_ms: i64,
     pub upstream_first_byte_ms: Option<i64>,
+    pub upstream_response_headers_ms: Option<i64>,
+    pub upstream_first_body_chunk_ms: Option<i64>,
     pub first_client_flush_ms: Option<i64>,
     pub first_output_ms: Option<i64>,
     pub upstream_request_id: Option<String>,
@@ -55,6 +57,8 @@ SELECT
   cached_tokens,
   latency_ms,
   upstream_first_byte_ms,
+  upstream_response_headers_ms,
+  COALESCE(upstream_first_body_chunk_ms, upstream_first_byte_ms) AS upstream_first_body_chunk_ms,
   first_client_flush_ms,
   first_output_ms,
   upstream_request_id,
@@ -106,6 +110,14 @@ LIMIT 1;
         latency_ms: row.try_get::<i64, _>("latency_ms").unwrap_or_default(),
         upstream_first_byte_ms: row
             .try_get::<Option<i64>, _>("upstream_first_byte_ms")
+            .ok()
+            .flatten(),
+        upstream_response_headers_ms: row
+            .try_get::<Option<i64>, _>("upstream_response_headers_ms")
+            .ok()
+            .flatten(),
+        upstream_first_body_chunk_ms: row
+            .try_get::<Option<i64>, _>("upstream_first_body_chunk_ms")
             .ok()
             .flatten(),
         first_client_flush_ms: row

@@ -88,7 +88,8 @@ describe("dashboard/RecentRequestsTable", () => {
               outputTokens: 20,
               cachedTokens: 5,
               latencyMs: 30,
-              upstreamFirstByteMs: 12,
+              upstreamResponseHeadersMs: 12,
+              upstreamFirstBodyChunkMs: 18,
               upstreamRequestId: null,
             },
           ]}
@@ -109,7 +110,7 @@ describe("dashboard/RecentRequestsTable", () => {
     expect(headerGrid?.className).not.toContain("1fr");
   });
 
-  it("shows upstream first-byte latency as the default latency value", async () => {
+  it("shows upstream response-header latency as the default latency value", async () => {
     const user = userEvent.setup();
 
     render(
@@ -133,6 +134,8 @@ describe("dashboard/RecentRequestsTable", () => {
               cachedTokens: 5,
               latencyMs: 30,
               upstreamFirstByteMs: 12,
+              upstreamResponseHeadersMs: 8,
+              upstreamFirstBodyChunkMs: 12,
               firstClientFlushMs: 18,
               firstOutputMs: 24,
               upstreamRequestId: null,
@@ -142,14 +145,15 @@ describe("dashboard/RecentRequestsTable", () => {
       </I18nProvider>,
     );
 
-    expect(screen.getByText("First byte latency (ms)")).toBeInTheDocument();
-    expect(screen.getByText("12")).toBeInTheDocument();
+    expect(screen.getByText("Upstream response headers (ms)")).toBeInTheDocument();
+    expect(screen.getByText("8")).toBeInTheDocument();
     expect(screen.queryByText("30")).toBeNull();
 
-    await user.hover(screen.getByText("12"));
+    await user.hover(screen.getByText("8"));
     const tooltip = await screen.findByRole("tooltip");
     expect(tooltip).toHaveTextContent(`${m.dashboard_table_latency_ms()}: 30`);
-    expect(tooltip).toHaveTextContent(`${m.logs_timing_upstream_first_byte_ms()}: 12`);
+    expect(tooltip).toHaveTextContent(`${m.logs_timing_upstream_response_headers_ms()}: 8`);
+    expect(tooltip).toHaveTextContent(`${m.logs_timing_upstream_first_body_chunk_ms()}: 12`);
   });
 
   it("shows output tokens directly in the tokens column", async () => {

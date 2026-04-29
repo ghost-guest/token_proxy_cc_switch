@@ -101,6 +101,8 @@ CREATE TABLE IF NOT EXISTS request_logs (
   response_error TEXT,
   latency_ms INTEGER NOT NULL,
   upstream_first_byte_ms INTEGER,
+  upstream_response_headers_ms INTEGER,
+  upstream_first_body_chunk_ms INTEGER,
   first_client_flush_ms INTEGER,
   first_output_ms INTEGER
 );
@@ -248,6 +250,20 @@ async fn ensure_request_logs_columns(pool: &SqlitePool) -> Result<(), String> {
             .execute(pool)
             .await
             .map_err(|err| format!("Failed to add upstream_first_byte_ms column: {err}"))?;
+    }
+
+    if !columns.contains("upstream_response_headers_ms") {
+        sqlx::query("ALTER TABLE request_logs ADD COLUMN upstream_response_headers_ms INTEGER;")
+            .execute(pool)
+            .await
+            .map_err(|err| format!("Failed to add upstream_response_headers_ms column: {err}"))?;
+    }
+
+    if !columns.contains("upstream_first_body_chunk_ms") {
+        sqlx::query("ALTER TABLE request_logs ADD COLUMN upstream_first_body_chunk_ms INTEGER;")
+            .execute(pool)
+            .await
+            .map_err(|err| format!("Failed to add upstream_first_body_chunk_ms column: {err}"))?;
     }
 
     if !columns.contains("first_client_flush_ms") {
@@ -402,6 +418,8 @@ mod tests {
             .collect::<std::collections::HashSet<_>>();
 
         assert!(columns.contains("upstream_first_byte_ms"));
+        assert!(columns.contains("upstream_response_headers_ms"));
+        assert!(columns.contains("upstream_first_body_chunk_ms"));
         assert!(columns.contains("first_client_flush_ms"));
         assert!(columns.contains("first_output_ms"));
     }

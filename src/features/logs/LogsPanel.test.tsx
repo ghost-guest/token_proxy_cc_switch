@@ -469,13 +469,13 @@ describe("logs/LogsPanel", () => {
     });
 
     const statusLabel = await screen.findByText(m.dashboard_table_status());
-    expect(statusLabel.closest("div")).toHaveClass("grid", "grid-cols-[5rem_minmax(0,1fr)]");
+    expect(statusLabel.closest("div")).toHaveClass("grid", "grid-cols-[11rem_minmax(0,1fr)]");
 
     const statusValue = screen.getByText("200");
     expect(statusValue).toHaveClass("justify-self-start");
 
     const latencyLabel = screen.getByText(m.dashboard_table_latency_ms());
-    expect(latencyLabel.closest("div")).toHaveClass("grid", "grid-cols-[5rem_minmax(0,1fr)]");
+    expect(latencyLabel.closest("div")).toHaveClass("grid", "grid-cols-[11rem_minmax(0,1fr)]");
   });
 
 });

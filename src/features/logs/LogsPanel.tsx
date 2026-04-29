@@ -43,8 +43,8 @@ import { m } from "@/paraglide/messages.js";
 const DETAIL_PLACEHOLDER = "—";
 const REQUEST_DETAIL_CAPTURE_EVENT = "request-detail-capture-changed";
 const CAPTURE_COUNTDOWN_TICK_MS = 1_000;
-const DETAIL_FIELD_ROW_CLASS = "grid grid-cols-[5rem_minmax(0,1fr)] items-start gap-x-3 py-1";
-const DETAIL_FIELD_LABEL_CLASS = "text-xs text-muted-foreground";
+const DETAIL_FIELD_ROW_CLASS = "grid grid-cols-[11rem_minmax(0,1fr)] items-start gap-x-3 py-1";
+const DETAIL_FIELD_LABEL_CLASS = "text-xs leading-snug text-muted-foreground";
 const DETAIL_FIELD_VALUE_CLASS = "min-w-0 text-sm text-foreground justify-self-start";
 const IDLE_CAPTURE_STATE: RequestDetailCaptureState = {
   enabled: false,
@@ -155,8 +155,12 @@ function BasicInfoSection({ detail, formatter }: BasicInfoSectionProps) {
           value={formatInteger(detail.latencyMs)}
         />
         <DetailField
-          label={m.logs_timing_upstream_first_byte_ms()}
-          value={formatOptionalInteger(detail.upstreamFirstByteMs)}
+          label={m.logs_timing_upstream_response_headers_ms()}
+          value={formatOptionalInteger(detail.upstreamResponseHeadersMs)}
+        />
+        <DetailField
+          label={m.logs_timing_upstream_first_body_chunk_ms()}
+          value={formatOptionalInteger(detail.upstreamFirstBodyChunkMs ?? detail.upstreamFirstByteMs)}
         />
         <DetailField
           label={m.logs_timing_first_client_flush_ms()}
@@ -217,7 +221,8 @@ function formatDetailAsText(detail: RequestLogDetail, formatter: Intl.DateTimeFo
   lines.push(`${m.dashboard_table_status()}: ${detail.status}`);
   lines.push(`${m.logs_detail_stream()}: ${detail.stream ? m.logs_detail_stream_yes() : m.logs_detail_stream_no()}`);
   lines.push(`${m.dashboard_table_latency_ms()}: ${formatInteger(detail.latencyMs)}`);
-  lines.push(`${m.logs_timing_upstream_first_byte_ms()}: ${formatOptionalInteger(detail.upstreamFirstByteMs)}`);
+  lines.push(`${m.logs_timing_upstream_response_headers_ms()}: ${formatOptionalInteger(detail.upstreamResponseHeadersMs)}`);
+  lines.push(`${m.logs_timing_upstream_first_body_chunk_ms()}: ${formatOptionalInteger(detail.upstreamFirstBodyChunkMs ?? detail.upstreamFirstByteMs)}`);
   lines.push(`${m.logs_timing_first_client_flush_ms()}: ${formatOptionalInteger(detail.firstClientFlushMs)}`);
   lines.push(`${m.logs_timing_first_output_ms()}: ${formatOptionalInteger(detail.firstOutputMs)}`);
   lines.push(`${m.logs_detail_upstream_request_id()}: ${detail.upstreamRequestId?.trim() || DETAIL_PLACEHOLDER}`);

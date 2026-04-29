@@ -8,6 +8,7 @@ use super::retry::{
 };
 use super::transport::send_upstream_request;
 use super::{AttemptOutcome, PreparedUpstreamRequest};
+use crate::proxy::log::RequestTimings;
 use crate::proxy::openai_compat::FormatTransform;
 use crate::proxy::request_body::ReplayableBody;
 use crate::proxy::request_detail::RequestDetailSnapshot;
@@ -147,6 +148,7 @@ pub(super) async fn attempt_send(
         meta,
     } = prepared;
     let start_time = Instant::now();
+    let timings = RequestTimings::default();
     let response = send_upstream_request(
         state,
         method,
@@ -162,6 +164,7 @@ pub(super) async fn attempt_send(
         selected_account_id.as_deref(),
         request_detail,
         start_time,
+        timings.clone(),
     )
     .await
     .map_err(|outcome| UpstreamAttemptFailure {
@@ -173,5 +176,6 @@ pub(super) async fn attempt_send(
         selected_account_id,
         meta,
         start_time,
+        timings,
     })
 }

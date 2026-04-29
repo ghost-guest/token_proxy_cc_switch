@@ -85,6 +85,8 @@ pub struct DashboardRequestItem {
     pub cached_tokens: Option<u64>,
     pub latency_ms: u64,
     pub upstream_first_byte_ms: Option<u64>,
+    pub upstream_response_headers_ms: Option<u64>,
+    pub upstream_first_body_chunk_ms: Option<u64>,
     pub first_client_flush_ms: Option<u64>,
     pub first_output_ms: Option<u64>,
     pub upstream_request_id: Option<String>,
@@ -647,6 +649,8 @@ SELECT
   cached_tokens,
   latency_ms,
   upstream_first_byte_ms,
+  upstream_response_headers_ms,
+  COALESCE(upstream_first_body_chunk_ms, upstream_first_byte_ms) AS upstream_first_body_chunk_ms,
   first_client_flush_ms,
   first_output_ms,
   upstream_request_id
@@ -687,6 +691,10 @@ LIMIT ?3 OFFSET ?4;
         let cached_tokens: Option<i64> = row.try_get("cached_tokens").ok()?;
         let latency_ms: i64 = row.try_get("latency_ms").unwrap_or(0);
         let upstream_first_byte_ms: Option<i64> = row.try_get("upstream_first_byte_ms").ok()?;
+        let upstream_response_headers_ms: Option<i64> =
+            row.try_get("upstream_response_headers_ms").ok()?;
+        let upstream_first_body_chunk_ms: Option<i64> =
+            row.try_get("upstream_first_body_chunk_ms").ok()?;
         let first_client_flush_ms: Option<i64> = row.try_get("first_client_flush_ms").ok()?;
         let first_output_ms: Option<i64> = row.try_get("first_output_ms").ok()?;
         let upstream_request_id: Option<String> = row.try_get("upstream_request_id").ok()?;
@@ -706,6 +714,8 @@ LIMIT ?3 OFFSET ?4;
             cached_tokens: cached_tokens.map(i64_to_u64),
             latency_ms: i64_to_u64(latency_ms),
             upstream_first_byte_ms: upstream_first_byte_ms.map(i64_to_u64),
+            upstream_response_headers_ms: upstream_response_headers_ms.map(i64_to_u64),
+            upstream_first_body_chunk_ms: upstream_first_body_chunk_ms.map(i64_to_u64),
             first_client_flush_ms: first_client_flush_ms.map(i64_to_u64),
             first_output_ms: first_output_ms.map(i64_to_u64),
             upstream_request_id,

@@ -10,6 +10,7 @@ use super::retry::mark_account_retryable_failure;
 use super::utils::{is_retryable_error, sanitize_upstream_error};
 use super::AttemptOutcome;
 use crate::proxy::http;
+use crate::proxy::log::RequestTimings;
 use crate::proxy::request_body::ReplayableBody;
 use crate::proxy::request_detail::RequestDetailSnapshot;
 use crate::proxy::server_helpers::log_debug_headers_body;
@@ -32,6 +33,7 @@ pub(super) async fn send_upstream_request(
     selected_account_id: Option<&str>,
     request_detail: Option<&RequestDetailSnapshot>,
     start_time: Instant,
+    timings: RequestTimings,
 ) -> Result<reqwest::Response, AttemptOutcome> {
     if provider == "codex" {
         return send_codex_request(
@@ -49,6 +51,7 @@ pub(super) async fn send_upstream_request(
             selected_account_id,
             request_detail,
             start_time,
+            timings,
         )
         .await;
     }
@@ -67,6 +70,7 @@ pub(super) async fn send_upstream_request(
         selected_account_id,
         request_detail,
         start_time,
+        timings,
     )
     .await
 }
@@ -86,6 +90,7 @@ async fn send_codex_request(
     selected_account_id: Option<&str>,
     request_detail: Option<&RequestDetailSnapshot>,
     start_time: Instant,
+    timings: RequestTimings,
 ) -> Result<reqwest::Response, AttemptOutcome> {
     send_codex_with_fallback(
         state,
@@ -101,6 +106,7 @@ async fn send_codex_request(
         selected_account_id,
         request_detail,
         start_time,
+        timings,
         proxy_url,
     )
     .await
@@ -121,6 +127,7 @@ async fn send_upstream_request_once(
     selected_account_id: Option<&str>,
     request_detail: Option<&RequestDetailSnapshot>,
     start_time: Instant,
+    timings: RequestTimings,
 ) -> Result<reqwest::Response, AttemptOutcome> {
     log_debug_headers_body(
         "upstream.request",
@@ -145,6 +152,8 @@ async fn send_upstream_request_once(
         request_headers,
         upstream_body,
         state.config.upstream_no_data_timeout,
+        start_time,
+        timings,
     )
     .await
     {
@@ -187,6 +196,7 @@ async fn send_codex_with_fallback(
     selected_account_id: Option<&str>,
     request_detail: Option<&RequestDetailSnapshot>,
     start_time: Instant,
+    timings: RequestTimings,
     proxy_url: Option<&str>,
 ) -> Result<reqwest::Response, AttemptOutcome> {
     // Codex 代理回退：socks5h / http1_only，缓解 DNS/ALPN/TLS 兼容问题。
@@ -207,6 +217,7 @@ async fn send_codex_with_fallback(
             selected_account_id,
             request_detail,
             start_time,
+            timings.clone(),
             &attempt,
         )
         .await
@@ -243,6 +254,7 @@ async fn send_codex_attempt(
     selected_account_id: Option<&str>,
     request_detail: Option<&RequestDetailSnapshot>,
     start_time: Instant,
+    timings: RequestTimings,
     attempt: &CodexSendAttempt,
 ) -> Result<reqwest::Response, CodexAttemptError> {
     log_debug_headers_body(
@@ -272,6 +284,8 @@ async fn send_codex_attempt(
         request_headers,
         upstream_body,
         state.config.upstream_no_data_timeout,
+        start_time,
+        timings,
     )
     .await
     {
@@ -342,6 +356,8 @@ async fn send_request_once(
     request_headers: &HeaderMap,
     upstream_body: reqwest::Body,
     upstream_no_data_timeout: Duration,
+    start_time: Instant,
+    timings: RequestTimings,
 ) -> Result<reqwest::Response, SendFailure> {
     let upstream_response = timeout(
         upstream_no_data_timeout,
@@ -353,7 +369,10 @@ async fn send_request_once(
     )
     .await;
     match upstream_response {
-        Ok(Ok(response)) => Ok(response),
+        Ok(Ok(response)) => {
+            timings.mark_upstream_response_headers(start_time.elapsed().as_millis());
+            Ok(response)
+        }
         Ok(Err(err)) => Err(SendFailure::Transport(err)),
         Err(_) => Err(SendFailure::Timeout),
     }

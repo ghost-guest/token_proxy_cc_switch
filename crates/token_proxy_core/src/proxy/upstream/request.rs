@@ -1,5 +1,5 @@
 use axum::http::{
-    header::{HeaderName, HeaderValue, CONTENT_LENGTH, HOST},
+    header::{HeaderName, HeaderValue, ACCEPT_ENCODING, CONTENT_LENGTH, HOST},
     HeaderMap, StatusCode,
 };
 use url::Url;
@@ -21,6 +21,7 @@ const DEFAULT_ANTHROPIC_VERSION: &str = "2023-06-01";
 const GEMINI_API_KEY_QUERY: &str = "key";
 const GEMINI_PROXY_UPLOAD_TARGET_QUERY: &str = "tp_upload_target";
 const GEMINI_API_KEY_HEADER: HeaderName = HeaderName::from_static("x-goog-api-key");
+const IDENTITY_ACCEPT_ENCODING: &str = "identity";
 
 pub(super) fn split_path_query(path_with_query: &str) -> (&str, Option<&str>) {
     match path_with_query.split_once('?') {
@@ -57,7 +58,15 @@ pub(super) fn build_request_headers(
     if let Some(overrides) = header_overrides {
         apply_header_overrides(&mut request_headers, overrides);
     }
+    enforce_identity_accept_encoding(&mut request_headers);
     request_headers
+}
+
+fn enforce_identity_accept_encoding(request_headers: &mut HeaderMap) {
+    request_headers.insert(
+        ACCEPT_ENCODING,
+        HeaderValue::from_static(IDENTITY_ACCEPT_ENCODING),
+    );
 }
 
 fn sanitize_anthropic_fallback_headers(
@@ -92,6 +101,7 @@ pub(super) fn apply_header_overrides(
         if crate::proxy::http::is_hop_header(&override_item.name)
             || override_item.name == HOST
             || override_item.name == CONTENT_LENGTH
+            || override_item.name == ACCEPT_ENCODING
         {
             continue;
         }

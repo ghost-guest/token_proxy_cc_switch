@@ -2,6 +2,7 @@ use super::kiro::{MAX_KIRO_BACKOFF_SECS, MAX_KIRO_RETRIES};
 use super::kiro_prepare::KiroContext;
 use super::{result, AttemptOutcome};
 use crate::proxy::http;
+use crate::proxy::log::RequestTimings;
 use crate::proxy::openai_compat::FormatTransform;
 use crate::proxy::request_detail::RequestDetailSnapshot;
 use crate::proxy::{config::UpstreamRuntime, ProxyState, RequestMeta};
@@ -66,6 +67,7 @@ pub(super) async fn finalize_response(
     response: reqwest::Response,
     force_success: bool,
     start_time: Instant,
+    timings: RequestTimings,
 ) -> AttemptOutcome {
     if force_success {
         let proxy_base_url = crate::proxy::http::local_proxy_base_url(&state.config);
@@ -79,6 +81,7 @@ pub(super) async fn finalize_response(
             state.log.clone(),
             state.token_rate.clone(),
             start_time,
+            timings.clone(),
             &proxy_base_url,
             None,
             response_transform,
@@ -99,6 +102,7 @@ pub(super) async fn finalize_response(
         state.log.clone(),
         state.token_rate.clone(),
         start_time,
+        timings,
         None,
         response_transform,
         request_detail,

@@ -8,7 +8,7 @@ use url::Url;
 
 use super::{
     http,
-    log::{LogContext, LogWriter},
+    log::{LogContext, LogWriter, RequestTimings},
     openai_compat::FormatTransform,
     request_detail::RequestDetailSnapshot,
     token_rate::TokenRateTracker,
@@ -42,6 +42,7 @@ pub(super) async fn build_proxy_response(
     log: Arc<LogWriter>,
     token_rate: Arc<TokenRateTracker>,
     start: Instant,
+    timings: RequestTimings,
     proxy_base_url: &str,
     client_gemini_api_key: Option<&str>,
     response_transform: FormatTransform,
@@ -72,7 +73,7 @@ pub(super) async fn build_proxy_response(
         request_headers,
         request_body,
         ttfb_ms: None,
-        timings: Default::default(),
+        timings,
         start,
     };
     let model_override = meta.model_override();
@@ -130,6 +131,7 @@ pub(super) async fn build_proxy_response_buffered(
     log: Arc<LogWriter>,
     token_rate: Arc<TokenRateTracker>,
     start: Instant,
+    timings: RequestTimings,
     proxy_base_url: &str,
     client_gemini_api_key: Option<&str>,
     response_transform: FormatTransform,
@@ -160,7 +162,7 @@ pub(super) async fn build_proxy_response_buffered(
         request_headers,
         request_body,
         ttfb_ms: None,
-        timings: Default::default(),
+        timings,
         start,
     };
     let model_override = meta.model_override();

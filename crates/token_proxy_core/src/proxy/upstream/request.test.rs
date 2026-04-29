@@ -1,5 +1,5 @@
 use super::*;
-use axum::http::header::AUTHORIZATION;
+use axum::http::header::{ACCEPT_ENCODING, AUTHORIZATION};
 use url::form_urlencoded;
 
 fn gemini_upstream() -> UpstreamRuntime {
@@ -162,6 +162,64 @@ fn anthropic_stainless_headers_are_removed_for_responses_fallback() {
     assert_eq!(
         built.get("x-custom").and_then(|v| v.to_str().ok()),
         Some("keep")
+    );
+}
+
+#[test]
+fn upstream_headers_force_identity_accept_encoding() {
+    let mut headers = HeaderMap::new();
+    headers.insert(ACCEPT_ENCODING, HeaderValue::from_static("gzip, br"));
+    headers.insert("x-custom", HeaderValue::from_static("keep"));
+
+    let built = build_request_headers(
+        "openai-response",
+        "/v1/responses",
+        &headers,
+        http::UpstreamAuthHeader {
+            name: AUTHORIZATION,
+            value: HeaderValue::from_static("Bearer upstream"),
+        },
+        None,
+        None,
+    );
+
+    assert_eq!(
+        built
+            .get(ACCEPT_ENCODING)
+            .and_then(|value| value.to_str().ok()),
+        Some("identity")
+    );
+    assert_eq!(
+        built.get("x-custom").and_then(|value| value.to_str().ok()),
+        Some("keep")
+    );
+}
+
+#[test]
+fn header_overrides_cannot_reenable_compressed_upstream_bodies() {
+    let headers = HeaderMap::new();
+    let overrides = [HeaderOverride {
+        name: ACCEPT_ENCODING,
+        value: Some(HeaderValue::from_static("gzip")),
+    }];
+
+    let built = build_request_headers(
+        "openai-response",
+        "/v1/responses",
+        &headers,
+        http::UpstreamAuthHeader {
+            name: AUTHORIZATION,
+            value: HeaderValue::from_static("Bearer upstream"),
+        },
+        None,
+        Some(&overrides),
+    );
+
+    assert_eq!(
+        built
+            .get(ACCEPT_ENCODING)
+            .and_then(|value| value.to_str().ok()),
+        Some("identity")
     );
 }
 

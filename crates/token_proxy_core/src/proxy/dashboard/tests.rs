@@ -98,6 +98,8 @@ async fn setup_test_db() -> SqlitePool {
             response_error TEXT,
             latency_ms INTEGER NOT NULL,
             upstream_first_byte_ms INTEGER,
+            upstream_response_headers_ms INTEGER,
+            upstream_first_body_chunk_ms INTEGER,
             first_client_flush_ms INTEGER,
             first_output_ms INTEGER
         );

@@ -25,7 +25,7 @@ pub(crate) struct TokenUsage {
     pub(crate) total_tokens: Option<u64>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub(crate) struct UsageSnapshot {
     pub(crate) usage: Option<TokenUsage>,
     pub(crate) cached_tokens: Option<u64>,
@@ -52,6 +52,8 @@ pub(crate) struct LogEntry {
     pub(crate) response_error: Option<String>,
     pub(crate) latency_ms: u128,
     pub(crate) upstream_first_byte_ms: Option<u128>,
+    pub(crate) upstream_response_headers_ms: Option<u128>,
+    pub(crate) upstream_first_body_chunk_ms: Option<u128>,
     pub(crate) first_client_flush_ms: Option<u128>,
     pub(crate) first_output_ms: Option<u128>,
 }
@@ -59,6 +61,8 @@ pub(crate) struct LogEntry {
 #[derive(Clone, Copy, Default)]
 pub(crate) struct RequestTimingSnapshot {
     pub(crate) upstream_first_byte_ms: Option<u128>,
+    pub(crate) upstream_response_headers_ms: Option<u128>,
+    pub(crate) upstream_first_body_chunk_ms: Option<u128>,
     pub(crate) first_client_flush_ms: Option<u128>,
     pub(crate) first_output_ms: Option<u128>,
 }
@@ -69,8 +73,17 @@ pub(crate) struct RequestTimings {
 }
 
 impl RequestTimings {
-    fn mark_upstream_first_byte(&self, value: u128) {
+    pub(crate) fn mark_upstream_response_headers(&self, value: u128) {
+        self.mark_once(|snapshot| &mut snapshot.upstream_response_headers_ms, value);
+    }
+
+    pub(crate) fn mark_upstream_first_body_chunk(&self, value: u128) {
+        self.mark_once(|snapshot| &mut snapshot.upstream_first_body_chunk_ms, value);
         self.mark_once(|snapshot| &mut snapshot.upstream_first_byte_ms, value);
+    }
+
+    fn mark_upstream_first_byte(&self, value: u128) {
+        self.mark_upstream_first_body_chunk(value);
     }
 
     fn mark_first_client_flush(&self, value: u128) {
@@ -113,8 +126,7 @@ pub(crate) struct LogContext {
     pub(crate) upstream_request_id: Option<String>,
     pub(crate) request_headers: Option<String>,
     pub(crate) request_body: Option<String>,
-    // Time-to-first-byte (TTFB) measured from `start`.
-    // For streaming responses, this is recorded when we receive the first upstream chunk.
+    // Legacy field name: this records first upstream body chunk, not response headers.
     pub(crate) ttfb_ms: Option<u128>,
     pub(crate) timings: RequestTimings,
     pub(crate) start: Instant,
@@ -176,11 +188,18 @@ pub(crate) fn build_log_entry(
     response_error: Option<String>,
 ) -> LogEntry {
     let timing = context.timing_snapshot();
-    let upstream_first_byte_ms = timing.upstream_first_byte_ms.or(context.ttfb_ms);
+    let upstream_first_body_chunk_ms = timing
+        .upstream_first_body_chunk_ms
+        .or(timing.upstream_first_byte_ms)
+        .or(context.ttfb_ms);
+    let upstream_first_byte_ms = timing
+        .upstream_first_byte_ms
+        .or(upstream_first_body_chunk_ms);
     let latency_ms = timing
         .first_output_ms
         .or(timing.first_client_flush_ms)
-        .or(upstream_first_byte_ms)
+        .or(upstream_first_body_chunk_ms)
+        .or(timing.upstream_response_headers_ms)
         .unwrap_or_else(|| context.start.elapsed().as_millis());
     LogEntry {
         ts_ms: now_ms(),
@@ -201,6 +220,8 @@ pub(crate) fn build_log_entry(
         response_error,
         latency_ms,
         upstream_first_byte_ms,
+        upstream_response_headers_ms: timing.upstream_response_headers_ms,
+        upstream_first_body_chunk_ms,
         first_client_flush_ms: timing.first_client_flush_ms,
         first_output_ms: timing.first_output_ms,
     }
@@ -244,9 +265,11 @@ INSERT INTO request_logs (
   response_error,
   latency_ms,
   upstream_first_byte_ms,
+  upstream_response_headers_ms,
+  upstream_first_body_chunk_ms,
   first_client_flush_ms,
   first_output_ms
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 "#,
     )
     .bind(to_i64_u128(entry.ts_ms))
@@ -269,6 +292,8 @@ INSERT INTO request_logs (
     .bind(entry.response_error.as_deref())
     .bind(to_i64_u128(entry.latency_ms))
     .bind(entry.upstream_first_byte_ms.map(to_i64_u128))
+    .bind(entry.upstream_response_headers_ms.map(to_i64_u128))
+    .bind(entry.upstream_first_body_chunk_ms.map(to_i64_u128))
     .bind(entry.first_client_flush_ms.map(to_i64_u128))
     .bind(entry.first_output_ms.map(to_i64_u128))
     .execute(pool)
@@ -283,4 +308,44 @@ fn to_i64_u128(value: u128) -> i64 {
 
 fn to_i64_u64(value: u64) -> i64 {
     value.min(i64::MAX as u64) as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn build_log_entry_keeps_response_headers_and_body_chunk_timings_separate() {
+        let timings = RequestTimings::default();
+        timings.mark_upstream_response_headers(25);
+        timings.mark_upstream_first_body_chunk(120);
+        timings.mark_upstream_first_byte(120);
+        timings.mark_first_output(220);
+
+        let context = LogContext {
+            path: "/v1/responses".to_string(),
+            provider: "openai-response".to_string(),
+            upstream_id: "airouter".to_string(),
+            account_id: None,
+            model: Some("gpt-5.5".to_string()),
+            mapped_model: None,
+            stream: true,
+            status: 200,
+            upstream_request_id: None,
+            request_headers: None,
+            request_body: None,
+            ttfb_ms: None,
+            timings,
+            start: Instant::now() - Duration::from_millis(300),
+        };
+
+        let entry = build_log_entry(&context, UsageSnapshot::default(), None);
+
+        assert_eq!(entry.upstream_response_headers_ms, Some(25));
+        assert_eq!(entry.upstream_first_body_chunk_ms, Some(120));
+        assert_eq!(entry.upstream_first_byte_ms, Some(120));
+        assert_eq!(entry.first_output_ms, Some(220));
+        assert_eq!(entry.latency_ms, 220);
+    }
 }
