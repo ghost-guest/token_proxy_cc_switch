@@ -8,7 +8,7 @@ mod types;
 use crate::paths::TokenProxyPaths;
 use std::time::{Duration, Instant};
 
-const DEFAULT_MAX_REQUEST_BODY_BYTES: u64 = 20 * 1024 * 1024;
+const DEFAULT_MAX_REQUEST_BODY_BYTES: u64 = 100 * 1024 * 1024;
 const MIN_UPSTREAM_NO_DATA_TIMEOUT_SECS: u64 = 3;
 
 pub use hot_model_mappings::default_hot_model_mappings;
