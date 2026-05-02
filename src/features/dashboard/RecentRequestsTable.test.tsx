@@ -118,6 +118,58 @@ describe("dashboard/RecentRequestsTable", () => {
     expect(headerGrid?.className).not.toContain("1fr");
   });
 
+  it("allows horizontal overflow and lets the body height come from the viewport", () => {
+    render(
+      <I18nProvider>
+        <RecentRequestsTable
+          scrollKey="test"
+          items={[
+            {
+              id: 1,
+              tsMs: 100,
+              path: "/v1/chat/completions/with/a/very/long/path",
+              provider: "openai-response",
+              upstreamId: "alpha",
+              accountId: "codex-a.json",
+              model: "gpt-5.5-with-long-alias",
+              mappedModel: "openai/gpt-5.5",
+              stream: true,
+              status: 200,
+              totalTokens: 31,
+              outputTokens: 20,
+              cachedTokens: 5,
+              costNanoUsd: 1_210_000_000,
+              pricingVersion: "2026-05-02.openai-openrouter-v1",
+              pricingModel: "gpt-5.5",
+              pricingContextTier: "short",
+              latencyMs: 30,
+              upstreamRequestId: null,
+            },
+          ]}
+        />
+      </I18nProvider>,
+    );
+
+    const table = screen.getByTestId("recent-requests-table");
+    expect(table).toHaveClass("flex", "min-h-0", "flex-1", "overflow-hidden");
+
+    const horizontalScroller = table.querySelector(
+      '[data-slot="recent-requests-table-horizontal-scroll"]',
+    );
+    expect(horizontalScroller).toHaveClass("overflow-x-auto");
+    expect(horizontalScroller).not.toHaveClass("overflow-x-hidden");
+
+    const widthTrack = table.querySelector(
+      '[data-slot="recent-requests-table-width-track"]',
+    ) as HTMLElement | null;
+    expect(widthTrack?.style.minWidth).toBe("846px");
+
+    const body = table.querySelector('[data-slot="recent-requests-table-body"]');
+    expect(body).toHaveClass("min-h-0", "flex-1", "overflow-y-auto");
+    expect(body).not.toHaveClass("overflow-x-hidden");
+    expect((body as HTMLElement | null)?.style.height).toBe("");
+  });
+
   it("shows upstream response-header latency as the default latency value", async () => {
     const user = userEvent.setup();
 
