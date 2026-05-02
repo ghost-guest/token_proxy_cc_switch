@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   createDashboardTimeFormatter,
   formatCompact,
+  formatDashboardClockTime,
   formatDashboardProviderLabel,
   formatDashboardTimestamp,
   formatInteger,
@@ -20,6 +21,12 @@ describe("dashboard/format", () => {
   it("renders placeholder for invalid timestamps", () => {
     const formatter = createDashboardTimeFormatter("en-US");
     expect(formatDashboardTimestamp(Number.NaN, formatter)).toBe("—");
+    expect(formatDashboardClockTime(Number.NaN)).toBe("—");
+  });
+
+  it("formats dashboard table timestamps as clock time only", () => {
+    const timestamp = new Date(2026, 4, 2, 15, 28, 43).getTime();
+    expect(formatDashboardClockTime(timestamp)).toBe("15:28:43");
   });
 
   it("formats compact numbers with K suffix for thousands", () => {

@@ -16,6 +16,7 @@ import { TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui
 import {
   createDashboardTimeFormatter,
   formatCompact,
+  formatDashboardClockTime,
   formatDashboardProviderLabel,
   formatDashboardTimestamp,
   formatInteger,
@@ -27,11 +28,12 @@ import { cn } from "@/lib/utils";
 import { m } from "@/paraglide/messages.js";
 
 const ROW_HEIGHT_PX = 44;
+const HEADER_HEIGHT_PX = 34;
 const OVERSCAN = 6;
 
 // 固定列宽避免虚拟列表行在状态、费用、延迟文本变化时抖动。
-const GRID_COLS = "grid-cols-[128px_140px_132px_104px_64px_82px_92px_104px]";
-const TABLE_MIN_WIDTH_PX = 846;
+const GRID_COLS = "grid-cols-[85px_140px_132px_104px_64px_82px_60px_104px]";
+const TABLE_MIN_WIDTH_PX = 771;
 const CELL_PLACEHOLDER = "—";
 const TOOLTIP_CONTENT_CLASS = "max-w-[560px] whitespace-pre-wrap break-words";
 type BadgeVariant = "default" | "secondary" | "destructive" | "outline";
@@ -80,9 +82,10 @@ function timeColumn(formatter: Intl.DateTimeFormat): ColumnDef<DashboardRequestI
     header: m.dashboard_table_time(),
     cell: ({ row }) => {
       const timestamp = formatDashboardTimestamp(row.original.tsMs, formatter);
+      const clockTime = formatDashboardClockTime(row.original.tsMs);
       return (
         <CellTooltip content={timestamp}>
-          <span className="block truncate text-xs text-muted-foreground">{timestamp}</span>
+          <span className="block truncate text-xs text-muted-foreground">{clockTime}</span>
         </CellTooltip>
       );
     },
@@ -308,7 +311,14 @@ type RecentRequestsTableProps = {
 
 function RecentRequestsHeader({ table }: { table: Table<DashboardRequestItem> }) {
   return (
-    <div className={cn("grid justify-start bg-muted/50 text-xs text-muted-foreground", GRID_COLS)}>
+    <div
+      data-slot="recent-requests-table-header"
+      className={cn(
+        "sticky top-0 z-10 grid items-center justify-start bg-muted/50 text-xs text-muted-foreground",
+        GRID_COLS,
+      )}
+      style={{ height: HEADER_HEIGHT_PX }}
+    >
       {table.getHeaderGroups().map((group) =>
         group.headers.map((header) => (
           <div key={header.id} className={cn("px-3 py-2 font-medium", headerCellClass())}>
@@ -359,6 +369,7 @@ function RecentRequestsRows({
     return (
       <div
         key={row.id}
+        data-slot="recent-requests-table-row"
         className={cn(
           "absolute inset-x-0 grid justify-start items-center border-t border-border/60 bg-background/70 text-sm hover:bg-accent/30",
           GRID_COLS,
@@ -391,29 +402,46 @@ function RecentRequestsRows({
   });
 }
 
-function RecentRequestsBody({
+function RecentRequestsScrollArea({
+  table,
   rows,
   scrollKey,
   onSelectItem,
 }: {
+  table: Table<DashboardRequestItem>;
   rows: Row<DashboardRequestItem>[];
   scrollKey: string;
   onSelectItem?: (item: DashboardRequestItem) => void;
 }) {
   const { scrollRef, rowVirtualizer, virtualRows } = useRecentRowVirtualizer(rows, scrollKey);
+  const rowsHeight = rowVirtualizer.getTotalSize();
 
   return (
     <div
       ref={scrollRef}
-      data-slot="recent-requests-table-body"
-      className="min-h-0 flex-1 overflow-y-auto"
+      data-slot="recent-requests-table-scroll-area"
+      className="min-h-0 flex-1 overflow-auto"
     >
-      <div className="relative" style={{ height: rowVirtualizer.getTotalSize() }}>
-        <RecentRequestsRows
-          rows={rows}
-          virtualRows={virtualRows}
-          onSelectItem={onSelectItem}
-        />
+      <div
+        data-slot="recent-requests-table-width-track"
+        className="relative min-h-full"
+        style={{
+          minWidth: TABLE_MIN_WIDTH_PX,
+          height: HEADER_HEIGHT_PX + rowsHeight,
+        }}
+      >
+        <RecentRequestsHeader table={table} />
+        <div
+          data-slot="recent-requests-table-rows-layer"
+          className="relative"
+          style={{ height: rowsHeight }}
+        >
+          <RecentRequestsRows
+            rows={rows}
+            virtualRows={virtualRows}
+            onSelectItem={onSelectItem}
+          />
+        </div>
       </div>
     </div>
   );
@@ -440,23 +468,12 @@ export function RecentRequestsTable({ items, scrollKey, onSelectItem }: RecentRe
         data-testid="recent-requests-table"
         className="flex min-h-0 flex-1 overflow-hidden rounded-lg border border-border/60"
       >
-        <div
-          data-slot="recent-requests-table-horizontal-scroll"
-          className="min-h-0 flex-1 overflow-x-auto"
-        >
-          <div
-            data-slot="recent-requests-table-width-track"
-            className="flex h-full min-h-0 flex-col"
-            style={{ minWidth: TABLE_MIN_WIDTH_PX }}
-          >
-            <RecentRequestsHeader table={table} />
-            <RecentRequestsBody
-              rows={table.getRowModel().rows}
-              scrollKey={scrollKey}
-              onSelectItem={onSelectItem}
-            />
-          </div>
-        </div>
+        <RecentRequestsScrollArea
+          table={table}
+          rows={table.getRowModel().rows}
+          scrollKey={scrollKey}
+          onSelectItem={onSelectItem}
+        />
       </div>
     </TooltipProvider>
   );

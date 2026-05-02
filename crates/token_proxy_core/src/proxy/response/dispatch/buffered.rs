@@ -139,6 +139,7 @@ pub(super) async fn build_buffered_response(
     http::build_response(status, headers, Body::from(output))
 }
 
+#[cfg(test)]
 pub(super) fn buffer_event_stream_response(bytes: &Bytes) -> Result<Bytes, String> {
     buffer_event_stream_response_with_kind(bytes).map(|payload| payload.bytes)
 }

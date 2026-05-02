@@ -64,6 +64,8 @@
   "proxy_core_kiro_preferred_endpoint_help": "Sets the default Kiro endpoint (IDE = CodeWhisperer, CLI = Amazon Q).",
   "proxy_core_retryable_failure_cooldown_secs_label": "Retryable failure cooldown (seconds)",
   "proxy_core_retryable_failure_cooldown_secs_help": "Default is 15. Applies cross-request cooldown to 401/403/408/429/5xx after the running proxy loads this config. Reloading or restarting resets the current cooldown state. Use 0 to disable cooldown.",
+  "proxy_core_codex_session_scoped_cooldown_label": "Codex Responses session cooldown",
+  "proxy_core_codex_session_scoped_cooldown_help": "Off by default. When enabled, Codex account-backed OpenAI Responses requests isolate cooldown by session_id; final success clears that session, and requests without session_id do not share cooldown.",
   "proxy_core_upstream_no_data_timeout_secs_label": "Upstream no-data timeout (seconds)",
   "proxy_core_upstream_no_data_timeout_secs_help": "Default is 120, and the minimum allowed value is 3. After the running proxy loads this config, it applies to upstream first-byte waits and idle waits while streaming responses.",
   "proxy_core_hot_model_mappings_title": "Hot model mappings",

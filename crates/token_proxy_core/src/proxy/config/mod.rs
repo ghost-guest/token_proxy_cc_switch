@@ -82,6 +82,7 @@ fn build_runtime_config(config: ProxyConfigFile) -> Result<ProxyConfig, String> 
         retryable_failure_cooldown: resolve_retryable_failure_cooldown(
             config.retryable_failure_cooldown_secs,
         )?,
+        codex_session_scoped_cooldown_enabled: config.codex_session_scoped_cooldown_enabled,
         upstream_no_data_timeout: resolve_upstream_no_data_timeout(
             config.upstream_no_data_timeout_secs,
         )?,

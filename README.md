@@ -101,6 +101,7 @@ Notes:
 | `log_level` | `silent` | `silent|error|warn|info|debug|trace`; debug/trace log request headers (auth redacted) and small bodies (≤64KiB). Release builds force `silent`. |
 | `max_request_body_bytes` | `104857600` (100 MiB) | 0 = fallback to default. Protects inbound body size. |
 | `retryable_failure_cooldown_secs` | `15` | Cooldown window after retryable failures that should temporarily sideline an upstream. `0` disables cooldown. Reloading or restarting the running proxy resets current cooldown state. |
+| `codex_session_scoped_cooldown_enabled` | `false` | Only applies to Codex account-backed OpenAI Responses requests. When enabled, cooldown is isolated by `session_id`; final success clears that session, and requests without `session_id` do not share cooldown. |
 | `tray_token_rate.enabled` | `true` | macOS tray live rate; harmless elsewhere. |
 | `tray_token_rate.format` | `split` | `combined` (`total`), `split` (`↑in ↓out`), `both` (`total | ↑in ↓out`). |
 | `upstream_strategy` | `{ "order": "fill_first", "dispatch": { "type": "serial" } }` | Structured strategy object. `order` controls candidate ordering inside one priority group; `dispatch` controls serial / hedged / race execution. |
@@ -158,7 +159,7 @@ Notes:
   - `{"type":"hedged","delay_ms":2000,"max_parallel":2}`: launch the first candidate immediately, then add one more attempt after `delay_ms` if the prior attempt is still unresolved, up to `max_parallel`.
   - `{"type":"race","max_parallel":3}`: launch up to `max_parallel` candidates immediately and take the first successful result.
 - Retryable conditions: network timeout/connect errors, or status 400/401/403/404/408/422/429/307/5xx (including 504/524). Retries stay within the same provider's priority groups.
-- Cooldown conditions: `401/403/408/429/5xx` will temporarily move the failed upstream behind ready peers for `retryable_failure_cooldown_secs` (default `15`); `400/404/422/307` stay retryable but do not trigger cross-request cooldown.
+- Cooldown conditions: `401/403/408/429/5xx` will temporarily move the failed upstream behind ready peers for `retryable_failure_cooldown_secs` (default `15`); `400/404/422/307` stay retryable but do not trigger cross-request cooldown. With `codex_session_scoped_cooldown_enabled=true`, Codex account-backed OpenAI Responses cooldown is isolated by `session_id`; final successful requests do not keep same-session cooldown, and requests without `session_id` do not share cooldown.
 - `/v1/messages` only: after the chosen native provider is exhausted (retryable errors), the proxy can fall back to the other native provider (`anthropic` ↔ `kiro`) if it is configured.
 
 ## Observability

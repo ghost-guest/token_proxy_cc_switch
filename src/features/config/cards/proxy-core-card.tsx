@@ -181,6 +181,23 @@ function ProxyCoreFields({
           {m.proxy_core_retryable_failure_cooldown_secs_help()}
         </p>
       </div>
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-1">
+          <Label htmlFor="codex-session-scoped-cooldown">
+            {m.proxy_core_codex_session_scoped_cooldown_label()}
+          </Label>
+          <p className="text-xs text-muted-foreground">
+            {m.proxy_core_codex_session_scoped_cooldown_help()}
+          </p>
+        </div>
+        <Switch
+          id="codex-session-scoped-cooldown"
+          checked={form.codexSessionScopedCooldownEnabled}
+          onCheckedChange={(checked) =>
+            onChange({ codexSessionScopedCooldownEnabled: checked })
+          }
+        />
+      </div>
       <div className="grid gap-2">
         <Label htmlFor="upstream-no-data-timeout-secs">
           {m.proxy_core_upstream_no_data_timeout_secs_label()}

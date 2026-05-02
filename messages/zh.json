@@ -64,6 +64,8 @@
   "proxy_core_kiro_preferred_endpoint_help": "设置默认 Kiro 端点（IDE=CodeWhisperer，CLI=Amazon Q）。",
   "proxy_core_retryable_failure_cooldown_secs_label": "可重试失败冷却（秒）",
   "proxy_core_retryable_failure_cooldown_secs_help": "默认 15。运行中的代理加载该配置后，会对 401/403/408/429/5xx 触发跨请求冷却；重载或重启代理会重置当前冷却状态。填 0 可关闭冷却。",
+  "proxy_core_codex_session_scoped_cooldown_label": "Codex Responses 会话级冷却",
+  "proxy_core_codex_session_scoped_cooldown_help": "默认关闭。开启后，Codex 账号的 OpenAI Responses 请求冷却按 session_id 隔离；最终成功会清除本会话冷却，缺少 session_id 的请求不共享冷却。",
   "proxy_core_upstream_no_data_timeout_secs_label": "上游无数据超时（秒）",
   "proxy_core_upstream_no_data_timeout_secs_help": "默认 120，最小允许值 3。运行中的代理加载该配置后，会将其用于上游首包等待和流式响应空闲等待。",
   "proxy_core_hot_model_mappings_title": "热门模型映射",

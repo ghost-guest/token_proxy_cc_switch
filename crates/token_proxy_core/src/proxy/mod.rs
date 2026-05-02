@@ -4,6 +4,7 @@ mod codex_compat;
 mod compat_content;
 mod compat_reason;
 pub mod config;
+mod cooldown_scope;
 pub mod dashboard;
 mod gemini;
 mod gemini_compat;

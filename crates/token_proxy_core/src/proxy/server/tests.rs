@@ -136,6 +136,7 @@ fn config_with_runtime_upstreams(
             order: UpstreamOrderStrategy::RoundRobin,
             dispatch: UpstreamDispatchRuntime::Serial,
         },
+        codex_session_scoped_cooldown_enabled: false,
         hot_model_mappings: HashMap::new(),
         upstreams: provider_map,
         kiro_preferred_endpoint: None,
@@ -1558,11 +1559,30 @@ data: [DONE]\n\n",
 }
 
 async fn send_responses_request(state: ProxyStateHandle) -> (StatusCode, Value) {
+    send_responses_request_with_headers(state, axum::http::HeaderMap::new()).await
+}
+
+async fn send_responses_request_with_session(
+    state: ProxyStateHandle,
+    session_id: &str,
+) -> (StatusCode, Value) {
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        "session_id",
+        HeaderValue::from_str(session_id).expect("session header"),
+    );
+    send_responses_request_with_headers(state, headers).await
+}
+
+async fn send_responses_request_with_headers(
+    state: ProxyStateHandle,
+    headers: axum::http::HeaderMap,
+) -> (StatusCode, Value) {
     let response = proxy_request(
         State(state),
         Method::POST,
         Uri::from_static(RESPONSES_PATH),
-        axum::http::HeaderMap::new(),
+        headers,
         Body::from(
             json!({
                 "model": "gpt-5",
@@ -2445,6 +2465,263 @@ fn responses_request_cooldowns_same_codex_account_after_401() {
         );
         assert_eq!(
             requests[2].authorization.as_deref(),
+            Some("Bearer codex-access-b")
+        );
+    });
+}
+
+#[test]
+fn responses_codex_session_scoped_cooldown_clears_after_successful_failover() {
+    run_async(async {
+        let codex =
+            spawn_auth_switch_mock_upstream_with_primary_status(StatusCode::UNAUTHORIZED).await;
+
+        let mut config = config_with_runtime_upstreams(&[(
+            PROVIDER_CODEX,
+            0,
+            "codex-session-cooldown-success",
+            codex.base_url.as_str(),
+            FORMATS_RESPONSES,
+        )]);
+        let provider_upstreams = config
+            .upstreams
+            .get_mut(PROVIDER_CODEX)
+            .expect("codex upstreams");
+        provider_upstreams.groups[0].items[0].codex_account_id = None;
+        config.codex_session_scoped_cooldown_enabled = true;
+        config.retryable_failure_cooldown = std::time::Duration::from_secs(15);
+
+        let data_dir = next_test_data_dir("responses_codex_session_cooldown_success");
+        let state = build_test_state_handle(config, data_dir.clone()).await;
+        let expires_at = (OffsetDateTime::now_utc() + TimeDuration::days(1))
+            .format(&time::format_description::well_known::Rfc3339)
+            .expect("format expires_at");
+        seed_codex_account(
+            &state,
+            "codex-a.json",
+            "codex-access-a",
+            "chatgpt-a",
+            &expires_at,
+        )
+        .await;
+        seed_codex_account(
+            &state,
+            "codex-b.json",
+            "codex-access-b",
+            "chatgpt-b",
+            &expires_at,
+        )
+        .await;
+
+        let (first_status, first_json) =
+            send_responses_request_with_session(state.clone(), "session-a").await;
+        let (second_status, second_json) =
+            send_responses_request_with_session(state, "session-a").await;
+        let requests = codex.requests();
+
+        codex.abort();
+        let _ = std::fs::remove_dir_all(&data_dir);
+
+        assert_eq!(first_status, StatusCode::OK);
+        assert_eq!(second_status, StatusCode::OK);
+        assert_eq!(
+            first_json["output"][0]["content"][0]["text"].as_str(),
+            Some("from codex failover")
+        );
+        assert_eq!(
+            second_json["output"][0]["content"][0]["text"].as_str(),
+            Some("from codex failover")
+        );
+        assert_eq!(
+            requests.len(),
+            4,
+            "successful session turns should not keep a failed same-turn account cooling"
+        );
+        assert_eq!(
+            requests[0].authorization.as_deref(),
+            Some("Bearer codex-access-a")
+        );
+        assert_eq!(
+            requests[1].authorization.as_deref(),
+            Some("Bearer codex-access-b")
+        );
+        assert_eq!(
+            requests[2].authorization.as_deref(),
+            Some("Bearer codex-access-a")
+        );
+        assert_eq!(
+            requests[3].authorization.as_deref(),
+            Some("Bearer codex-access-b")
+        );
+    });
+}
+
+#[test]
+fn responses_codex_session_scoped_cooldown_isolates_failed_sessions() {
+    run_async(async {
+        let codex = spawn_mock_upstream(
+            StatusCode::UNAUTHORIZED,
+            json!({
+                "error": {
+                    "message": "codex account unauthorized",
+                    "type": "invalid_request_error",
+                    "code": "token_invalidated"
+                }
+            }),
+        )
+        .await;
+
+        let mut config = config_with_runtime_upstreams(&[(
+            PROVIDER_CODEX,
+            0,
+            "codex-session-cooldown-failed",
+            codex.base_url.as_str(),
+            FORMATS_RESPONSES,
+        )]);
+        let provider_upstreams = config
+            .upstreams
+            .get_mut(PROVIDER_CODEX)
+            .expect("codex upstreams");
+        provider_upstreams.groups[0].items[0].codex_account_id = None;
+        config.codex_session_scoped_cooldown_enabled = true;
+        config.retryable_failure_cooldown = std::time::Duration::from_secs(15);
+
+        let data_dir = next_test_data_dir("responses_codex_session_cooldown_isolated");
+        let state = build_test_state_handle(config, data_dir.clone()).await;
+        let expires_at = (OffsetDateTime::now_utc() + TimeDuration::days(1))
+            .format(&time::format_description::well_known::Rfc3339)
+            .expect("format expires_at");
+        seed_codex_account(
+            &state,
+            "codex-a.json",
+            "codex-access-a",
+            "chatgpt-a",
+            &expires_at,
+        )
+        .await;
+        seed_codex_account(
+            &state,
+            "codex-b.json",
+            "codex-access-b",
+            "chatgpt-b",
+            &expires_at,
+        )
+        .await;
+
+        let (first_status, _) =
+            send_responses_request_with_session(state.clone(), "session-a").await;
+        let (second_status, _) = send_responses_request_with_session(state, "session-b").await;
+        let requests = codex.requests();
+
+        codex.abort();
+        let _ = std::fs::remove_dir_all(&data_dir);
+
+        assert_eq!(first_status, StatusCode::UNAUTHORIZED);
+        assert_eq!(second_status, StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            requests.len(),
+            4,
+            "session-a cooldown must not skip accounts for session-b"
+        );
+        assert_eq!(
+            requests[0].authorization.as_deref(),
+            Some("Bearer codex-access-a")
+        );
+        assert_eq!(
+            requests[1].authorization.as_deref(),
+            Some("Bearer codex-access-b")
+        );
+        assert_eq!(
+            requests[2].authorization.as_deref(),
+            Some("Bearer codex-access-a")
+        );
+        assert_eq!(
+            requests[3].authorization.as_deref(),
+            Some("Bearer codex-access-b")
+        );
+    });
+}
+
+#[test]
+fn responses_codex_session_scoped_cooldown_does_not_share_missing_session() {
+    run_async(async {
+        let codex = spawn_mock_upstream(
+            StatusCode::UNAUTHORIZED,
+            json!({
+                "error": {
+                    "message": "codex account unauthorized",
+                    "type": "invalid_request_error",
+                    "code": "token_invalidated"
+                }
+            }),
+        )
+        .await;
+
+        let mut config = config_with_runtime_upstreams(&[(
+            PROVIDER_CODEX,
+            0,
+            "codex-session-cooldown-missing-session",
+            codex.base_url.as_str(),
+            FORMATS_RESPONSES,
+        )]);
+        let provider_upstreams = config
+            .upstreams
+            .get_mut(PROVIDER_CODEX)
+            .expect("codex upstreams");
+        provider_upstreams.groups[0].items[0].codex_account_id = None;
+        config.codex_session_scoped_cooldown_enabled = true;
+        config.retryable_failure_cooldown = std::time::Duration::from_secs(15);
+
+        let data_dir = next_test_data_dir("responses_codex_missing_session_cooldown");
+        let state = build_test_state_handle(config, data_dir.clone()).await;
+        let expires_at = (OffsetDateTime::now_utc() + TimeDuration::days(1))
+            .format(&time::format_description::well_known::Rfc3339)
+            .expect("format expires_at");
+        seed_codex_account(
+            &state,
+            "codex-a.json",
+            "codex-access-a",
+            "chatgpt-a",
+            &expires_at,
+        )
+        .await;
+        seed_codex_account(
+            &state,
+            "codex-b.json",
+            "codex-access-b",
+            "chatgpt-b",
+            &expires_at,
+        )
+        .await;
+
+        let (first_status, _) = send_responses_request(state.clone()).await;
+        let (second_status, _) = send_responses_request(state).await;
+        let requests = codex.requests();
+
+        codex.abort();
+        let _ = std::fs::remove_dir_all(&data_dir);
+
+        assert_eq!(first_status, StatusCode::UNAUTHORIZED);
+        assert_eq!(second_status, StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            requests.len(),
+            4,
+            "requests without session_id must not share cooldown state"
+        );
+        assert_eq!(
+            requests[0].authorization.as_deref(),
+            Some("Bearer codex-access-a")
+        );
+        assert_eq!(
+            requests[1].authorization.as_deref(),
+            Some("Bearer codex-access-b")
+        );
+        assert_eq!(
+            requests[2].authorization.as_deref(),
+            Some("Bearer codex-access-a")
+        );
+        assert_eq!(
+            requests[3].authorization.as_deref(),
             Some("Bearer codex-access-b")
         );
     });
@@ -3664,6 +3941,7 @@ fn responses_request_cooldowns_same_provider_upstream_after_401() {
             order: UpstreamOrderStrategy::FillFirst,
             dispatch: UpstreamDispatchRuntime::Serial,
         };
+        config.codex_session_scoped_cooldown_enabled = true;
 
         let data_dir = next_test_data_dir("responses_same_provider_cooldown_401");
         let state = build_test_state_handle(config, data_dir.clone()).await;

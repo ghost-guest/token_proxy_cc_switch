@@ -131,6 +131,7 @@ describe("config/form", () => {
     expect(payload.cors_enabled).toBe(true);
     expect(payload.model_list_prefix).toBe(true);
     expect(payload.retryable_failure_cooldown_secs).toBe(15);
+    expect(payload.codex_session_scoped_cooldown_enabled).toBe(false);
     expect(payload.upstream_no_data_timeout_secs).toBe(120);
     expect("model_discovery_refresh_secs" in payload).toBe(false);
     expect(payload.upstreams[0]?.id).toBe("upstream-1");
@@ -161,6 +162,15 @@ describe("config/form", () => {
     });
 
     expect(payload.retryable_failure_cooldown_secs).toBe(30);
+  });
+
+  it("serializes codex session-scoped cooldown switch", () => {
+    const payload = toPayload({
+      ...EMPTY_FORM,
+      codexSessionScopedCooldownEnabled: true,
+    });
+
+    expect(payload.codex_session_scoped_cooldown_enabled).toBe(true);
   });
 
   it("defaults upstream no data timeout seconds to 120 when config omits it", () => {
@@ -198,6 +208,7 @@ describe("config/form", () => {
     expect(form.upstreamNoDataTimeoutSecs).toBe("120");
     expect(form.corsEnabled).toBe(false);
     expect(form.modelListPrefix).toBe(false);
+    expect(form.codexSessionScopedCooldownEnabled).toBe(false);
     expect(form.upstreams[0]?.apiKeys).toBe("key-a, key-b");
     expect(form.upstreamStrategy).toEqual({
       order: "fill_first",

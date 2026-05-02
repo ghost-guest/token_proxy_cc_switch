@@ -3,6 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { RecentRequestsTable } from "@/features/dashboard/RecentRequestsTable";
+import {
+  createDashboardTimeFormatter,
+  formatDashboardTimestamp,
+} from "@/features/dashboard/format";
 import { I18nProvider } from "@/lib/i18n";
 import { m } from "@/paraglide/messages.js";
 import { setLocale } from "@/paraglide/runtime.js";
@@ -69,6 +73,49 @@ describe("dashboard/RecentRequestsTable", () => {
     expect(screen.getByText(/alpha/)).toBeInTheDocument();
     expect(screen.getByText(/codex/)).toBeInTheDocument();
     expect(screen.getByText(/codex-a\.json/)).toBeInTheDocument();
+  });
+
+  it("shows only clock time in the time column and keeps the full timestamp in tooltip", async () => {
+    const user = userEvent.setup();
+    const tsMs = new Date(2026, 4, 2, 15, 28, 43).getTime();
+    const fullTimestamp = formatDashboardTimestamp(tsMs, createDashboardTimeFormatter("en"));
+
+    render(
+      <I18nProvider>
+        <RecentRequestsTable
+          scrollKey="test"
+          items={[
+            {
+              id: 1,
+              tsMs,
+              path: "/responses",
+              provider: "codex",
+              upstreamId: "alpha",
+              accountId: "codex-a.json",
+              model: "gpt-5",
+              mappedModel: null,
+              stream: false,
+              status: 200,
+              totalTokens: 30,
+              outputTokens: 20,
+              cachedTokens: 5,
+              costNanoUsd: null,
+              pricingVersion: null,
+              pricingModel: null,
+              pricingContextTier: null,
+              latencyMs: 30,
+              upstreamRequestId: null,
+            },
+          ]}
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByText("15:28:43")).toBeInTheDocument();
+    expect(screen.queryByText(fullTimestamp)).toBeNull();
+
+    await user.hover(screen.getByText("15:28:43"));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(fullTimestamp);
   });
 
   it("keeps status, tokens, and latency columns left-aligned", () => {
@@ -153,21 +200,34 @@ describe("dashboard/RecentRequestsTable", () => {
     const table = screen.getByTestId("recent-requests-table");
     expect(table).toHaveClass("flex", "min-h-0", "flex-1", "overflow-hidden");
 
-    const horizontalScroller = table.querySelector(
-      '[data-slot="recent-requests-table-horizontal-scroll"]',
+    const scrollArea = table.querySelector(
+      '[data-slot="recent-requests-table-scroll-area"]',
     );
-    expect(horizontalScroller).toHaveClass("overflow-x-auto");
-    expect(horizontalScroller).not.toHaveClass("overflow-x-hidden");
+    expect(scrollArea).toHaveClass("min-h-0", "flex-1", "overflow-auto");
 
     const widthTrack = table.querySelector(
       '[data-slot="recent-requests-table-width-track"]',
     ) as HTMLElement | null;
-    expect(widthTrack?.style.minWidth).toBe("846px");
+    expect(widthTrack?.style.minWidth).toBe("771px");
+    expect(widthTrack?.parentElement).toBe(scrollArea);
 
-    const body = table.querySelector('[data-slot="recent-requests-table-body"]');
-    expect(body).toHaveClass("min-h-0", "flex-1", "overflow-y-auto");
-    expect(body).not.toHaveClass("overflow-x-hidden");
-    expect((body as HTMLElement | null)?.style.height).toBe("");
+    const header = table.querySelector('[data-slot="recent-requests-table-header"]');
+    expect(header).toHaveClass("sticky", "top-0", "z-10");
+    expect(header?.className).toContain("85px_140px");
+
+    const rowsLayer = table.querySelector(
+      '[data-slot="recent-requests-table-rows-layer"]',
+    ) as HTMLElement | null;
+    expect(rowsLayer?.previousElementSibling).toBe(header);
+    expect(rowsLayer?.style.height).toBe("44px");
+    expect(widthTrack?.style.height).toBe("78px");
+
+    const firstRow = table.querySelector(
+      '[data-slot="recent-requests-table-row"]',
+    ) as HTMLElement | null;
+    expect(firstRow?.style.transform).toBe("translateY(0px)");
+
+    expect(table.querySelector('[data-slot="recent-requests-table-body"]')).toBeNull();
   });
 
   it("shows upstream response-header latency as the default latency value", async () => {

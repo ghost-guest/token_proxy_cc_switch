@@ -88,6 +88,7 @@ const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "kiro_preferred_endpoint",
   "log_level",
   "retryable_failure_cooldown_secs",
+  "codex_session_scoped_cooldown_enabled",
   "upstream_no_data_timeout_secs",
   "tray_token_rate",
   "upstream_strategy",
@@ -105,6 +106,7 @@ export const EMPTY_FORM: ConfigForm = {
   kiroPreferredEndpoint: "ide",
   logLevel: "silent",
   retryableFailureCooldownSecs: "15",
+  codexSessionScopedCooldownEnabled: false,
   upstreamNoDataTimeoutSecs: String(DEFAULT_UPSTREAM_NO_DATA_TIMEOUT_SECS),
   trayTokenRate: { ...DEFAULT_TRAY_TOKEN_RATE },
   upstreamStrategy: {
@@ -188,6 +190,8 @@ export function toForm(config: ProxyConfigFile): ConfigForm {
     kiroPreferredEndpoint: config.kiro_preferred_endpoint ?? "ide",
     logLevel: config.log_level ?? "silent",
     retryableFailureCooldownSecs: String(config.retryable_failure_cooldown_secs ?? 15),
+    codexSessionScopedCooldownEnabled:
+      config.codex_session_scoped_cooldown_enabled ?? false,
     upstreamNoDataTimeoutSecs: String(
       config.upstream_no_data_timeout_secs ?? DEFAULT_UPSTREAM_NO_DATA_TIMEOUT_SECS,
     ),
@@ -232,6 +236,7 @@ export function toPayload(form: ConfigForm): ProxyConfigFile {
     retryable_failure_cooldown_secs: parseRetryableFailureCooldownSecs(
       form.retryableFailureCooldownSecs,
     ),
+    codex_session_scoped_cooldown_enabled: form.codexSessionScopedCooldownEnabled,
     upstream_no_data_timeout_secs: parseUpstreamNoDataTimeoutSecs(
       form.upstreamNoDataTimeoutSecs,
     ),

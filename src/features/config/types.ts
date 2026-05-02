@@ -111,6 +111,7 @@ export type ProxyConfigFileBase = {
   kiro_preferred_endpoint?: KiroPreferredEndpoint | null;
   log_level?: LogLevel;
   retryable_failure_cooldown_secs?: number;
+  codex_session_scoped_cooldown_enabled?: boolean;
   upstream_no_data_timeout_secs?: number;
   tray_token_rate: TrayTokenRateConfig;
   upstream_strategy: UpstreamStrategy;
@@ -183,6 +184,7 @@ export type ConfigForm = {
   kiroPreferredEndpoint: "" | KiroPreferredEndpoint;
   logLevel: LogLevel;
   retryableFailureCooldownSecs: string;
+  codexSessionScopedCooldownEnabled: boolean;
   upstreamNoDataTimeoutSecs: string;
   trayTokenRate: TrayTokenRateConfig;
   upstreamStrategy: {

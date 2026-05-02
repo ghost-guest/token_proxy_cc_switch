@@ -234,6 +234,8 @@ pub struct ProxyConfigFile {
         skip_serializing_if = "is_default_retryable_failure_cooldown_secs"
     )]
     pub retryable_failure_cooldown_secs: u64,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub codex_session_scoped_cooldown_enabled: bool,
     #[serde(
         default = "default_upstream_no_data_timeout_secs",
         skip_serializing_if = "is_default_upstream_no_data_timeout_secs"
@@ -262,6 +264,7 @@ impl Default for ProxyConfigFile {
             log_level: LogLevel::default(),
             max_request_body_bytes: None,
             retryable_failure_cooldown_secs: default_retryable_failure_cooldown_secs(),
+            codex_session_scoped_cooldown_enabled: false,
             upstream_no_data_timeout_secs: default_upstream_no_data_timeout_secs(),
             tray_token_rate: TrayTokenRateConfig::default(),
             upstream_strategy: UpstreamStrategy::default(),
@@ -309,6 +312,7 @@ pub struct ProxyConfig {
     pub log_level: LogLevel,
     pub max_request_body_bytes: usize,
     pub retryable_failure_cooldown: std::time::Duration,
+    pub codex_session_scoped_cooldown_enabled: bool,
     pub upstream_no_data_timeout: std::time::Duration,
     pub upstream_strategy: UpstreamStrategyRuntime,
     pub hot_model_mappings: HashMap<String, String>,
