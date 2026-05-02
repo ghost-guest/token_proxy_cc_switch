@@ -6,6 +6,7 @@ import {
   formatDashboardProviderLabel,
   formatDashboardTimestamp,
   formatInteger,
+  formatNanoUsdCost,
 } from "@/features/dashboard/format";
 import { setLocale } from "@/paraglide/runtime.js";
 
@@ -38,6 +39,12 @@ describe("dashboard/format", () => {
   it("formats compact numbers with B suffix for billions", () => {
     expect(formatCompact(1000000000)).toBe("1B");
     expect(formatCompact(2500000000)).toBe("2.5B");
+  });
+
+  it("formats cost amounts without a currency unit", () => {
+    expect(formatNanoUsdCost(1_210_000_000)).toBe("1.21");
+    expect(formatNanoUsdCost(4_325_000_000)).toBe("4.33");
+    expect(formatNanoUsdCost(null)).toBe("—");
   });
 
   it("keeps provider when it adds new information", () => {
