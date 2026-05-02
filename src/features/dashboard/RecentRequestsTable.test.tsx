@@ -54,6 +54,10 @@ describe("dashboard/RecentRequestsTable", () => {
               totalTokens: 30,
               outputTokens: 20,
               cachedTokens: 5,
+              costNanoUsd: null,
+              pricingVersion: null,
+              pricingModel: null,
+              pricingContextTier: null,
               latencyMs: 30,
               upstreamRequestId: null,
             },
@@ -87,6 +91,10 @@ describe("dashboard/RecentRequestsTable", () => {
               totalTokens: 31,
               outputTokens: 20,
               cachedTokens: 5,
+              costNanoUsd: null,
+              pricingVersion: null,
+              pricingModel: null,
+              pricingContextTier: null,
               latencyMs: 30,
               upstreamResponseHeadersMs: 12,
               upstreamFirstBodyChunkMs: 18,
@@ -132,6 +140,10 @@ describe("dashboard/RecentRequestsTable", () => {
               totalTokens: 31,
               outputTokens: 20,
               cachedTokens: 5,
+              costNanoUsd: null,
+              pricingVersion: null,
+              pricingModel: null,
+              pricingContextTier: null,
               latencyMs: 30,
               upstreamFirstByteMs: 12,
               upstreamResponseHeadersMs: 8,
@@ -178,6 +190,10 @@ describe("dashboard/RecentRequestsTable", () => {
               totalTokens: 45518,
               outputTokens: 1550,
               cachedTokens: 43392,
+              costNanoUsd: null,
+              pricingVersion: null,
+              pricingModel: null,
+              pricingContextTier: null,
               latencyMs: 30,
               upstreamRequestId: null,
             },
@@ -193,6 +209,56 @@ describe("dashboard/RecentRequestsTable", () => {
     expect(await screen.findByRole("tooltip")).toHaveTextContent("45.5K");
     expect(await screen.findByRole("tooltip")).toHaveTextContent("1.6K");
     expect(await screen.findByRole("tooltip")).toHaveTextContent("43.4K");
+  });
+
+  it("shows logged request cost with pricing metadata", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <I18nProvider>
+        <RecentRequestsTable
+          scrollKey="test"
+          items={[
+            {
+              id: 1,
+              tsMs: 100,
+              path: "/responses",
+              provider: "openai-response",
+              upstreamId: "alpha",
+              accountId: null,
+              model: "alias",
+              mappedModel: "gpt-5.4",
+              stream: false,
+              status: 200,
+              totalTokens: 1_010_000,
+              outputTokens: 10_000,
+              cachedTokens: 200_000,
+              costNanoUsd: 4_325_000_000,
+              pricingVersion: "2026-05-02.openai-openrouter-v1",
+              pricingModel: "gpt-5.4",
+              pricingContextTier: "long",
+              latencyMs: 30,
+              upstreamRequestId: null,
+            },
+          ]}
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByText(m.dashboard_table_cost())).toBeInTheDocument();
+    expect(screen.getByText("4.33")).toBeInTheDocument();
+    expect(screen.queryByText("$4.33")).not.toBeInTheDocument();
+    expect(screen.queryByText("4.325")).not.toBeInTheDocument();
+
+    await user.hover(screen.getByText("4.33"));
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip).toHaveTextContent(`${m.logs_detail_pricing_model()}: gpt-5.4`);
+    expect(tooltip).toHaveTextContent(
+      `${m.logs_detail_pricing_context_tier()}: ${m.logs_detail_pricing_context_long()}`,
+    );
+    expect(tooltip).toHaveTextContent(
+      `${m.logs_detail_pricing_version()}: 2026-05-02.openai-openrouter-v1`,
+    );
   });
 
   it("shows local proxy label for proxy local auth failures", async () => {
@@ -218,6 +284,10 @@ describe("dashboard/RecentRequestsTable", () => {
               totalTokens: null,
               outputTokens: null,
               cachedTokens: null,
+              costNanoUsd: null,
+              pricingVersion: null,
+              pricingModel: null,
+              pricingContextTier: null,
               latencyMs: 0,
               upstreamRequestId: null,
             },

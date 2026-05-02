@@ -17,6 +17,7 @@ mod model;
 pub(crate) mod model_discovery;
 mod openai;
 mod openai_compat;
+pub mod pricing;
 mod redact;
 mod request_body;
 pub mod request_detail;

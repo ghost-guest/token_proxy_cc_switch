@@ -26,6 +26,7 @@ import {
   formatDashboardProviderLabel,
   formatDashboardTimestamp,
   formatInteger,
+  formatNanoUsdCost,
 } from "@/features/dashboard/format";
 import {
   readRequestDetailCapture,
@@ -151,6 +152,22 @@ function BasicInfoSection({ detail, formatter }: BasicInfoSectionProps) {
         </div>
         <DetailField label={m.logs_detail_stream()} value={streamText} />
         <DetailField
+          label={m.dashboard_table_cost()}
+          value={formatNanoUsdCost(detail.costNanoUsd)}
+        />
+        <DetailField
+          label={m.logs_detail_pricing_model()}
+          value={detail.pricingModel}
+        />
+        <DetailField
+          label={m.logs_detail_pricing_context_tier()}
+          value={formatPricingContextTier(detail.pricingContextTier)}
+        />
+        <DetailField
+          label={m.logs_detail_pricing_version()}
+          value={detail.pricingVersion}
+        />
+        <DetailField
           label={m.dashboard_table_latency_ms()}
           value={formatInteger(detail.latencyMs)}
         />
@@ -220,6 +237,10 @@ function formatDetailAsText(detail: RequestLogDetail, formatter: Intl.DateTimeFo
   }
   lines.push(`${m.dashboard_table_status()}: ${detail.status}`);
   lines.push(`${m.logs_detail_stream()}: ${detail.stream ? m.logs_detail_stream_yes() : m.logs_detail_stream_no()}`);
+  lines.push(`${m.dashboard_table_cost()}: ${formatNanoUsdCost(detail.costNanoUsd)}`);
+  lines.push(`${m.logs_detail_pricing_model()}: ${detail.pricingModel?.trim() || DETAIL_PLACEHOLDER}`);
+  lines.push(`${m.logs_detail_pricing_context_tier()}: ${formatPricingContextTier(detail.pricingContextTier)}`);
+  lines.push(`${m.logs_detail_pricing_version()}: ${detail.pricingVersion?.trim() || DETAIL_PLACEHOLDER}`);
   lines.push(`${m.dashboard_table_latency_ms()}: ${formatInteger(detail.latencyMs)}`);
   lines.push(`${m.logs_timing_upstream_response_headers_ms()}: ${formatOptionalInteger(detail.upstreamResponseHeadersMs)}`);
   lines.push(`${m.logs_timing_upstream_first_body_chunk_ms()}: ${formatOptionalInteger(detail.upstreamFirstBodyChunkMs ?? detail.upstreamFirstByteMs)}`);
@@ -256,6 +277,16 @@ function formatDetailAsText(detail: RequestLogDetail, formatter: Intl.DateTimeFo
 
 function formatOptionalInteger(value: number | null | undefined) {
   return value == null ? DETAIL_PLACEHOLDER : formatInteger(value);
+}
+
+function formatPricingContextTier(tier: string | null | undefined) {
+  if (tier === "long") {
+    return m.logs_detail_pricing_context_long();
+  }
+  if (tier === "short") {
+    return m.logs_detail_pricing_context_short();
+  }
+  return DETAIL_PLACEHOLDER;
 }
 
 type RequestDetailSheetProps = {

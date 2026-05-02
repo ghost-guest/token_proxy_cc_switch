@@ -88,3 +88,15 @@ const COMPACT_FORMAT = new Intl.NumberFormat("en-US", {
 export function formatCompact(value: number) {
   return COMPACT_FORMAT.format(value);
 }
+
+const COST_AMOUNT_FORMAT = new Intl.NumberFormat("en-US", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+export function formatNanoUsdCost(value: number | null | undefined) {
+  if (value == null) {
+    return "—";
+  }
+  return COST_AMOUNT_FORMAT.format(value / 1_000_000_000);
+}

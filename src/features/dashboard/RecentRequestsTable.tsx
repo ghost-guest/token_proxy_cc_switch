@@ -19,6 +19,7 @@ import {
   formatDashboardProviderLabel,
   formatDashboardTimestamp,
   formatInteger,
+  formatNanoUsdCost,
 } from "@/features/dashboard/format";
 import type { DashboardRequestItem } from "@/features/dashboard/types";
 import { useI18n } from "@/lib/i18n";
@@ -29,8 +30,8 @@ const TABLE_HEIGHT_PX = 360;
 const ROW_HEIGHT_PX = 44;
 const OVERSCAN = 6;
 
-// 让 time/tokens 列更紧凑、model 列更宽（同时保持其它列的响应式伸缩）。
-const GRID_COLS = "grid-cols-[132px_152px_148px_104px_72px_86px_110px]";
+// 固定列宽避免虚拟列表行在状态、费用、延迟文本变化时抖动。
+const GRID_COLS = "grid-cols-[128px_140px_132px_104px_64px_82px_92px_104px]";
 const CELL_PLACEHOLDER = "—";
 const TOOLTIP_CONTENT_CLASS = "max-w-[560px] whitespace-pre-wrap break-words";
 type BadgeVariant = "default" | "secondary" | "destructive" | "outline";
@@ -193,6 +194,40 @@ function tokensColumn(): ColumnDef<DashboardRequestItem> {
   };
 }
 
+function formatPricingContextTier(tier: string | null | undefined) {
+  if (tier === "long") {
+    return m.logs_detail_pricing_context_long();
+  }
+  if (tier === "short") {
+    return m.logs_detail_pricing_context_short();
+  }
+  return CELL_PLACEHOLDER;
+}
+
+function costColumn(): ColumnDef<DashboardRequestItem> {
+  return {
+    id: "cost",
+    header: m.dashboard_table_cost(),
+    cell: ({ row }) => {
+      const item = row.original;
+      const costText = formatNanoUsdCost(item.costNanoUsd);
+      const tooltip = [
+        `${m.dashboard_table_cost()}: ${costText}`,
+        `${m.logs_detail_pricing_model()}: ${item.pricingModel?.trim() || CELL_PLACEHOLDER}`,
+        `${m.logs_detail_pricing_context_tier()}: ${formatPricingContextTier(item.pricingContextTier)}`,
+        `${m.logs_detail_pricing_version()}: ${item.pricingVersion?.trim() || CELL_PLACEHOLDER}`,
+      ].join("\n");
+      return (
+        <CellTooltip content={tooltip} disabled={item.costNanoUsd == null}>
+          <span className="block w-full truncate text-xs text-muted-foreground text-left">
+            {costText}
+          </span>
+        </CellTooltip>
+      );
+    },
+  };
+}
+
 function latencyColumn(): ColumnDef<DashboardRequestItem> {
   return {
     id: "latency",
@@ -234,6 +269,7 @@ function buildColumns(formatter: Intl.DateTimeFormat) {
     modelColumn(),
     statusColumn(),
     tokensColumn(),
+    costColumn(),
     latencyColumn(),
   ];
 }
@@ -258,7 +294,7 @@ function rowCellClass(columnId: string) {
   if (columnId === "status") {
     return "px-3 py-2";
   }
-  if (columnId === "tokens" || columnId === "latency") {
+  if (columnId === "tokens" || columnId === "cost" || columnId === "latency") {
     return "min-w-0 px-3 py-2 text-left";
   }
   return "px-3 py-2";
