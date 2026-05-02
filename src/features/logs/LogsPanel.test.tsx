@@ -404,6 +404,17 @@ describe("logs/LogsPanel", () => {
     );
   });
 
+  it("lets the logs table area inherit the remaining app viewport height", async () => {
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("logs-items")).toHaveTextContent("alpha");
+    });
+
+    const panel = screen.getByTestId("logs-panel");
+    expect(panel).toHaveClass("flex", "min-h-0", "flex-1", "flex-col");
+  });
+
   it("refreshes logs without refreshing dashboard model discovery", async () => {
     const user = userEvent.setup();
 

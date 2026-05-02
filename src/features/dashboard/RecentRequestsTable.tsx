@@ -26,12 +26,12 @@ import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { m } from "@/paraglide/messages.js";
 
-const TABLE_HEIGHT_PX = 360;
 const ROW_HEIGHT_PX = 44;
 const OVERSCAN = 6;
 
 // 固定列宽避免虚拟列表行在状态、费用、延迟文本变化时抖动。
 const GRID_COLS = "grid-cols-[128px_140px_132px_104px_64px_82px_92px_104px]";
+const TABLE_MIN_WIDTH_PX = 846;
 const CELL_PLACEHOLDER = "—";
 const TOOLTIP_CONTENT_CLASS = "max-w-[560px] whitespace-pre-wrap break-words";
 type BadgeVariant = "default" | "secondary" | "destructive" | "outline";
@@ -405,8 +405,8 @@ function RecentRequestsBody({
   return (
     <div
       ref={scrollRef}
-      className="overflow-y-auto overflow-x-hidden"
-      style={{ height: TABLE_HEIGHT_PX }}
+      data-slot="recent-requests-table-body"
+      className="min-h-0 flex-1 overflow-y-auto"
     >
       <div className="relative" style={{ height: rowVirtualizer.getTotalSize() }}>
         <RecentRequestsRows
@@ -438,14 +438,25 @@ export function RecentRequestsTable({ items, scrollKey, onSelectItem }: RecentRe
       <div
         data-slot="recent-requests-table"
         data-testid="recent-requests-table"
-        className="overflow-hidden rounded-lg border border-border/60"
+        className="flex min-h-0 flex-1 overflow-hidden rounded-lg border border-border/60"
       >
-        <RecentRequestsHeader table={table} />
-        <RecentRequestsBody
-          rows={table.getRowModel().rows}
-          scrollKey={scrollKey}
-          onSelectItem={onSelectItem}
-        />
+        <div
+          data-slot="recent-requests-table-horizontal-scroll"
+          className="min-h-0 flex-1 overflow-x-auto"
+        >
+          <div
+            data-slot="recent-requests-table-width-track"
+            className="flex h-full min-h-0 flex-col"
+            style={{ minWidth: TABLE_MIN_WIDTH_PX }}
+          >
+            <RecentRequestsHeader table={table} />
+            <RecentRequestsBody
+              rows={table.getRowModel().rows}
+              scrollKey={scrollKey}
+              onSelectItem={onSelectItem}
+            />
+          </div>
+        </div>
       </div>
     </TooltipProvider>
   );

@@ -579,7 +579,7 @@ export function LogsPanel() {
   }, [detailOpen, selectedId]);
 
   return (
-    <div className="flex flex-col gap-4">
+    <div data-testid="logs-panel" className="flex min-h-0 flex-1 flex-col gap-4">
       {status === "error" ? (
         <Alert variant="destructive" className="mx-4 lg:mx-6">
           <AlertCircle className="size-4" aria-hidden="true" />
