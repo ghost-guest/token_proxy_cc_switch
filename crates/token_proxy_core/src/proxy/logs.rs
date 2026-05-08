@@ -35,6 +35,7 @@ pub struct RequestLogDetail {
     pub usage_json: Option<String>,
     pub request_headers: Option<String>,
     pub request_body: Option<String>,
+    pub response_body: Option<String>,
     pub response_error: Option<String>,
 }
 
@@ -73,6 +74,7 @@ SELECT
   usage_json,
   request_headers,
   request_body,
+  response_body,
   response_error
 FROM request_logs
 WHERE id = ?
@@ -166,6 +168,10 @@ LIMIT 1;
             .flatten(),
         request_body: row
             .try_get::<Option<String>, _>("request_body")
+            .ok()
+            .flatten(),
+        response_body: row
+            .try_get::<Option<String>, _>("response_body")
             .ok()
             .flatten(),
         response_error: row

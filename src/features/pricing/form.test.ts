@@ -8,7 +8,7 @@ import {
 import type { ModelPricingSettings } from "@/features/pricing/types";
 
 const settings: ModelPricingSettings = {
-  version: "2026-05-02.openai-openrouter-v1",
+  version: "2026-05-08.openai-openrouter-v2",
   models: [
     {
       modelId: "gpt-5.5",
@@ -35,13 +35,13 @@ describe("pricing/form", () => {
     expect(rows[0]).toMatchObject({
       modelId: "gpt-5.5",
       aliasesText: "gpt-5.5, openai/gpt-5.5",
-      shortInputUsdPerMillion: "5.00",
-      shortCachedUsdPerMillion: "0.50",
-      shortOutputUsdPerMillion: "30.00",
+      shortInputUsdPerMillion: "5.000",
+      shortCachedUsdPerMillion: "0.500",
+      shortOutputUsdPerMillion: "30.000",
       longEnabled: true,
-      longInputUsdPerMillion: "10.00",
-      longCachedUsdPerMillion: "1.00",
-      longOutputUsdPerMillion: "45.00",
+      longInputUsdPerMillion: "10.000",
+      longCachedUsdPerMillion: "1.000",
+      longOutputUsdPerMillion: "45.000",
       longContextInputTokenThreshold: "272000",
     });
   });
@@ -87,5 +87,38 @@ describe("pricing/form", () => {
     ]);
 
     expect(result.ok).toBe(false);
+  });
+
+  it("parses decimal prices with big.js precision", () => {
+    const row: ModelPricingFormRow = {
+      ...toPricingRows(settings)[0],
+      id: "decimal-row",
+      modelId: "moonshotai/kimi-k2.6",
+      aliasesText: "moonshotai/kimi-k2.6",
+      shortInputUsdPerMillion: "0.750",
+      shortCachedUsdPerMillion: "0.150",
+      shortOutputUsdPerMillion: "3.500",
+      longEnabled: false,
+    };
+    const result = toPricingSettingsInput([row]);
+
+    expect(result).toEqual({
+      ok: true,
+      input: {
+        models: [
+          {
+            modelId: "moonshotai/kimi-k2.6",
+            aliases: [],
+            short: {
+              inputNanoUsdPerToken: 750,
+              cachedInputNanoUsdPerToken: 150,
+              outputNanoUsdPerToken: 3500,
+            },
+            long: null,
+            longContextInputTokenThreshold: null,
+          },
+        ],
+      },
+    });
   });
 });

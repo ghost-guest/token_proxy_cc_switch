@@ -51,6 +51,7 @@ pub(crate) struct LogEntry {
     pub(crate) upstream_request_id: Option<String>,
     pub(crate) request_headers: Option<String>,
     pub(crate) request_body: Option<String>,
+    pub(crate) response_body: Option<String>,
     pub(crate) response_error: Option<String>,
     pub(crate) latency_ms: u128,
     pub(crate) upstream_first_byte_ms: Option<u128>,
@@ -233,6 +234,7 @@ pub(crate) fn build_log_entry(
         upstream_request_id: context.upstream_request_id.clone(),
         request_headers: context.request_headers.clone(),
         request_body: context.request_body.clone(),
+        response_body: None,
         response_error,
         latency_ms,
         upstream_first_byte_ms,
@@ -247,6 +249,13 @@ pub(crate) fn build_log_entry(
             .as_ref()
             .map(|cost| cost.context_tier.as_str().to_string()),
     }
+}
+
+pub(crate) fn attach_response_body(entry: &mut LogEntry, response_body: &str) {
+    if response_body.is_empty() {
+        return;
+    }
+    entry.response_body = Some(response_body.to_string());
 }
 
 fn now_ms() -> u128 {
@@ -302,6 +311,7 @@ INSERT INTO request_logs (
   upstream_request_id,
   request_headers,
   request_body,
+  response_body,
   response_error,
   latency_ms,
   upstream_first_byte_ms,
@@ -313,7 +323,7 @@ INSERT INTO request_logs (
   pricing_version,
   pricing_model,
   pricing_context_tier
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 "#,
     )
     .bind(to_i64_u128(entry.ts_ms))
@@ -333,6 +343,7 @@ INSERT INTO request_logs (
     .bind(entry.upstream_request_id.as_deref())
     .bind(entry.request_headers.as_deref())
     .bind(entry.request_body.as_deref())
+    .bind(entry.response_body.as_deref())
     .bind(entry.response_error.as_deref())
     .bind(to_i64_u128(entry.latency_ms))
     .bind(entry.upstream_first_byte_ms.map(to_i64_u128))

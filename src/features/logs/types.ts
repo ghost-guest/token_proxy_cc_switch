@@ -36,5 +36,6 @@ export type RequestLogDetail = {
   usageJson: string | null;
   requestHeaders: string | null;
   requestBody: string | null;
+  responseBody: string | null;
   responseError: string | null;
 };

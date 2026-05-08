@@ -40,7 +40,7 @@ vi.mock("sonner", () => ({
 
 const snapshot: ModelPricingSettingsSnapshot = {
   settings: {
-    version: "2026-05-02.openai-openrouter-v1",
+    version: "2026-05-08.openai-openrouter-v2",
     models: [
       {
         modelId: "gpt-5.5",
@@ -60,7 +60,7 @@ const snapshot: ModelPricingSettingsSnapshot = {
     ],
   },
   defaultSettings: {
-    version: "2026-05-02.openai-openrouter-v1",
+    version: "2026-05-08.openai-openrouter-v2",
     models: [],
   },
 };
@@ -96,9 +96,9 @@ describe("pricing/ModelPricingPage", () => {
     const { container } = renderPage();
 
     expect(await screen.findByDisplayValue("gpt-5.5")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("5.00")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("0.50")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("30.00")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("5.000")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("0.500")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("30.000")).toBeInTheDocument();
     expect(screen.getByDisplayValue("272000")).toBeInTheDocument();
     expect(
       screen.getByText(m.model_pricing_version({ version: snapshot.settings.version })),

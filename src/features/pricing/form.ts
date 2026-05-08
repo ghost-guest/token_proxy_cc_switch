@@ -1,3 +1,5 @@
+import Big from "big.js";
+
 import type {
   ModelPricingModel,
   ModelPricingSettings,
@@ -10,6 +12,10 @@ const NANO_USD_PER_USD = 1_000_000_000;
 const TOKENS_PER_MILLION = 1_000_000;
 const NANO_USD_PER_USD_PER_MILLION_TOKEN =
   NANO_USD_PER_USD / TOKENS_PER_MILLION;
+const PRICE_DECIMAL_SCALE = 3;
+const NANO_USD_PER_USD_PER_MILLION_TOKEN_BIG = new Big(
+  NANO_USD_PER_USD_PER_MILLION_TOKEN,
+);
 
 let rowCounter = 0;
 
@@ -41,13 +47,13 @@ export function createEmptyPricingRow(): ModelPricingFormRow {
     id: createRowId(),
     modelId: "",
     aliasesText: "",
-    shortInputUsdPerMillion: "0.00",
-    shortCachedUsdPerMillion: "0.00",
-    shortOutputUsdPerMillion: "0.00",
+    shortInputUsdPerMillion: "0.000",
+    shortCachedUsdPerMillion: "0.000",
+    shortOutputUsdPerMillion: "0.000",
     longEnabled: false,
-    longInputUsdPerMillion: "0.00",
-    longCachedUsdPerMillion: "0.00",
-    longOutputUsdPerMillion: "0.00",
+    longInputUsdPerMillion: "0.000",
+    longCachedUsdPerMillion: "0.000",
+    longOutputUsdPerMillion: "0.000",
     longContextInputTokenThreshold: "272000",
   };
 }
@@ -191,15 +197,31 @@ function parseTier(args: {
 }
 
 function formatUsdPerMillion(value: number) {
-  return (value / NANO_USD_PER_USD_PER_MILLION_TOKEN).toFixed(2);
+  return new Big(value)
+    .div(NANO_USD_PER_USD_PER_MILLION_TOKEN_BIG)
+    .toFixed(PRICE_DECIMAL_SCALE);
 }
 
 function parseUsdPerMillion(value: string) {
-  const parsed = Number.parseFloat(value.trim());
-  if (!Number.isFinite(parsed) || parsed < 0) {
+  const trimmed = value.trim();
+  if (!trimmed) {
     return null;
   }
-  return Math.round(parsed * NANO_USD_PER_USD_PER_MILLION_TOKEN);
+  try {
+    const parsed = new Big(trimmed);
+    if (parsed.lt(0)) {
+      return null;
+    }
+    const nanoUsdPerToken = parsed
+      .times(NANO_USD_PER_USD_PER_MILLION_TOKEN_BIG)
+      .round(0, Big.roundHalfUp);
+    if (nanoUsdPerToken.gt(Number.MAX_SAFE_INTEGER)) {
+      return null;
+    }
+    return nanoUsdPerToken.toNumber();
+  } catch {
+    return null;
+  }
 }
 
 function parsePositiveInteger(value: string) {

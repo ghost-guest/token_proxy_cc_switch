@@ -7,7 +7,7 @@ use std::{
 };
 
 use super::super::compat_reason;
-use super::super::log::{build_log_entry, LogContext, LogWriter};
+use super::super::log::{attach_response_body, build_log_entry, LogContext, LogWriter};
 use super::super::sse::SseEventParser;
 use super::super::token_rate::RequestTokenTracker;
 use super::super::usage::SseUsageCollector;
@@ -70,6 +70,7 @@ struct ResponsesToAnthropicState<S> {
     saw_tool_use: bool,
     stop_reason_override: Option<&'static str>,
     saw_reasoning_delta: bool,
+    response_body_buf: String,
 }
 
 impl<S> ResponsesToAnthropicState<S> {
@@ -77,7 +78,8 @@ impl<S> ResponsesToAnthropicState<S> {
         if self.logged {
             return;
         }
-        let entry = build_log_entry(&self.context, self.collector.finish(), response_error);
+        let mut entry = build_log_entry(&self.context, self.collector.finish(), response_error);
+        attach_response_body(&mut entry, &self.response_body_buf);
         self.log.clone().write_detached(entry);
         self.logged = true;
     }
@@ -128,6 +130,7 @@ where
             saw_tool_use: false,
             stop_reason_override: None,
             saw_reasoning_delta: false,
+            response_body_buf: String::new(),
         }
     }
 
@@ -145,6 +148,8 @@ where
             match self.upstream.next().await {
                 Some(Ok(chunk)) => {
                     self.collector.push_chunk(&chunk);
+                    self.response_body_buf
+                        .push_str(&String::from_utf8_lossy(chunk.as_ref()));
                     let mut events = Vec::new();
                     self.parser.push_chunk(&chunk, |data| events.push(data));
                     let mut texts = Vec::new();

@@ -8,7 +8,7 @@ use std::{
 
 use super::super::compat_content;
 use super::super::compat_reason;
-use super::super::log::{build_log_entry, LogContext, LogWriter};
+use super::super::log::{attach_response_body, build_log_entry, LogContext, LogWriter};
 use super::super::sse::SseEventParser;
 use super::super::token_rate::RequestTokenTracker;
 use super::super::usage::SseUsageCollector;
@@ -51,6 +51,7 @@ struct ResponsesToChatState<S> {
     saw_text_delta: bool,
     saw_reasoning_delta: bool,
     sent_redacted_thinking: bool,
+    response_body_buf: String,
 }
 
 struct ToolCallState {
@@ -68,7 +69,8 @@ impl<S> ResponsesToChatState<S> {
             return;
         }
         self.logged = true;
-        let entry = build_log_entry(&self.context, self.collector.finish(), response_error);
+        let mut entry = build_log_entry(&self.context, self.collector.finish(), response_error);
+        attach_response_body(&mut entry, &self.response_body_buf);
         self.log.clone().write_detached(entry);
     }
 }
@@ -118,6 +120,7 @@ where
             saw_text_delta: false,
             saw_reasoning_delta: false,
             sent_redacted_thinking: false,
+            response_body_buf: String::new(),
         }
     }
 
@@ -136,6 +139,8 @@ where
                 Some(Ok(chunk)) => {
                     self.context.mark_upstream_first_byte();
                     self.collector.push_chunk(&chunk);
+                    self.response_body_buf
+                        .push_str(&String::from_utf8_lossy(chunk.as_ref()));
                     let mut events = Vec::new();
                     self.parser.push_chunk(&chunk, |data| events.push(data));
                     let mut texts = Vec::new();

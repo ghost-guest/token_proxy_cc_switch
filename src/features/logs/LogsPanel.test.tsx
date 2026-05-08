@@ -112,6 +112,7 @@ describe("logs/LogsPanel", () => {
       usageJson: null,
       requestHeaders: null,
       requestBody: null,
+      responseBody: null,
       responseError: null,
     });
     readDashboardSnapshotMock.mockImplementation(
@@ -546,6 +547,53 @@ describe("logs/LogsPanel", () => {
     expect(screen.getByText("gpt-5.5")).toBeInTheDocument();
     expect(screen.getByText(m.logs_detail_pricing_context_short())).toBeInTheDocument();
     expect(screen.getByText("2026-05-02.openai-openrouter-v1")).toBeInTheDocument();
+  });
+
+  it("shows response body when available", async () => {
+    const user = userEvent.setup();
+    readRequestLogDetailMock.mockResolvedValueOnce({
+      id: 1,
+      tsMs: 100,
+      path: "/v1/chat/completions",
+      provider: "codex",
+      upstreamId: "alpha",
+      accountId: "codex-a.json",
+      model: "gpt-5",
+      mappedModel: null,
+      stream: false,
+      status: 200,
+      inputTokens: 10,
+      outputTokens: 20,
+      totalTokens: 30,
+      cachedTokens: 5,
+      costNanoUsd: 1_210_000_000,
+      pricingVersion: "2026-05-08.openai-openrouter-v2",
+      pricingModel: "gpt-5.5",
+      pricingContextTier: "short",
+      latencyMs: 30,
+      upstreamRequestId: "req-1",
+      usageJson: null,
+      requestHeaders: null,
+      requestBody: null,
+      responseBody: "{\"id\":\"resp_1\",\"status\":\"completed\"}",
+      responseError: null,
+    });
+
+    renderPanel();
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "alpha · openai · codex-a.json" })
+      ).toBeInTheDocument();
+    });
+    await user.click(
+      screen.getByRole("button", { name: "alpha · openai · codex-a.json" })
+    );
+    await waitFor(() => {
+      expect(readRequestLogDetailMock).toHaveBeenCalledWith(1);
+    });
+    expect(
+      await screen.findByText("{\"id\":\"resp_1\",\"status\":\"completed\"}")
+    ).toBeInTheDocument();
   });
 
 });

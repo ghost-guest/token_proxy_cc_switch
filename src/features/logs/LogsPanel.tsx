@@ -267,9 +267,15 @@ function formatDetailAsText(detail: RequestLogDetail, formatter: Intl.DateTimeFo
     lines.push(detail.requestBody);
   }
 
-  if (detail.responseError?.trim()) {
+  if (detail.responseBody?.trim()) {
     lines.push("");
     lines.push(`--- ${m.logs_detail_response()} ---`);
+    lines.push(detail.responseBody);
+  }
+
+  if (detail.responseError?.trim()) {
+    lines.push("");
+    lines.push("--- response_error ---");
     lines.push(detail.responseError);
   }
 
@@ -395,7 +401,7 @@ function RequestDetailSheet({
                 />
                 <DetailSection
                   title={m.logs_detail_response()}
-                  value={detail.responseError}
+                  value={detail.responseBody ?? detail.responseError}
                 />
               </div>
             ) : null}

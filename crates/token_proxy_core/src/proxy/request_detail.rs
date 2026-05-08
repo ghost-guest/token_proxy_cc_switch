@@ -234,12 +234,13 @@ mod tests {
             state,
             RequestDetailCaptureState {
                 enabled: true,
-                expires_at_ms: Some(35_000),
+                expires_at_ms: Some(605_000),
+                is_permanent: false,
             }
         );
         assert!(capture.should_capture());
 
-        now_ms.store(34_999, Ordering::SeqCst);
+        now_ms.store(604_999, Ordering::SeqCst);
         assert!(capture.should_capture());
         assert_eq!(capture.snapshot(), state);
     }
@@ -251,7 +252,7 @@ mod tests {
         let capture = create_capture(now_ms.clone(), changes.clone());
 
         let active = capture.arm();
-        now_ms.store(31_001, Ordering::SeqCst);
+        now_ms.store(601_001, Ordering::SeqCst);
 
         assert!(!capture.should_capture());
         assert_eq!(capture.snapshot(), RequestDetailCaptureState::idle());
@@ -270,10 +271,10 @@ mod tests {
         now_ms.store(20_000, Ordering::SeqCst);
         let second = capture.arm();
 
-        assert_eq!(first.expires_at_ms, Some(40_000));
-        assert_eq!(second.expires_at_ms, Some(50_000));
+        assert_eq!(first.expires_at_ms, Some(610_000));
+        assert_eq!(second.expires_at_ms, Some(620_000));
 
-        now_ms.store(45_000, Ordering::SeqCst);
+        now_ms.store(615_000, Ordering::SeqCst);
         assert!(capture.should_capture());
     }
 }

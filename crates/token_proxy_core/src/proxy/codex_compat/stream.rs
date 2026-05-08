@@ -5,7 +5,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::super::log::{build_log_entry, LogContext, LogWriter};
+use super::super::log::{attach_response_body, build_log_entry, LogContext, LogWriter};
 use super::super::response::STREAM_DROPPED_ERROR;
 use super::super::sse::SseEventParser;
 use super::super::token_rate::RequestTokenTracker;
@@ -103,6 +103,7 @@ struct CodexToChatState<S> {
     logged: bool,
     upstream_ended: bool,
     tool_name_map: HashMap<String, String>,
+    response_body_buf: String,
 }
 
 impl<S> CodexToChatState<S> {
@@ -111,7 +112,8 @@ impl<S> CodexToChatState<S> {
             return;
         }
         self.logged = true;
-        let entry = build_log_entry(&self.context, self.collector.finish(), response_error);
+        let mut entry = build_log_entry(&self.context, self.collector.finish(), response_error);
+        attach_response_body(&mut entry, &self.response_body_buf);
         self.log.clone().write_detached(entry);
     }
 }
@@ -129,7 +131,7 @@ where
 {
     fn new(
         upstream: S,
-        mut context: LogContext,
+        context: LogContext,
         log: Arc<LogWriter>,
         token_tracker: RequestTokenTracker,
     ) -> Self {
@@ -141,7 +143,6 @@ where
             .unwrap_or_else(|| "unknown".to_string());
         let tool_name_map =
             extract_tool_name_map_from_request_body(context.request_body.as_deref());
-        context.request_body = None;
 
         Self {
             upstream,
@@ -160,6 +161,7 @@ where
             logged: false,
             upstream_ended: false,
             tool_name_map,
+            response_body_buf: String::new(),
         }
     }
 
@@ -177,6 +179,8 @@ where
                 Some(Ok(chunk)) => {
                     self.context.mark_upstream_first_byte();
                     self.collector.push_chunk(&chunk);
+                    self.response_body_buf
+                        .push_str(&String::from_utf8_lossy(chunk.as_ref()));
                     let mut events = Vec::new();
                     self.parser.push_chunk(&chunk, |data| events.push(data));
                     let mut texts = Vec::new();
@@ -420,6 +424,7 @@ struct CodexToResponsesState<S> {
     model: String,
     saw_terminal_event: bool,
     response_error_override: Option<String>,
+    response_body_buf: String,
 }
 
 impl<S> CodexToResponsesState<S> {
@@ -428,7 +433,8 @@ impl<S> CodexToResponsesState<S> {
             return;
         }
         self.logged = true;
-        let entry = build_log_entry(&self.context, self.collector.finish(), response_error);
+        let mut entry = build_log_entry(&self.context, self.collector.finish(), response_error);
+        attach_response_body(&mut entry, &self.response_body_buf);
         self.log.clone().write_detached(entry);
     }
 }
@@ -446,7 +452,7 @@ where
 {
     fn new(
         upstream: S,
-        mut context: LogContext,
+        context: LogContext,
         log: Arc<LogWriter>,
         token_tracker: RequestTokenTracker,
     ) -> Self {
@@ -457,7 +463,6 @@ where
             .model
             .clone()
             .unwrap_or_else(|| "unknown".to_string());
-        context.request_body = None;
         Self {
             upstream,
             parser: SseEventParser::new(),
@@ -475,6 +480,7 @@ where
             model,
             saw_terminal_event: false,
             response_error_override: None,
+            response_body_buf: String::new(),
         }
     }
 
@@ -492,6 +498,8 @@ where
                 Some(Ok(chunk)) => {
                     self.context.mark_upstream_first_byte();
                     self.collector.push_chunk(&chunk);
+                    self.response_body_buf
+                        .push_str(&String::from_utf8_lossy(chunk.as_ref()));
                     let mut events = Vec::new();
                     self.parser.push_chunk(&chunk, |data| events.push(data));
                     let mut texts = Vec::new();

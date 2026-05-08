@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::fmt::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const DEFAULT_PRICING_VERSION: &str = "2026-05-02.openai-openrouter-v1";
+pub const DEFAULT_PRICING_VERSION: &str = "2026-05-08.openai-openrouter-v2";
 
 const DEFAULT_LONG_CONTEXT_INPUT_TOKEN_THRESHOLD: u64 = 272_000;
 const SETTINGS_ROW_ID: i64 = 1;
@@ -119,6 +119,90 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
                     input_nano_usd_per_token: 750,
                     cached_input_nano_usd_per_token: 75,
                     output_nano_usd_per_token: 4_500,
+                },
+                long: None,
+                long_context_input_token_threshold: None,
+            },
+            // Pricing snapshot sourced from OpenRouter model catalog API on 2026-05-08.
+            ModelPricingModel {
+                model_id: "claude-sonnet-4.6".to_string(),
+                aliases: vec![
+                    "claude-sonnet-4.6".to_string(),
+                    "anthropic/claude-sonnet-4.6".to_string(),
+                ],
+                short: ModelPricingTier {
+                    input_nano_usd_per_token: 3_000,
+                    cached_input_nano_usd_per_token: 300,
+                    output_nano_usd_per_token: 15_000,
+                },
+                long: None,
+                long_context_input_token_threshold: None,
+            },
+            ModelPricingModel {
+                model_id: "anthropic/claude-opus-4.7".to_string(),
+                aliases: vec!["anthropic/claude-opus-4.7".to_string()],
+                short: ModelPricingTier {
+                    input_nano_usd_per_token: 5_000,
+                    cached_input_nano_usd_per_token: 500,
+                    output_nano_usd_per_token: 25_000,
+                },
+                long: None,
+                long_context_input_token_threshold: None,
+            },
+            ModelPricingModel {
+                model_id: "google/gemini-3-flash-preview".to_string(),
+                aliases: vec!["google/gemini-3-flash-preview".to_string()],
+                short: ModelPricingTier {
+                    input_nano_usd_per_token: 500,
+                    cached_input_nano_usd_per_token: 50,
+                    output_nano_usd_per_token: 3_000,
+                },
+                long: None,
+                long_context_input_token_threshold: None,
+            },
+            ModelPricingModel {
+                model_id: "deepseek/deepseek-v4-flash".to_string(),
+                aliases: vec!["deepseek/deepseek-v4-flash".to_string()],
+                short: ModelPricingTier {
+                    input_nano_usd_per_token: 140,
+                    cached_input_nano_usd_per_token: 3,
+                    output_nano_usd_per_token: 280,
+                },
+                long: None,
+                long_context_input_token_threshold: None,
+            },
+            ModelPricingModel {
+                model_id: "deepseek/deepseek-v4-pro".to_string(),
+                aliases: vec!["deepseek/deepseek-v4-pro".to_string()],
+                short: ModelPricingTier {
+                    input_nano_usd_per_token: 435,
+                    cached_input_nano_usd_per_token: 4,
+                    output_nano_usd_per_token: 870,
+                },
+                long: None,
+                long_context_input_token_threshold: None,
+            },
+            ModelPricingModel {
+                model_id: "gpt-5.3-codex".to_string(),
+                aliases: vec![
+                    "gpt-5.3-codex".to_string(),
+                    "openai/gpt-5.3-codex".to_string(),
+                ],
+                short: ModelPricingTier {
+                    input_nano_usd_per_token: 1_750,
+                    cached_input_nano_usd_per_token: 175,
+                    output_nano_usd_per_token: 14_000,
+                },
+                long: None,
+                long_context_input_token_threshold: None,
+            },
+            ModelPricingModel {
+                model_id: "moonshotai/kimi-k2.6".to_string(),
+                aliases: vec!["moonshotai/kimi-k2.6".to_string()],
+                short: ModelPricingTier {
+                    input_nano_usd_per_token: 750,
+                    cached_input_nano_usd_per_token: 150,
+                    output_nano_usd_per_token: 3_500,
                 },
                 long: None,
                 long_context_input_token_threshold: None,
@@ -673,6 +757,31 @@ mod tests {
             .expect_err("duplicate alias")
             .to_ascii_lowercase()
             .contains("shared"));
+    }
+
+    #[test]
+    fn default_settings_include_new_vendor_models() {
+        let settings = default_model_pricing_settings();
+        assert_eq!(settings.version, DEFAULT_PRICING_VERSION);
+
+        let gpt_5_3_codex = settings
+            .models
+            .iter()
+            .find(|model| model.model_id == "gpt-5.3-codex")
+            .expect("gpt-5.3-codex should exist");
+        assert_eq!(gpt_5_3_codex.short.input_nano_usd_per_token, 1_750);
+        assert_eq!(gpt_5_3_codex.short.cached_input_nano_usd_per_token, 175);
+        assert_eq!(gpt_5_3_codex.short.output_nano_usd_per_token, 14_000);
+
+        let claude_sonnet = settings
+            .models
+            .iter()
+            .find(|model| model.model_id == "claude-sonnet-4.6")
+            .expect("claude-sonnet-4.6 should exist");
+        assert!(claude_sonnet
+            .aliases
+            .iter()
+            .any(|alias| alias == "anthropic/claude-sonnet-4.6"));
     }
 
     #[tokio::test]

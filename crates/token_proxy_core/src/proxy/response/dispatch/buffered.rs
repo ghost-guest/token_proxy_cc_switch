@@ -121,7 +121,8 @@ pub(super) async fn build_buffered_response(
         return response;
     }
 
-    let entry = build_log_entry(&context, usage, response_error);
+    let mut entry = build_log_entry(&context, usage, response_error);
+    entry.response_body = Some(String::from_utf8_lossy(output.as_ref()).to_string());
     log.clone().write_detached(entry);
 
     let output = maybe_override_response_model(output, model_override);

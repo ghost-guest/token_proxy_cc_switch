@@ -5,7 +5,7 @@ use futures_util::{stream::try_unfold, StreamExt};
 use serde_json::{json, Value};
 use std::{collections::VecDeque, sync::Arc};
 
-use crate::proxy::log::{build_log_entry, LogContext, LogWriter};
+use crate::proxy::log::{attach_response_body, build_log_entry, LogContext, LogWriter};
 use crate::proxy::response::STREAM_DROPPED_ERROR;
 use crate::proxy::sse::SseEventParser;
 use crate::proxy::token_rate::RequestTokenTracker;
@@ -57,6 +57,7 @@ struct GeminiToChatState<S> {
     logged: bool,
     upstream_ended: bool,
     tool_call_index: usize,
+    response_body_buf: String,
 }
 
 struct ToolCallState {
@@ -76,6 +77,7 @@ struct ChatToGeminiState<S> {
     logged: bool,
     upstream_ended: bool,
     tool_calls: Vec<Option<ToolCallState>>,
+    response_body_buf: String,
 }
 
 impl<S> GeminiToChatState<S> {
@@ -84,7 +86,8 @@ impl<S> GeminiToChatState<S> {
             return;
         }
         self.logged = true;
-        let entry = build_log_entry(&self.context, self.collector.finish(), response_error);
+        let mut entry = build_log_entry(&self.context, self.collector.finish(), response_error);
+        attach_response_body(&mut entry, &self.response_body_buf);
         self.log.clone().write_detached(entry);
     }
 }
@@ -101,7 +104,8 @@ impl<S> ChatToGeminiState<S> {
             return;
         }
         self.logged = true;
-        let entry = build_log_entry(&self.context, self.collector.finish(), response_error);
+        let mut entry = build_log_entry(&self.context, self.collector.finish(), response_error);
+        attach_response_body(&mut entry, &self.response_body_buf);
         self.log.clone().write_detached(entry);
     }
 }
@@ -146,6 +150,7 @@ where
             logged: false,
             upstream_ended: false,
             tool_call_index: 0,
+            response_body_buf: String::new(),
         }
     }
 
@@ -164,6 +169,8 @@ where
                 Some(Ok(chunk)) => {
                     self.context.mark_upstream_first_byte();
                     self.collector.push_chunk(&chunk);
+                    self.response_body_buf
+                        .push_str(&String::from_utf8_lossy(chunk.as_ref()));
                     let mut events = Vec::new();
                     self.parser.push_chunk(&chunk, |data| events.push(data));
                     let mut texts = Vec::new();
@@ -351,6 +358,7 @@ where
             logged: false,
             upstream_ended: false,
             tool_calls: Vec::new(),
+            response_body_buf: String::new(),
         }
     }
 
@@ -369,6 +377,8 @@ where
                 Some(Ok(chunk)) => {
                     self.context.mark_upstream_first_byte();
                     self.collector.push_chunk(&chunk);
+                    self.response_body_buf
+                        .push_str(&String::from_utf8_lossy(chunk.as_ref()));
                     let mut events = Vec::new();
                     self.parser.push_chunk(&chunk, |data| events.push(data));
                     let mut texts = Vec::new();

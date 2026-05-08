@@ -9,7 +9,7 @@ use super::{
     ActiveBlock, KiroToAnthropicState, ToolUseState, USAGE_UPDATE_CHAR_THRESHOLD,
     USAGE_UPDATE_TIME_INTERVAL, USAGE_UPDATE_TOKEN_DELTA,
 };
-use crate::proxy::log::{build_log_entry, UsageSnapshot};
+use crate::proxy::log::{attach_response_body, build_log_entry, UsageSnapshot};
 use crate::proxy::token_estimator;
 
 impl<S, E> KiroToAnthropicState<S>
@@ -367,7 +367,15 @@ impl<S> KiroToAnthropicState<S> {
             cached_tokens: None,
             usage_json: usage_json_from_kiro(&self.usage),
         };
-        let entry = build_log_entry(&self.context, usage_snapshot, response_error);
+        let mut entry = build_log_entry(&self.context, usage_snapshot, response_error);
+        let mut response_body = String::new();
+        if !self.reasoning.is_empty() {
+            response_body.push_str(&self.reasoning);
+        }
+        if !self.content.is_empty() {
+            response_body.push_str(&self.content);
+        }
+        attach_response_body(&mut entry, &response_body);
         self.log.clone().write_detached(entry);
     }
 
