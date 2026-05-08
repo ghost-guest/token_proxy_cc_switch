@@ -194,6 +194,12 @@ pub(crate) fn build_log_entry(
     usage: UsageSnapshot,
     response_error: Option<String>,
 ) -> LogEntry {
+    let response_error = if captures_request_detail(&context.request_headers, &context.request_body)
+    {
+        response_error
+    } else {
+        None
+    };
     let timing = context.timing_snapshot();
     let upstream_first_body_chunk_ms = timing
         .upstream_first_body_chunk_ms
@@ -252,10 +258,20 @@ pub(crate) fn build_log_entry(
 }
 
 pub(crate) fn attach_response_body(entry: &mut LogEntry, response_body: &str) {
+    if !captures_request_detail(&entry.request_headers, &entry.request_body) {
+        return;
+    }
     if response_body.is_empty() {
         return;
     }
     entry.response_body = Some(response_body.to_string());
+}
+
+fn captures_request_detail(
+    request_headers: &Option<String>,
+    request_body: &Option<String>,
+) -> bool {
+    request_headers.is_some() || request_body.is_some()
 }
 
 fn now_ms() -> u128 {
@@ -377,6 +393,54 @@ mod tests {
     };
     use sqlx::{sqlite::SqlitePoolOptions, Row};
     use std::time::{Duration, Instant};
+
+    fn test_log_context(
+        request_headers: Option<String>,
+        request_body: Option<String>,
+    ) -> LogContext {
+        LogContext {
+            path: "/v1/responses".to_string(),
+            provider: "openai-response".to_string(),
+            upstream_id: "airouter".to_string(),
+            account_id: None,
+            model: Some("gpt-5.5".to_string()),
+            mapped_model: None,
+            stream: false,
+            status: 500,
+            upstream_request_id: None,
+            request_headers,
+            request_body,
+            ttfb_ms: None,
+            timings: RequestTimings::default(),
+            start: Instant::now(),
+        }
+    }
+
+    #[test]
+    fn build_log_entry_drops_response_error_when_detail_capture_is_off() {
+        let context = test_log_context(None, None);
+
+        let entry = build_log_entry(
+            &context,
+            UsageSnapshot::default(),
+            Some("upstream secret".to_string()),
+        );
+
+        assert_eq!(entry.response_error, None);
+    }
+
+    #[test]
+    fn build_log_entry_keeps_response_error_when_detail_capture_is_on() {
+        let context = test_log_context(Some("[]".to_string()), None);
+
+        let entry = build_log_entry(
+            &context,
+            UsageSnapshot::default(),
+            Some("upstream secret".to_string()),
+        );
+
+        assert_eq!(entry.response_error.as_deref(), Some("upstream secret"));
+    }
 
     #[test]
     fn build_log_entry_keeps_response_headers_and_body_chunk_timings_separate() {

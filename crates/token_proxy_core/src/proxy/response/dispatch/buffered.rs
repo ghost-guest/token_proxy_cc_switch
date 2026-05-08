@@ -15,7 +15,7 @@ use std::{
 
 use super::super::super::{
     codex_compat, http,
-    log::{build_log_entry, LogContext, LogWriter, UsageSnapshot},
+    log::{attach_response_body, build_log_entry, LogContext, LogWriter, UsageSnapshot},
     model,
     openai_compat::{transform_response_body, FormatTransform},
     redact::redact_query_param_value,
@@ -122,7 +122,8 @@ pub(super) async fn build_buffered_response(
     }
 
     let mut entry = build_log_entry(&context, usage, response_error);
-    entry.response_body = Some(String::from_utf8_lossy(output.as_ref()).to_string());
+    let response_text = String::from_utf8_lossy(output.as_ref());
+    attach_response_body(&mut entry, response_text.as_ref());
     log.clone().write_detached(entry);
 
     let output = maybe_override_response_model(output, model_override);

@@ -3274,6 +3274,10 @@ data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial output\"}\n\n
         )]);
         let data_dir = next_test_data_dir("responses_codex_stream_ends_early");
         let (state, pool) = build_test_state_handle_with_sqlite_log(config, data_dir.clone()).await;
+        {
+            let state_guard = state.read().await;
+            state_guard.request_detail.arm();
+        }
 
         let response = proxy_request(
             State(state),

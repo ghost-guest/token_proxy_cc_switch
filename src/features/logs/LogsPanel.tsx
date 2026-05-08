@@ -50,7 +50,6 @@ const DETAIL_FIELD_VALUE_CLASS = "min-w-0 text-sm text-foreground justify-self-s
 const IDLE_CAPTURE_STATE: RequestDetailCaptureState = {
   enabled: false,
   expiresAtMs: null,
-  isPermanent: false,
 };
 
 type DetailStatus = "idle" | "loading" | "error";
@@ -530,10 +529,10 @@ export function LogsPanel() {
     };
   }, [captureState.enabled, captureState.expiresAtMs, loadCaptureState]);
 
-  const handleToggleCapture = useCallback(async (nextValue: boolean, permanent: boolean = false) => {
+  const handleToggleCapture = useCallback(async (nextValue: boolean) => {
     setCaptureLoading(true);
     try {
-      const nextState = await setRequestDetailCapture(nextValue, permanent);
+      const nextState = await setRequestDetailCapture(nextValue);
       updateCaptureState(nextState);
     } catch {
       // ignore
@@ -611,7 +610,6 @@ export function LogsPanel() {
         onRefresh={refresh}
         capture={{
           enabled: captureEnabled,
-          isPermanent: captureState.isPermanent,
           loading: captureLoading,
           statusText: captureStatusText,
           onToggle: handleToggleCapture,

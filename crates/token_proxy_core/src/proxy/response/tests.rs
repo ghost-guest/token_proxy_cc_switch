@@ -135,6 +135,26 @@ async fn read_first_usage_tokens(pool: &SqlitePool) -> (Option<i64>, Option<i64>
     }
 }
 
+async fn read_first_response_body(pool: &SqlitePool) -> Option<String> {
+    let deadline = TokioInstant::now() + Duration::from_secs(2);
+    loop {
+        let row = sqlx::query("SELECT response_body FROM request_logs ORDER BY id LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+        if let Some(row) = row {
+            return row
+                .try_get::<Option<String>, _>("response_body")
+                .unwrap_or_default();
+        }
+        if TokioInstant::now() >= deadline {
+            panic!("log entry");
+        }
+        sleep(Duration::from_millis(10)).await;
+    }
+}
+
 async fn wait_for_log_rows(pool: &SqlitePool, expected_min: i64) -> i64 {
     let deadline = TokioInstant::now() + Duration::from_secs(2);
     loop {
@@ -181,6 +201,48 @@ fn build_proxy_upload_url_rewrites_to_proxy_path_and_strips_upstream_key() {
         "https://generativelanguage.googleapis.com/upload/resumable/session-1?upload_id=session-1"
     );
     assert!(!rewritten.as_str().contains("upstream-secret"));
+}
+
+#[test]
+fn stream_with_logging_does_not_record_response_body_when_detail_capture_is_off() {
+    run_async(async {
+        let sqlite_pool = create_test_sqlite_pool().await;
+        let log = Arc::new(LogWriter::new(Some(sqlite_pool.clone())));
+        let context = LogContext {
+            path: "/v1/responses".to_string(),
+            provider: "openai-response".to_string(),
+            upstream_id: "unit-test".to_string(),
+            account_id: None,
+            model: Some("unit-model".to_string()),
+            mapped_model: Some("unit-model".to_string()),
+            stream: true,
+            status: 200,
+            upstream_request_id: None,
+            request_headers: None,
+            request_body: None,
+            ttfb_ms: None,
+            timings: Default::default(),
+            start: Instant::now(),
+        };
+        let upstream = futures_util::stream::iter(vec![
+            Ok::<Bytes, std::io::Error>(Bytes::from(
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"secret\"}\n\n",
+            )),
+            Ok(Bytes::from("data: [DONE]\n\n")),
+        ]);
+        let token_tracker = super::super::token_rate::TokenRateTracker::new()
+            .register(None, None)
+            .await;
+        let chunks: Vec<Bytes> =
+            super::streaming::stream_with_logging(upstream, context, log.clone(), token_tracker)
+                .map(|item| item.expect("stream item"))
+                .collect()
+                .await;
+        assert_eq!(chunks.len(), 2);
+
+        let response_body = read_first_response_body(&sqlite_pool).await;
+        assert_eq!(response_body, None);
+    });
 }
 
 #[test]

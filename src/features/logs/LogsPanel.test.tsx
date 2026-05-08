@@ -434,6 +434,29 @@ describe("logs/LogsPanel", () => {
     expect(refreshDashboardModelDiscoveryMock).not.toHaveBeenCalled();
   });
 
+  it("starts fixed request detail capture without permanent mode", async () => {
+    const user = userEvent.setup();
+    setRequestDetailCaptureMock.mockResolvedValueOnce({
+      enabled: true,
+      expiresAtMs: Date.now() + 600_000,
+    });
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("logs-items")).toHaveTextContent("alpha");
+    });
+    expect(screen.queryByText("Permanent")).not.toBeInTheDocument();
+    expect(screen.queryByText("永久")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: m.logs_capture_start() }));
+
+    await waitFor(() => {
+      expect(setRequestDetailCaptureMock).toHaveBeenCalledWith(true);
+    });
+    expect(setRequestDetailCaptureMock).toHaveBeenCalledTimes(1);
+  });
+
   it("narrows logs again after selecting account under chosen upstream", async () => {
     const user = userEvent.setup();
 
