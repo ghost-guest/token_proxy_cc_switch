@@ -26,7 +26,7 @@ use commands::{
     read_model_pricing_settings, read_proxy_config, read_request_detail_capture,
     read_request_log_detail, refresh_dashboard_model_discovery, reset_model_pricing_settings,
     save_model_pricing_settings, save_proxy_config, set_request_detail_capture,
-    write_claude_code_settings, write_codex_config, write_opencode_config,
+    write_claude_code_settings, write_codex_config, write_opencode_config,fetch_upstream_models,
 };
 
 type ProxyServiceHandle = proxy::service::ProxyServiceHandle;
@@ -262,6 +262,7 @@ pub fn run() {
             prepare_relaunch,
             proxy_restart,
             proxy_reload,
+            fetch_upstream_models,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

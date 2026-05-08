@@ -29,7 +29,8 @@ pub use pricing::{
 };
 pub use providers::{providers_delete_accounts, providers_list_accounts_page};
 pub use proxy::{
-    prepare_relaunch, proxy_reload, proxy_restart, proxy_start, proxy_status, proxy_stop,
+    fetch_upstream_models, prepare_relaunch, proxy_reload, proxy_restart, proxy_start,
+    proxy_status, proxy_stop,
 };
 
 #[derive(Clone, Copy)]
