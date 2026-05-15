@@ -61,6 +61,9 @@ jobs:
         with:
           workspaces: "src-tauri"
           cache-on-failure: true
+          # Keep rustup/cargo binaries from the runner; cached ~/.cargo/bin can shadow cargo.
+          cache-bin: "false"
+          prefix-key: "v1-rust"
 
       - name: Run cargo test
         working-directory: src-tauri

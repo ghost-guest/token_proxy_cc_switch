@@ -216,9 +216,11 @@ jobs:
           workspaces: "src-tauri"
           cache-on-failure: true
           # Stable cache key for release reuse; bump suffix to invalidate.
-          shared-key: "rust-${{ runner.os }}-${{ matrix.target }}-v1"
+          shared-key: "rust-${{ runner.os }}-${{ matrix.target }}-v2"
           add-job-id-key: "false"
           add-rust-environment-hash-key: "false"
+          # Do not restore ~/.cargo/bin; a poisoned macOS cache can shadow cargo with rustup-init.
+          cache-bin: "false"
 
       - name: Build and release
         uses: tauri-apps/tauri-action@v0.6.0
@@ -379,9 +381,11 @@ jobs:
         with:
           workspaces: "src-tauri"
           cache-on-failure: true
-          shared-key: "rust-${{ runner.os }}-${{ matrix.target }}-v1"
+          shared-key: "rust-${{ runner.os }}-${{ matrix.target }}-v2"
           add-job-id-key: "false"
           add-rust-environment-hash-key: "false"
+          # Do not restore ~/.cargo/bin; a poisoned macOS cache can shadow cargo with rustup-init.
+          cache-bin: "false"
 
       - name: Build CLI binary
         run: cargo build -p token_proxy_cli --release --locked --target ${{ matrix.target }}
