@@ -69,6 +69,7 @@ pub(crate) async fn parse_request_meta_best_effort(
         original_model: model_from_path.clone(),
         mapped_model: None,
         reasoning_effort: None,
+        response_format: None,
         estimated_input_tokens: None,
     };
 
@@ -107,11 +108,18 @@ pub(crate) async fn parse_request_meta_best_effort(
 
     let estimated_input_tokens =
         request_token_estimate::estimate_request_input_tokens(&value, original_model.as_deref());
+    let response_format = value
+        .get("response_format")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_ascii_lowercase);
     RequestMeta {
         stream,
         original_model,
         mapped_model: None,
         reasoning_effort,
+        response_format,
         estimated_input_tokens,
     }
 }

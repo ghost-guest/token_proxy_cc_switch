@@ -184,6 +184,25 @@ fn resolve_openai_native_plan(
         return Some(provider.map(base_plan));
     }
     if openai::is_openai_native_resource_path(path) {
+        if openai::is_openai_image_generations_path(path) {
+            if let Some(provider) =
+                choose_provider_by_priority(config, None, &[PROVIDER_CHAT, PROVIDER_RESPONSES])
+            {
+                return Some(Ok(base_plan(provider)));
+            }
+            let provider = choose_provider_by_priority(
+                config,
+                Some(InboundApiFormat::OpenaiResponses),
+                &[PROVIDER_CODEX],
+            )
+            .ok_or_else(|| ERROR_NO_UPSTREAM.to_string());
+            return Some(provider.map(|provider| DispatchPlan {
+                provider,
+                outbound_path: Some(CODEX_RESPONSES_PATH),
+                request_transform: FormatTransform::ImagesGenerationsToCodex,
+                response_transform: FormatTransform::CodexToImagesGenerations,
+            }));
+        }
         let provider =
             choose_provider_by_priority(config, None, &[PROVIDER_CHAT, PROVIDER_RESPONSES])
                 .ok_or_else(|| ERROR_NO_UPSTREAM.to_string());
@@ -543,6 +562,18 @@ pub(super) fn resolve_outbound_path(path: &str, plan: &DispatchPlan, meta: &Requ
 }
 
 fn build_retry_fallback_plan(path: &str, provider: &'static str) -> Option<DispatchPlan> {
+    if openai::is_openai_image_generations_path(path) {
+        return match provider {
+            PROVIDER_CODEX => Some(DispatchPlan {
+                provider: PROVIDER_CODEX,
+                outbound_path: Some(CODEX_RESPONSES_PATH),
+                request_transform: FormatTransform::ImagesGenerationsToCodex,
+                response_transform: FormatTransform::CodexToImagesGenerations,
+            }),
+            _ => None,
+        };
+    }
+
     if path == "/v1/messages" {
         return Some(match provider {
             PROVIDER_ANTHROPIC => base_plan(PROVIDER_ANTHROPIC),
@@ -606,6 +637,15 @@ fn resolve_retry_fallback_provider(
     path: &str,
     primary_provider: &str,
 ) -> Option<(&'static str, Option<InboundApiFormat>)> {
+    if openai::is_openai_image_generations_path(path) {
+        return match primary_provider {
+            PROVIDER_CHAT | PROVIDER_RESPONSES => {
+                Some((PROVIDER_CODEX, Some(InboundApiFormat::OpenaiResponses)))
+            }
+            _ => None,
+        };
+    }
+
     if path == "/v1/messages" {
         let fallback = match primary_provider {
             PROVIDER_ANTHROPIC => PROVIDER_KIRO,

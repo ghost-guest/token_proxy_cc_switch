@@ -272,6 +272,7 @@ pub(super) fn build_mapped_meta(meta: &RequestMeta, upstream: &UpstreamRuntime) 
         original_model: meta.original_model.clone(),
         mapped_model,
         reasoning_effort,
+        response_format: meta.response_format.clone(),
         estimated_input_tokens: meta.estimated_input_tokens,
     }
 }

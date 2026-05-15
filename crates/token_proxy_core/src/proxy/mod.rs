@@ -61,6 +61,7 @@ struct RequestMeta {
     original_model: Option<String>,
     mapped_model: Option<String>,
     reasoning_effort: Option<String>,
+    response_format: Option<String>,
     estimated_input_tokens: Option<u64>,
 }
 

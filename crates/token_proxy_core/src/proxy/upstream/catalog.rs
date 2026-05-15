@@ -50,6 +50,7 @@ pub(super) async fn aggregate_model_catalog_request(
         original_model: None,
         mapped_model: None,
         reasoning_effort: None,
+        response_format: None,
         estimated_input_tokens: None,
     };
     let empty_body = ReplayableBody::from_bytes(Bytes::new());
@@ -217,6 +218,7 @@ async fn refresh_model_discovery_job(
         original_model: None,
         mapped_model: None,
         reasoning_effort: None,
+        response_format: None,
         estimated_input_tokens: None,
     };
     let headers = HeaderMap::new();

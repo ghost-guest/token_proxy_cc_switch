@@ -10,7 +10,9 @@ use super::{
     resolve_outbound_path, DispatchPlan, ProxyState,
 };
 use crate::logging::LogLevel;
-use crate::proxy::cooldown_scope::CooldownScope;
+use crate::proxy::{
+    config::InboundApiFormat, cooldown_scope::CooldownScope, openai_compat::FormatTransform,
+};
 
 pub(super) async fn forward_retry_fallback_request(
     state: Arc<ProxyState>,
@@ -23,7 +25,8 @@ pub(super) async fn forward_retry_fallback_request(
     codex_cooldown_scope: &CooldownScope,
 ) -> Result<super::super::upstream::ForwardUpstreamResult, Response> {
     let outbound_path = resolve_outbound_path(&prepared.path, plan, &prepared.meta);
-    let dispatch_inbound_format = detect_inbound_api_format(&outbound_path);
+    let dispatch_inbound_format = bridge_inbound_format(plan.request_transform)
+        .or_else(|| detect_inbound_api_format(&outbound_path));
     let outbound_path_with_query = build_outbound_path_with_query(&outbound_path, uri);
     let outbound_body = build_outbound_body_or_respond(
         &state.http_clients,
@@ -53,6 +56,13 @@ pub(super) async fn forward_retry_fallback_request(
         codex_cooldown_scope,
     )
     .await)
+}
+
+fn bridge_inbound_format(transform: FormatTransform) -> Option<InboundApiFormat> {
+    match transform {
+        FormatTransform::ImagesGenerationsToCodex => Some(InboundApiFormat::OpenaiResponses),
+        _ => None,
+    }
 }
 
 pub(super) fn is_debug_log_enabled(state: &ProxyState) -> bool {

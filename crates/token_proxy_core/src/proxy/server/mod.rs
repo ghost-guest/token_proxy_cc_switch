@@ -129,6 +129,7 @@ async fn proxy_request(
             original_model: None,
             mapped_model: None,
             reasoning_effort: None,
+            response_format: None,
             estimated_input_tokens: None,
         };
         let outbound_path = resolve_outbound_path(&path, &plan, &meta);

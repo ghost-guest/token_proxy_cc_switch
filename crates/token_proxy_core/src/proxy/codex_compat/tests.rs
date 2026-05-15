@@ -1,7 +1,10 @@
 use axum::body::Bytes;
-use futures_util::StreamExt;
+use futures_util::{future, StreamExt};
 use serde_json::json;
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use super::super::{
     log::{LogContext, LogWriter},
@@ -11,7 +14,7 @@ use super::tool_names::shorten_name_if_needed;
 use super::{
     chat_request_to_codex, codex_response_to_chat, codex_response_to_responses,
     responses_compact_request_to_codex, responses_request_to_codex, stream_codex_to_chat,
-    stream_codex_to_responses,
+    stream_codex_to_responses, stream_codex_to_responses_with_semantic_timeout,
 };
 
 #[test]
@@ -320,6 +323,79 @@ async fn stream_codex_to_responses_emits_compatible_terminal_event_when_upstream
         "chunks: {text}"
     );
     assert!(text.contains("partial output"), "chunks: {text}");
+    assert!(text.contains("data: [DONE]"), "chunks: {text}");
+}
+
+#[tokio::test]
+async fn stream_codex_to_responses_closes_after_terminal_without_upstream_close() {
+    let upstream = futures_util::stream::unfold(0usize, |index| async move {
+        if index == 0 {
+            return Some((
+                Ok::<Bytes, std::io::Error>(Bytes::from(
+                    "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_done\",\"model\":\"gpt-5.4\",\"status\":\"completed\"}}\n\n",
+                )),
+                1,
+            ));
+        }
+        future::pending::<Option<(Result<Bytes, std::io::Error>, usize)>>().await
+    })
+    .boxed();
+    let tracker = TokenRateTracker::new().register(None, None).await;
+    let context = test_log_context();
+    let log = Arc::new(LogWriter::new(None));
+
+    let chunks = tokio::time::timeout(
+        Duration::from_millis(200),
+        stream_codex_to_responses(upstream, context, log, tracker).collect::<Vec<_>>(),
+    )
+    .await
+    .expect("stream should end after terminal Responses event");
+    let text = join_stream_chunks(&chunks);
+
+    assert!(
+        text.contains("\"type\":\"response.completed\""),
+        "chunks: {text}"
+    );
+    assert!(text.contains("data: [DONE]"), "chunks: {text}");
+}
+
+#[tokio::test]
+async fn stream_codex_to_responses_semantic_timeout_ignores_heartbeat_comments() {
+    let upstream = futures_util::stream::unfold(0usize, |index| async move {
+        if index == 0 {
+            return Some((
+                Ok::<Bytes, std::io::Error>(Bytes::from(
+                    "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n",
+                )),
+                1,
+            ));
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        Some((Ok::<Bytes, std::io::Error>(Bytes::from(":\n\n")), index + 1))
+    })
+    .boxed();
+    let tracker = TokenRateTracker::new().register(None, None).await;
+    let context = test_log_context();
+    let log = Arc::new(LogWriter::new(None));
+
+    let chunks = tokio::time::timeout(
+        Duration::from_millis(500),
+        stream_codex_to_responses_with_semantic_timeout(
+            upstream,
+            context,
+            log,
+            tracker,
+            Some(Duration::from_millis(40)),
+        )
+        .collect::<Vec<_>>(),
+    )
+    .await
+    .expect("heartbeat-only Codex stream should not hang");
+    let text = join_stream_chunks(&chunks);
+
+    assert!(text.contains("\"type\":\"error\""), "chunks: {text}");
+    assert!(text.contains("\"type\":\"proxy_error\""), "chunks: {text}");
+    assert!(text.contains("semantic timeout"), "chunks: {text}");
     assert!(text.contains("data: [DONE]"), "chunks: {text}");
 }
 

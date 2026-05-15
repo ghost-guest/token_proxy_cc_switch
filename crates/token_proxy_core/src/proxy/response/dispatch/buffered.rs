@@ -42,6 +42,7 @@ pub(super) async fn build_buffered_response(
     response_transform: FormatTransform,
     model_override: Option<&str>,
     estimated_input_tokens: Option<u64>,
+    response_format: Option<&str>,
     upstream_no_data_timeout: Duration,
 ) -> Response {
     let mut context = context;
@@ -97,6 +98,7 @@ pub(super) async fn build_buffered_response(
             log.clone(),
             estimated_input_tokens,
             request_body.as_deref(),
+            response_format,
         ) {
             Ok(converted) => {
                 usage = converted.usage;
@@ -167,24 +169,35 @@ fn buffer_event_stream_response_with_kind(
 
     let mut chat_buffer = ChatCompletionBuffer::default();
     let mut responses_buffer = ResponsesStreamBuffer::default();
+    let mut terminal_response = None;
     for event in events {
         if event == "[DONE]" {
             continue;
         }
         let value: Value = serde_json::from_str(&event)
             .map_err(|err| format!("Invalid event-stream JSON payload: {err}"))?;
-        if let Some(response) = completed_response_from_event(&value) {
-            return serialize_buffered_event(response, BufferedEventStreamKind::Responses);
-        }
         chat_buffer.push_event(&value);
         responses_buffer.push_event(&value);
+        if let Some(response) = completed_response_from_event(&value) {
+            terminal_response = Some(response);
+        }
+    }
+
+    let responses_metadata = responses_buffer.metadata_value();
+    let responses_value = responses_buffer.into_value();
+    if let Some(response) = terminal_response {
+        let response = merge_terminal_response_output(
+            response,
+            responses_value.clone().or(responses_metadata),
+        );
+        return serialize_buffered_event(response, BufferedEventStreamKind::Responses);
     }
 
     if let Some(value) = chat_buffer.into_value() {
         return serialize_buffered_event(value, BufferedEventStreamKind::ChatCompletion);
     }
 
-    if let Some(value) = responses_buffer.into_value() {
+    if let Some(value) = responses_value {
         return serialize_buffered_event(value, BufferedEventStreamKind::Responses);
     }
 
@@ -394,6 +407,13 @@ impl ResponsesStreamBuffer {
             .unwrap_or(self.output.len() as i64)
     }
 
+    fn metadata_value(&self) -> Option<Value> {
+        if self.response.is_empty() {
+            return None;
+        }
+        Some(Value::Object(self.response.clone()))
+    }
+
     fn into_value(mut self) -> Option<Value> {
         if !self.saw_response_event {
             return None;
@@ -460,6 +480,41 @@ fn completed_response_from_event(value: &Value) -> Option<Value> {
         .cloned()
 }
 
+fn merge_terminal_response_output(mut terminal: Value, buffered: Option<Value>) -> Value {
+    if let (Some(terminal_object), Some(buffered_object)) = (
+        terminal.as_object_mut(),
+        buffered.as_ref().and_then(Value::as_object),
+    ) {
+        for (key, value) in buffered_object {
+            terminal_object
+                .entry(key.clone())
+                .or_insert_with(|| value.clone());
+        }
+    }
+
+    let terminal_output_has_items = terminal
+        .get("output")
+        .and_then(Value::as_array)
+        .is_some_and(|items| !items.is_empty());
+    if terminal_output_has_items {
+        return terminal;
+    }
+
+    let Some(buffered_output) = buffered
+        .as_ref()
+        .and_then(|value| value.get("output"))
+        .and_then(Value::as_array)
+        .filter(|items| !items.is_empty())
+        .cloned()
+    else {
+        return terminal;
+    };
+    if let Some(object) = terminal.as_object_mut() {
+        object.insert("output".to_string(), Value::Array(buffered_output));
+    }
+    terminal
+}
+
 fn serialize_buffered_event(
     value: Value,
     kind: BufferedEventStreamKind,
@@ -508,6 +563,7 @@ fn convert_success_body(
     log: Arc<LogWriter>,
     estimated_input_tokens: Option<u64>,
     request_body: Option<&str>,
+    response_format: Option<&str>,
 ) -> Result<ConvertedBody, Response> {
     match transform {
         FormatTransform::KiroToAnthropic => {
@@ -518,6 +574,9 @@ fn convert_success_body(
         }
         FormatTransform::CodexToResponses => {
             convert_codex_to_responses_body(bytes, context, usage, log, request_body)
+        }
+        FormatTransform::CodexToImagesGenerations => {
+            convert_codex_to_images_generation_body(bytes, context, usage, log, response_format)
         }
         FormatTransform::CodexToAnthropic => {
             convert_codex_to_anthropic_body(bytes, context, usage, log, request_body)
@@ -593,6 +652,29 @@ fn convert_codex_to_responses_body(
             return Err(respond_transform_error(context, usage, log, message));
         }
     };
+    Ok(ConvertedBody {
+        output: converted,
+        usage,
+    })
+}
+
+fn convert_codex_to_images_generation_body(
+    bytes: &Bytes,
+    context: &mut LogContext,
+    usage: UsageSnapshot,
+    log: Arc<LogWriter>,
+    response_format: Option<&str>,
+) -> Result<ConvertedBody, Response> {
+    let converted =
+        match super::super::super::openai_compat::images::codex_response_to_images_generation(
+            bytes,
+            response_format,
+        ) {
+            Ok(converted) => converted,
+            Err(message) => {
+                return Err(respond_transform_error(context, usage, log, message));
+            }
+        };
     Ok(ConvertedBody {
         output: converted,
         usage,
@@ -815,6 +897,7 @@ fn provider_for_tokens(transform: FormatTransform, provider: &str) -> &str {
         FormatTransform::KiroToAnthropic => "anthropic",
         FormatTransform::CodexToChat => "openai",
         FormatTransform::CodexToResponses => "openai-response",
+        FormatTransform::CodexToImagesGenerations => "openai",
         FormatTransform::CodexToAnthropic => "anthropic",
         _ => provider,
     }

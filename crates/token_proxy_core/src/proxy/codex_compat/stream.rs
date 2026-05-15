@@ -3,7 +3,7 @@ use futures_util::{stream::try_unfold, StreamExt};
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::super::log::{attach_response_body, build_log_entry, LogContext, LogWriter};
 use super::super::response::STREAM_DROPPED_ERROR;
@@ -403,7 +403,20 @@ pub(crate) fn stream_codex_to_responses<E>(
 where
     E: std::error::Error + Send + Sync + 'static,
 {
-    let state = CodexToResponsesState::new(upstream, context, log, token_tracker);
+    stream_codex_to_responses_with_semantic_timeout(upstream, context, log, token_tracker, None)
+}
+
+pub(crate) fn stream_codex_to_responses_with_semantic_timeout<E>(
+    upstream: impl futures_util::stream::Stream<Item = Result<Bytes, E>> + Unpin + Send + 'static,
+    context: LogContext,
+    log: Arc<LogWriter>,
+    token_tracker: RequestTokenTracker,
+    semantic_timeout: Option<Duration>,
+) -> impl futures_util::stream::Stream<Item = Result<Bytes, std::io::Error>> + Send
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    let state = CodexToResponsesState::new(upstream, context, log, token_tracker, semantic_timeout);
     try_unfold(state, |state| async move { state.step().await })
 }
 
@@ -425,6 +438,8 @@ struct CodexToResponsesState<S> {
     saw_terminal_event: bool,
     response_error_override: Option<String>,
     response_body_buf: String,
+    semantic_timeout: Option<Duration>,
+    last_semantic_event_at: Instant,
 }
 
 impl<S> CodexToResponsesState<S> {
@@ -455,6 +470,7 @@ where
         context: LogContext,
         log: Arc<LogWriter>,
         token_tracker: RequestTokenTracker,
+        semantic_timeout: Option<Duration>,
     ) -> Self {
         let now_seconds = now_unix_seconds();
         let tool_name_map =
@@ -481,6 +497,8 @@ where
             saw_terminal_event: false,
             response_error_override: None,
             response_body_buf: String::new(),
+            semantic_timeout,
+            last_semantic_event_at: Instant::now(),
         }
     }
 
@@ -493,8 +511,12 @@ where
             if self.upstream_ended {
                 return Ok(None);
             }
+            if self.sent_done {
+                self.log_usage_once();
+                return Ok(None);
+            }
 
-            match self.upstream.next().await {
+            match self.next_upstream_item().await? {
                 Some(Ok(chunk)) => {
                     self.context.mark_upstream_first_byte();
                     self.collector.push_chunk(&chunk);
@@ -502,9 +524,13 @@ where
                         .push_str(&String::from_utf8_lossy(chunk.as_ref()));
                     let mut events = Vec::new();
                     self.parser.push_chunk(&chunk, |data| events.push(data));
+                    let had_events = !events.is_empty();
                     let mut texts = Vec::new();
                     for data in events {
                         self.handle_event(&data, &mut texts);
+                    }
+                    if !had_events {
+                        self.push_semantic_timeout_if_due();
                     }
                     for text in texts {
                         self.token_tracker.add_output_text(&text).await;
@@ -564,6 +590,7 @@ where
             self.fail_stream(malformed_event_message(&value));
             return;
         };
+        self.last_semantic_event_at = Instant::now();
         if event_type == "response.created" {
             self.update_from_created(&value);
         }
@@ -579,6 +606,56 @@ where
         }
         self.out
             .push_back(Bytes::from(format!("data: {}\n\n", value.to_string())));
+        if self.saw_terminal_event {
+            self.out.push_back(Bytes::from("data: [DONE]\n\n"));
+            self.sent_done = true;
+        }
+    }
+
+    async fn next_upstream_item(&mut self) -> Result<Option<Result<Bytes, E>>, std::io::Error> {
+        let Some(timeout) = self.semantic_timeout else {
+            return Ok(self.upstream.next().await);
+        };
+        let elapsed = self.last_semantic_event_at.elapsed();
+        if elapsed >= timeout {
+            return Ok(Some(Ok(self.semantic_timeout_chunk(timeout))));
+        }
+        let remaining = timeout.saturating_sub(elapsed);
+        match tokio::time::timeout(remaining, self.upstream.next()).await {
+            Ok(item) => Ok(item),
+            Err(_) => Ok(Some(Ok(self.semantic_timeout_chunk(timeout)))),
+        }
+    }
+
+    fn semantic_timeout_chunk(&mut self, timeout: Duration) -> Bytes {
+        let message = format!(
+            "OpenAI Responses stream semantic timeout after {}s.",
+            timeout.as_secs_f64()
+        );
+        tracing::warn!(
+            path = %self.context.path,
+            provider = %self.context.provider,
+            upstream_id = %self.context.upstream_id,
+            timeout_secs = timeout.as_secs_f64(),
+            "OpenAI Responses stream semantic timeout"
+        );
+        self.response_error_override = Some(message.clone());
+        stream_responses_error_done_sse(&message)
+    }
+
+    fn push_semantic_timeout_if_due(&mut self) {
+        if self.sent_done {
+            return;
+        }
+        let Some(timeout) = self.semantic_timeout else {
+            return;
+        };
+        if self.last_semantic_event_at.elapsed() < timeout {
+            return;
+        }
+        let chunk = self.semantic_timeout_chunk(timeout);
+        self.sent_done = true;
+        self.out.push_back(chunk);
     }
 
     fn log_usage_once(&mut self) {
@@ -706,6 +783,12 @@ pub(crate) fn stream_responses_error_sse(message: &str) -> Bytes {
             }
         })
     ))
+}
+
+fn stream_responses_error_done_sse(message: &str) -> Bytes {
+    let mut bytes = stream_responses_error_sse(message).to_vec();
+    bytes.extend_from_slice(b"data: [DONE]\n\n");
+    Bytes::from(bytes)
 }
 
 fn stream_responses_compatible_incomplete_sse(id: &str, created: i64, model: &str) -> Bytes {

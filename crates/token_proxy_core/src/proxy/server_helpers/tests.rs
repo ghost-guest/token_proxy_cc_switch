@@ -12,6 +12,7 @@ fn force_openai_chat_stream_usage_inserts_stream_options_include_usage() {
             original_model: None,
             mapped_model: None,
             reasoning_effort: None,
+            response_format: None,
             estimated_input_tokens: None,
         };
         let body = ReplayableBody::from_bytes(input);
@@ -99,6 +100,7 @@ fn apply_reasoning_suffix_for_chat_sets_reasoning_effort_and_model() {
             original_model: Some("gpt-4.1".to_string()),
             mapped_model: None,
             reasoning_effort: Some("high".to_string()),
+            response_format: None,
             estimated_input_tokens: None,
         };
         let body = ReplayableBody::from_bytes(Bytes::from_static(
@@ -133,6 +135,7 @@ fn apply_reasoning_suffix_for_responses_sets_reasoning_object_and_model() {
             original_model: Some("gpt-4.1".to_string()),
             mapped_model: None,
             reasoning_effort: Some("high".to_string()),
+            response_format: None,
             estimated_input_tokens: None,
         };
         let body = ReplayableBody::from_bytes(Bytes::from_static(
@@ -170,6 +173,7 @@ fn apply_reasoning_suffix_prefers_mapped_model_as_upstream_model() {
             original_model: Some("gpt-4.1".to_string()),
             mapped_model: Some("o3-mini".to_string()),
             reasoning_effort: Some("high".to_string()),
+            response_format: None,
             estimated_input_tokens: None,
         };
         let body = ReplayableBody::from_bytes(Bytes::from_static(

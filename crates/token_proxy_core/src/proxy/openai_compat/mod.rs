@@ -7,6 +7,7 @@ use super::{
 };
 
 mod extract;
+pub(crate) mod images;
 mod input;
 mod message;
 mod tools;
@@ -46,8 +47,10 @@ pub(crate) enum FormatTransform {
     ChatToCodex,
     ResponsesToCodex,
     ResponsesCompactToCodex,
+    ImagesGenerationsToCodex,
     CodexToChat,
     CodexToResponses,
+    CodexToImagesGenerations,
     CodexToAnthropic,
 }
 
@@ -110,8 +113,13 @@ pub(crate) async fn transform_request_body(
         FormatTransform::ResponsesCompactToCodex => {
             codex_compat::responses_compact_request_to_codex(body, model_hint)
         }
+        FormatTransform::ImagesGenerationsToCodex => {
+            let responses_body = images::images_generation_request_to_responses(body)?;
+            codex_compat::responses_request_to_codex(&responses_body, None)
+        }
         FormatTransform::CodexToChat
         | FormatTransform::CodexToResponses
+        | FormatTransform::CodexToImagesGenerations
         | FormatTransform::CodexToAnthropic => Ok(body.clone()),
     }
 }
@@ -155,12 +163,16 @@ pub(crate) fn transform_response_body(
             let intermediate = codex_compat::codex_response_to_responses(bytes, None)?;
             anthropic_compat::responses_response_to_anthropic(&intermediate, model_hint)
         }
+        FormatTransform::CodexToImagesGenerations => {
+            images::codex_response_to_images_generation(bytes, None)
+        }
         FormatTransform::CodexToChat | FormatTransform::CodexToResponses => {
             Err("Codex response conversion is handled upstream.".to_string())
         }
         FormatTransform::ChatToCodex
         | FormatTransform::ResponsesToCodex
-        | FormatTransform::ResponsesCompactToCodex => {
+        | FormatTransform::ResponsesCompactToCodex
+        | FormatTransform::ImagesGenerationsToCodex => {
             Err("Codex response conversion is handled upstream.".to_string())
         }
     }

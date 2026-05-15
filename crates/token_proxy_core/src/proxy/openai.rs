@@ -47,6 +47,10 @@ pub(crate) fn is_openai_native_resource_path(path: &str) -> bool {
         || path.starts_with("/v1/realtime/")
 }
 
+pub(crate) fn is_openai_image_generations_path(path: &str) -> bool {
+    strip_query(path).trim_end_matches('/') == "/v1/images/generations"
+}
+
 fn matches_root(path: &str, root: &str) -> bool {
     path == root || path.starts_with(&format!("{root}/"))
 }

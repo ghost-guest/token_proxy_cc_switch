@@ -9,7 +9,10 @@ use super::{
     dispatch::resolve_retry_fallback_plan, execute::forward_retry_fallback_request,
     prepared::PreparedRequest, ProxyState,
 };
-use crate::proxy::{cooldown_scope::CooldownScope, inbound::detect_inbound_api_format};
+use crate::proxy::{
+    config::InboundApiFormat, cooldown_scope::CooldownScope, inbound::detect_inbound_api_format,
+    openai_compat::FormatTransform,
+};
 
 const CODEX_PROVIDER: &str = "codex";
 
@@ -26,12 +29,13 @@ pub(super) async fn forward_with_provider_fallbacks(
         detect_inbound_api_format(&prepared.path),
         headers,
     );
+    let primary_inbound_format = bridge_inbound_format(prepared.plan.request_transform);
     let primary = forward_upstream_request(
         state.clone(),
         method.clone(),
         prepared.plan.provider,
         &prepared.path,
-        None,
+        primary_inbound_format,
         &prepared.outbound_path_with_query,
         headers,
         &prepared.outbound_body,
@@ -53,6 +57,11 @@ pub(super) async fn forward_with_provider_fallbacks(
         let Some(fallback_plan) =
             resolve_retry_fallback_plan(&state.config, &prepared.path, current_provider)
         else {
+            tracing::warn!(
+                path = %prepared.path,
+                primary = %current_provider,
+                "primary provider exhausted, but no compatible alternate provider is available"
+            );
             break;
         };
         if !attempted_fallback_providers.insert(fallback_plan.provider) {
@@ -100,6 +109,13 @@ pub(super) async fn forward_with_provider_fallbacks(
 
     finalize_codex_responses_cooldown(&state, &codex_cooldown_scope, current_response.status());
     current_response
+}
+
+fn bridge_inbound_format(transform: FormatTransform) -> Option<InboundApiFormat> {
+    match transform {
+        FormatTransform::ImagesGenerationsToCodex => Some(InboundApiFormat::OpenaiResponses),
+        _ => None,
+    }
 }
 
 fn finalize_codex_responses_cooldown(

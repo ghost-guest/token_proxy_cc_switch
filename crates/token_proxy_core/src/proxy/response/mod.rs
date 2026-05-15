@@ -101,6 +101,7 @@ pub(super) async fn build_proxy_response(
             response_transform,
             model_override,
             meta.estimated_input_tokens,
+            meta.response_format.as_deref(),
             upstream_no_data_timeout,
         )
         .await
@@ -115,6 +116,7 @@ pub(super) async fn build_proxy_response(
             response_transform,
             model_override,
             meta.estimated_input_tokens,
+            meta.response_format.as_deref(),
             upstream_no_data_timeout,
         )
         .await
@@ -187,6 +189,7 @@ pub(super) async fn build_proxy_response_buffered(
         response_transform,
         model_override,
         meta.estimated_input_tokens,
+        meta.response_format.as_deref(),
         upstream_no_data_timeout,
     )
     .await

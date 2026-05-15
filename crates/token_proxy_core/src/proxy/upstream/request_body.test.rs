@@ -262,6 +262,7 @@ async fn json_transform_pipeline_applies_reasoning_filters_and_role_rewrite_toge
         original_model: Some("gpt-5".to_string()),
         mapped_model: None,
         reasoning_effort: Some("high".to_string()),
+        response_format: None,
         estimated_input_tokens: None,
     };
     let body = ReplayableBody::from_bytes(Bytes::from_static(

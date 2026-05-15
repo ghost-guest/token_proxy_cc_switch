@@ -1,8 +1,8 @@
 use axum::body::Bytes;
-use futures_util::StreamExt;
+use futures_util::{future, StreamExt};
 use serde_json::{json, Value};
 use sqlx::Row;
-use std::{sync::Arc, time::Instant};
+use std::{sync::Arc, time::Duration, time::Instant};
 
 use crate::proxy::log::{LogContext, LogWriter};
 
@@ -41,6 +41,210 @@ fn stream_with_logging_marks_first_output_on_responses_non_preamble_event() {
             first_output_ms.is_some(),
             "first non-preamble Responses event should count as client output"
         );
+    });
+}
+
+#[test]
+fn stream_with_logging_closes_after_responses_terminal_without_upstream_close() {
+    super::run_async(async {
+        let (log, context, _sqlite_pool) = super::setup_responses_stream().await;
+        let upstream = futures_util::stream::unfold(0usize, |index| async move {
+            if index == 0 {
+                return Some((
+                    Ok::<Bytes, std::io::Error>(Bytes::from(
+                        "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"usage\":{\"input_tokens\":1,\"output_tokens\":2}}}\n\n",
+                    )),
+                    1,
+                ));
+            }
+            future::pending::<Option<(Result<Bytes, std::io::Error>, usize)>>().await
+        })
+        .boxed();
+        let token_tracker = crate::proxy::token_rate::TokenRateTracker::new()
+            .register(None, None)
+            .await;
+        let stream =
+            super::super::streaming::stream_with_logging(upstream, context, log, token_tracker);
+
+        let chunks = tokio::time::timeout(
+            Duration::from_millis(200),
+            stream
+                .map(|item| item.expect("stream item"))
+                .collect::<Vec<Bytes>>(),
+        )
+        .await
+        .expect("stream should end after terminal Responses event");
+
+        let body = chunks
+            .iter()
+            .map(|chunk| String::from_utf8_lossy(chunk).to_string())
+            .collect::<String>();
+        assert!(body.contains("\"type\":\"response.completed\""));
+        assert!(body.contains("data: [DONE]"));
+    });
+}
+
+#[test]
+fn stream_with_logging_semantic_timeout_emits_protocol_error_and_done() {
+    super::run_async(async {
+        let (log, mut context, sqlite_pool) = super::setup_responses_stream().await;
+        context.request_headers = Some("{}".to_string());
+        let upstream = futures_util::stream::unfold(0usize, |index| async move {
+            if index == 0 {
+                return Some((
+                    Ok::<Bytes, std::io::Error>(Bytes::from(
+                        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n",
+                    )),
+                    1,
+                ));
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            Some((Ok::<Bytes, std::io::Error>(Bytes::from(":\n\n")), index + 1))
+        })
+        .boxed();
+        let token_tracker = crate::proxy::token_rate::TokenRateTracker::new()
+            .register(None, None)
+            .await;
+        let stream = super::super::streaming::stream_with_logging_and_semantic_timeout(
+            upstream,
+            context,
+            log,
+            token_tracker,
+            Some(Duration::from_millis(40)),
+        );
+
+        let chunks = tokio::time::timeout(
+            Duration::from_millis(500),
+            stream
+                .map(|item| item.expect("semantic timeout should be an SSE event"))
+                .collect::<Vec<Bytes>>(),
+        )
+        .await
+        .expect("heartbeat-only stream should not hang");
+        let body = chunks
+            .iter()
+            .map(|chunk| String::from_utf8_lossy(chunk).to_string())
+            .collect::<String>();
+
+        assert!(body.contains("\"type\":\"error\""), "chunks: {body}");
+        assert!(body.contains("\"type\":\"proxy_error\""), "chunks: {body}");
+        assert!(body.contains("semantic timeout"), "chunks: {body}");
+        assert!(body.contains("data: [DONE]"), "chunks: {body}");
+
+        super::wait_for_log_rows(&sqlite_pool, 1).await;
+        let row = sqlx::query("SELECT response_error FROM request_logs ORDER BY id LIMIT 1")
+            .fetch_one(&sqlite_pool)
+            .await
+            .expect("request log row");
+        let response_error = row
+            .try_get::<Option<String>, _>("response_error")
+            .expect("response_error");
+        assert!(
+            response_error
+                .as_deref()
+                .is_some_and(|value| value.contains("semantic timeout")),
+            "unexpected response_error: {response_error:?}"
+        );
+    });
+}
+
+#[test]
+fn stream_with_model_override_closes_after_responses_terminal_without_upstream_close() {
+    super::run_async(async {
+        let (log, context, _sqlite_pool) = super::setup_responses_stream().await;
+        let upstream = futures_util::stream::unfold(0usize, |index| async move {
+            if index == 0 {
+                return Some((
+                    Ok::<Bytes, std::io::Error>(Bytes::from(
+                        "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"model\":\"actual-model\"}}\n\n",
+                    )),
+                    1,
+                ));
+            }
+            future::pending::<Option<(Result<Bytes, std::io::Error>, usize)>>().await
+        })
+        .boxed();
+        let token_tracker = crate::proxy::token_rate::TokenRateTracker::new()
+            .register(None, None)
+            .await;
+        let stream =
+            super::super::streaming::stream_with_logging_and_model_override_semantic_timeout(
+                upstream,
+                context,
+                log,
+                "visible-model".to_string(),
+                token_tracker,
+                Some(Duration::from_secs(30)),
+            );
+
+        let chunks = tokio::time::timeout(
+            Duration::from_millis(200),
+            stream
+                .map(|item| item.expect("stream item"))
+                .collect::<Vec<Bytes>>(),
+        )
+        .await
+        .expect("model override stream should end after terminal event");
+        let body = chunks
+            .iter()
+            .map(|chunk| String::from_utf8_lossy(chunk).to_string())
+            .collect::<String>();
+
+        assert!(
+            body.contains("\"model\":\"visible-model\""),
+            "chunks: {body}"
+        );
+        assert!(body.contains("data: [DONE]"), "chunks: {body}");
+    });
+}
+
+#[test]
+fn stream_with_model_override_semantic_timeout_emits_protocol_error_and_done() {
+    super::run_async(async {
+        let (log, context, _sqlite_pool) = super::setup_responses_stream().await;
+        let upstream = futures_util::stream::unfold(0usize, |index| async move {
+            if index == 0 {
+                return Some((
+                    Ok::<Bytes, std::io::Error>(Bytes::from(
+                        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n",
+                    )),
+                    1,
+                ));
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            Some((Ok::<Bytes, std::io::Error>(Bytes::from(":\n\n")), index + 1))
+        })
+        .boxed();
+        let token_tracker = crate::proxy::token_rate::TokenRateTracker::new()
+            .register(None, None)
+            .await;
+        let stream =
+            super::super::streaming::stream_with_logging_and_model_override_semantic_timeout(
+                upstream,
+                context,
+                log,
+                "visible-model".to_string(),
+                token_tracker,
+                Some(Duration::from_millis(40)),
+            );
+
+        let chunks = tokio::time::timeout(
+            Duration::from_millis(500),
+            stream
+                .map(|item| item.expect("semantic timeout should be an SSE event"))
+                .collect::<Vec<Bytes>>(),
+        )
+        .await
+        .expect("heartbeat-only model override stream should not hang");
+        let body = chunks
+            .iter()
+            .map(|chunk| String::from_utf8_lossy(chunk).to_string())
+            .collect::<String>();
+
+        assert!(body.contains("\"type\":\"error\""), "chunks: {body}");
+        assert!(body.contains("\"type\":\"proxy_error\""), "chunks: {body}");
+        assert!(body.contains("semantic timeout"), "chunks: {body}");
+        assert!(body.contains("data: [DONE]"), "chunks: {body}");
     });
 }
 

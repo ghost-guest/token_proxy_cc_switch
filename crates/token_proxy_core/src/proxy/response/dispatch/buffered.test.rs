@@ -181,6 +181,7 @@ async fn buffered_non_stream_event_stream_chat_completion_returns_json() {
         FormatTransform::None,
         None,
         None,
+        None,
         Duration::from_secs(1),
     )
     .await;
@@ -221,6 +222,7 @@ async fn buffered_non_stream_responses_event_stream_chat_request_returns_json() 
         Arc::new(LogWriter::new(None)),
         tracker,
         FormatTransform::None,
+        None,
         None,
         None,
         Duration::from_secs(1),

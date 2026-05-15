@@ -20,6 +20,7 @@ pub(super) async fn build_stream_response(
     response_transform: FormatTransform,
     model_override: Option<&str>,
     estimated_input_tokens: Option<u64>,
+    response_format: Option<&str>,
     upstream_no_data_timeout: Duration,
 ) -> Response {
     stream::build_stream_response(
@@ -32,6 +33,7 @@ pub(super) async fn build_stream_response(
         response_transform,
         model_override,
         estimated_input_tokens,
+        response_format,
         upstream_no_data_timeout,
     )
     .await
@@ -47,6 +49,7 @@ pub(super) async fn build_buffered_response(
     response_transform: FormatTransform,
     model_override: Option<&str>,
     estimated_input_tokens: Option<u64>,
+    response_format: Option<&str>,
     upstream_no_data_timeout: Duration,
 ) -> Response {
     buffered::build_buffered_response(
@@ -59,6 +62,7 @@ pub(super) async fn build_buffered_response(
         response_transform,
         model_override,
         estimated_input_tokens,
+        response_format,
         upstream_no_data_timeout,
     )
     .await
