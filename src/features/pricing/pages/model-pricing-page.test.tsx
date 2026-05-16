@@ -40,11 +40,11 @@ vi.mock("sonner", () => ({
 
 const snapshot: ModelPricingSettingsSnapshot = {
   settings: {
-    version: "2026-05-08.openai-openrouter-v2",
+    version: "2026-05-16.providerless-v1",
     models: [
       {
         modelId: "gpt-5.5",
-        aliases: ["gpt-5.5", "openai/gpt-5.5"],
+        aliases: [],
         short: {
           inputNanoUsdPerToken: 5_000,
           cachedInputNanoUsdPerToken: 500,
@@ -60,7 +60,7 @@ const snapshot: ModelPricingSettingsSnapshot = {
     ],
   },
   defaultSettings: {
-    version: "2026-05-08.openai-openrouter-v2",
+    version: "2026-05-16.providerless-v1",
     models: [],
   },
 };

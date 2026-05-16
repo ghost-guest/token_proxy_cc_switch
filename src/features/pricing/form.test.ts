@@ -8,11 +8,11 @@ import {
 import type { ModelPricingSettings } from "@/features/pricing/types";
 
 const settings: ModelPricingSettings = {
-  version: "2026-05-08.openai-openrouter-v2",
+  version: "2026-05-16.providerless-v1",
   models: [
     {
       modelId: "gpt-5.5",
-      aliases: ["gpt-5.5", "openai/gpt-5.5"],
+      aliases: ["gpt-5.5-latest"],
       short: {
         inputNanoUsdPerToken: 5_000,
         cachedInputNanoUsdPerToken: 500,
@@ -34,7 +34,7 @@ describe("pricing/form", () => {
 
     expect(rows[0]).toMatchObject({
       modelId: "gpt-5.5",
-      aliasesText: "gpt-5.5, openai/gpt-5.5",
+      aliasesText: "gpt-5.5-latest",
       shortInputUsdPerMillion: "5.000",
       shortCachedUsdPerMillion: "0.500",
       shortOutputUsdPerMillion: "30.000",
@@ -56,7 +56,7 @@ describe("pricing/form", () => {
         models: [
           {
             modelId: "gpt-5.5",
-            aliases: ["openai/gpt-5.5"],
+            aliases: ["gpt-5.5-latest"],
             short: {
               inputNanoUsdPerToken: 5_000,
               cachedInputNanoUsdPerToken: 500,
@@ -82,7 +82,61 @@ describe("pricing/form", () => {
         ...row,
         id: "second",
         modelId: "other",
-        aliasesText: " openai/gpt-5.5 ",
+        aliasesText: " gpt-5.5-latest ",
+      },
+    ]);
+
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects duplicate providerless lookup keys across rows", () => {
+    const row: ModelPricingFormRow = toPricingRows(settings)[0];
+    const result = toPricingSettingsInput([
+      row,
+      {
+        ...row,
+        id: "second",
+        modelId: "openai/gpt-5.5",
+        aliasesText: "",
+      },
+    ]);
+
+    expect(result.ok).toBe(false);
+  });
+
+  it("drops provider-prefixed self aliases", () => {
+    const row: ModelPricingFormRow = {
+      ...toPricingRows(settings)[0],
+      aliasesText: "openai/gpt-5.5",
+    };
+    const result = toPricingSettingsInput([row]);
+
+    expect(result).toEqual({
+      ok: true,
+      input: {
+        models: [
+          expect.objectContaining({
+            modelId: "gpt-5.5",
+            aliases: [],
+          }),
+        ],
+      },
+    });
+  });
+
+  it("normalizes known vendor spelling variants for duplicate checks", () => {
+    const row: ModelPricingFormRow = toPricingRows(settings)[0];
+    const result = toPricingSettingsInput([
+      {
+        ...row,
+        modelId: "claude-opus-4-7",
+        aliasesText: "",
+      },
+      {
+        ...row,
+        id: "second",
+        modelId: "anthropic/claude-opus-4.7",
+        aliasesText: "",
       },
     ]);
 
@@ -93,8 +147,8 @@ describe("pricing/form", () => {
     const row: ModelPricingFormRow = {
       ...toPricingRows(settings)[0],
       id: "decimal-row",
-      modelId: "moonshotai/kimi-k2.6",
-      aliasesText: "moonshotai/kimi-k2.6",
+      modelId: "kimi-k2.6",
+      aliasesText: "kimi-k2.6",
       shortInputUsdPerMillion: "0.750",
       shortCachedUsdPerMillion: "0.150",
       shortOutputUsdPerMillion: "3.500",
@@ -107,7 +161,7 @@ describe("pricing/form", () => {
       input: {
         models: [
           {
-            modelId: "moonshotai/kimi-k2.6",
+            modelId: "kimi-k2.6",
             aliases: [],
             short: {
               inputNanoUsdPerToken: 750,

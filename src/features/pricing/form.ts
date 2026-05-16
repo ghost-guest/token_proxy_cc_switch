@@ -95,20 +95,22 @@ export function toPricingSettingsInput(
     if (!modelId) {
       return { ok: false, message: m.model_pricing_error_model_required() };
     }
-    const normalizedModelId = normalizeAlias(modelId);
+    const rowLookupKeys = new Set(modelLookupKeys(modelId));
     const rowAliases = parseAliases(row.aliasesText).filter(
-      (alias) => normalizeAlias(alias) !== normalizedModelId,
+      (alias) =>
+        !modelLookupKeys(alias).some((lookupKey) => rowLookupKeys.has(lookupKey)),
     );
     const canonicalAliases = [modelId, ...rowAliases];
     for (const alias of canonicalAliases) {
-      const normalized = normalizeAlias(alias);
-      if (aliases.has(normalized)) {
-        return {
-          ok: false,
-          message: m.model_pricing_error_duplicate_alias({ alias }),
-        };
+      for (const lookupKey of modelLookupKeys(alias)) {
+        if (aliases.has(lookupKey)) {
+          return {
+            ok: false,
+            message: m.model_pricing_error_duplicate_alias({ alias: lookupKey }),
+          };
+        }
+        aliases.add(lookupKey);
       }
-      aliases.add(normalized);
     }
 
     const short = parseTier({
@@ -240,11 +242,13 @@ function parseAliases(value: string) {
     if (!trimmed) {
       continue;
     }
-    const normalized = normalizeAlias(trimmed);
-    if (seen.has(normalized)) {
+    const lookupKeys = modelLookupKeys(trimmed);
+    if (lookupKeys.some((lookupKey) => seen.has(lookupKey))) {
       continue;
     }
-    seen.add(normalized);
+    for (const lookupKey of lookupKeys) {
+      seen.add(lookupKey);
+    }
     aliases.push(trimmed);
   }
   return aliases;
@@ -252,4 +256,21 @@ function parseAliases(value: string) {
 
 function normalizeAlias(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, "-");
+}
+
+function modelLookupKeys(value: string) {
+  const normalized = normalizeAlias(value);
+  const keys = [canonicalModelLookupKey(normalized)];
+  const slashIndex = normalized.indexOf("/");
+  if (slashIndex >= 0) {
+    const suffix = canonicalModelLookupKey(normalized.slice(slashIndex + 1));
+    if (suffix && !keys.includes(suffix)) {
+      keys.push(suffix);
+    }
+  }
+  return keys.filter((key) => key.length > 0);
+}
+
+function canonicalModelLookupKey(value: string) {
+  return value === "claude-opus-4.7" ? "claude-opus-4-7" : value;
 }

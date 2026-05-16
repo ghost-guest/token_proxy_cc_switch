@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::fmt::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const DEFAULT_PRICING_VERSION: &str = "2026-05-08.openai-openrouter-v2";
+pub const DEFAULT_PRICING_VERSION: &str = "2026-05-16.providerless-v1";
 
 const DEFAULT_LONG_CONTEXT_INPUT_TOKEN_THRESHOLD: u64 = 272_000;
 const SETTINGS_ROW_ID: i64 = 1;
@@ -75,9 +75,10 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
     ModelPricingSettings {
         version: DEFAULT_PRICING_VERSION.to_string(),
         models: vec![
+            // Default ids stay providerless; request hot mappings handle provider-prefixed routes.
             ModelPricingModel {
                 model_id: "gpt-5.5".to_string(),
-                aliases: vec!["gpt-5.5".to_string(), "openai/gpt-5.5".to_string()],
+                aliases: Vec::new(),
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 5_000,
                     cached_input_nano_usd_per_token: 500,
@@ -94,7 +95,7 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
             },
             ModelPricingModel {
                 model_id: "gpt-5.4".to_string(),
-                aliases: vec!["gpt-5.4".to_string(), "openai/gpt-5.4".to_string()],
+                aliases: Vec::new(),
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 2_500,
                     cached_input_nano_usd_per_token: 250,
@@ -111,10 +112,7 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
             },
             ModelPricingModel {
                 model_id: "gpt-5.4-mini".to_string(),
-                aliases: vec![
-                    "gpt-5.4-mini".to_string(),
-                    "openai/gpt-5.4-mini".to_string(),
-                ],
+                aliases: Vec::new(),
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 750,
                     cached_input_nano_usd_per_token: 75,
@@ -123,13 +121,10 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
                 long: None,
                 long_context_input_token_threshold: None,
             },
-            // Pricing snapshot sourced from OpenRouter model catalog API on 2026-05-08.
+            // Pricing snapshot sourced from official vendor pages where available, plus OpenRouter for catalog-only models.
             ModelPricingModel {
                 model_id: "claude-sonnet-4.6".to_string(),
-                aliases: vec![
-                    "claude-sonnet-4.6".to_string(),
-                    "anthropic/claude-sonnet-4.6".to_string(),
-                ],
+                aliases: Vec::new(),
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 3_000,
                     cached_input_nano_usd_per_token: 300,
@@ -139,8 +134,8 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
                 long_context_input_token_threshold: None,
             },
             ModelPricingModel {
-                model_id: "anthropic/claude-opus-4.7".to_string(),
-                aliases: vec!["anthropic/claude-opus-4.7".to_string()],
+                model_id: "claude-opus-4-7".to_string(),
+                aliases: Vec::new(),
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 5_000,
                     cached_input_nano_usd_per_token: 500,
@@ -150,8 +145,8 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
                 long_context_input_token_threshold: None,
             },
             ModelPricingModel {
-                model_id: "google/gemini-3-flash-preview".to_string(),
-                aliases: vec!["google/gemini-3-flash-preview".to_string()],
+                model_id: "gemini-3-flash-preview".to_string(),
+                aliases: Vec::new(),
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 500,
                     cached_input_nano_usd_per_token: 50,
@@ -161,8 +156,8 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
                 long_context_input_token_threshold: None,
             },
             ModelPricingModel {
-                model_id: "deepseek/deepseek-v4-flash".to_string(),
-                aliases: vec!["deepseek/deepseek-v4-flash".to_string()],
+                model_id: "deepseek-v4-flash".to_string(),
+                aliases: Vec::new(),
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 140,
                     cached_input_nano_usd_per_token: 3,
@@ -172,8 +167,8 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
                 long_context_input_token_threshold: None,
             },
             ModelPricingModel {
-                model_id: "deepseek/deepseek-v4-pro".to_string(),
-                aliases: vec!["deepseek/deepseek-v4-pro".to_string()],
+                model_id: "deepseek-v4-pro".to_string(),
+                aliases: Vec::new(),
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 435,
                     cached_input_nano_usd_per_token: 4,
@@ -184,10 +179,7 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
             },
             ModelPricingModel {
                 model_id: "gpt-5.3-codex".to_string(),
-                aliases: vec![
-                    "gpt-5.3-codex".to_string(),
-                    "openai/gpt-5.3-codex".to_string(),
-                ],
+                aliases: Vec::new(),
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 1_750,
                     cached_input_nano_usd_per_token: 175,
@@ -197,8 +189,8 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
                 long_context_input_token_threshold: None,
             },
             ModelPricingModel {
-                model_id: "moonshotai/kimi-k2.6".to_string(),
-                aliases: vec!["moonshotai/kimi-k2.6".to_string()],
+                model_id: "kimi-k2.6".to_string(),
+                aliases: Vec::new(),
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 750,
                     cached_input_nano_usd_per_token: 150,
@@ -209,25 +201,11 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
             },
             ModelPricingModel {
                 model_id: "gpt-image-2".to_string(),
-                aliases: vec!["gpt-image-2".to_string(), "openai/gpt-image-2".to_string()],
+                aliases: vec!["gpt-image-2-2026-04-21".to_string()],
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 8_000,
                     cached_input_nano_usd_per_token: 2_000,
                     output_nano_usd_per_token: 30_000,
-                },
-                long: None,
-                long_context_input_token_threshold: None,
-            },
-            ModelPricingModel {
-                model_id: "gpt-5.4-image-2".to_string(),
-                aliases: vec![
-                    "gpt-5.4-image-2".to_string(),
-                    "openai/gpt-5.4-image-2".to_string(),
-                ],
-                short: ModelPricingTier {
-                    input_nano_usd_per_token: 8_000,
-                    cached_input_nano_usd_per_token: 2_000,
-                    output_nano_usd_per_token: 15_000,
                 },
                 long: None,
                 long_context_input_token_threshold: None,
@@ -411,14 +389,28 @@ fn normalize_model_pricing_settings(
         }
 
         let mut aliases = Vec::new();
-        push_alias(&mut aliases, model_id);
+        let mut row_lookup_keys: HashSet<String> =
+            model_lookup_keys(model_id).into_iter().collect();
         for alias in model.aliases {
-            push_alias(&mut aliases, &alias);
+            let trimmed = alias.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let alias_lookup_keys = model_lookup_keys(trimmed);
+            if alias_lookup_keys
+                .iter()
+                .any(|lookup_key| row_lookup_keys.contains(lookup_key))
+            {
+                continue;
+            }
+            for lookup_key in alias_lookup_keys {
+                row_lookup_keys.insert(lookup_key);
+            }
+            aliases.push(trimmed.to_string());
         }
-        for alias in &aliases {
-            let normalized = normalize_model_alias(alias);
-            if !normalized_aliases.insert(normalized) {
-                return Err(format!("Duplicate model pricing alias: {alias}"));
+        for lookup_key in row_lookup_keys {
+            if !normalized_aliases.insert(lookup_key.clone()) {
+                return Err(format!("Duplicate model pricing alias: {lookup_key}"));
             }
         }
 
@@ -449,21 +441,6 @@ fn normalize_model_pricing_settings(
     };
 
     Ok(ModelPricingSettings { version, models })
-}
-
-fn push_alias(aliases: &mut Vec<String>, value: &str) {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return;
-    }
-    let normalized = normalize_model_alias(trimmed);
-    if aliases
-        .iter()
-        .any(|existing| normalize_model_alias(existing) == normalized)
-    {
-        return;
-    }
-    aliases.push(trimmed.to_string());
 }
 
 fn pricing_version_for_models(models: &[ModelPricingModel]) -> Result<String, String> {
@@ -584,14 +561,11 @@ fn find_model_price<'a>(
     settings: &'a ModelPricingSettings,
     model: &str,
 ) -> Option<&'a ModelPricingModel> {
-    let normalized = normalize_model_alias(model);
-    settings.models.iter().find(|price| {
-        normalize_model_alias(&price.model_id) == normalized
-            || price
-                .aliases
-                .iter()
-                .any(|alias| normalize_model_alias(alias) == normalized)
-    })
+    let lookup_keys: HashSet<String> = model_lookup_keys(model).into_iter().collect();
+    settings
+        .models
+        .iter()
+        .find(|price| price_matches_lookup_keys(price, &lookup_keys))
 }
 
 fn normalize_model_alias(model: &str) -> String {
@@ -599,6 +573,43 @@ fn normalize_model_alias(model: &str) -> String {
         .trim()
         .to_ascii_lowercase()
         .replace(char::is_whitespace, "-")
+}
+
+fn price_matches_lookup_keys(price: &ModelPricingModel, lookup_keys: &HashSet<String>) -> bool {
+    // Keep default rows providerless while still pricing namespaced upstream model ids.
+    model_lookup_keys(&price.model_id)
+        .into_iter()
+        .any(|key| lookup_keys.contains(&key))
+        || price.aliases.iter().any(|alias| {
+            model_lookup_keys(alias)
+                .into_iter()
+                .any(|key| lookup_keys.contains(&key))
+        })
+}
+
+fn model_lookup_keys(model: &str) -> Vec<String> {
+    let normalized = normalize_model_alias(model);
+    let mut keys = Vec::new();
+    push_model_lookup_key(&mut keys, &normalized);
+    if let Some((_, suffix)) = normalized.split_once('/') {
+        push_model_lookup_key(&mut keys, suffix);
+    }
+    keys
+}
+
+fn push_model_lookup_key(keys: &mut Vec<String>, value: &str) {
+    let key = canonical_model_lookup_key(value);
+    if key.is_empty() || keys.iter().any(|existing| existing == &key) {
+        return;
+    }
+    keys.push(key);
+}
+
+fn canonical_model_lookup_key(model: &str) -> String {
+    match model {
+        "claude-opus-4.7" => "claude-opus-4-7".to_string(),
+        _ => model.to_string(),
+    }
 }
 
 fn now_ms_i64() -> i64 {
@@ -670,6 +681,49 @@ mod tests {
     }
 
     #[test]
+    fn matches_provider_prefixed_models_without_default_prefix_aliases() {
+        let settings = default_model_pricing_settings();
+        let cases = [
+            ("anthropic/claude-opus-4-7", "claude-opus-4-7"),
+            ("anthropic/claude-opus-4.7", "claude-opus-4-7"),
+            ("anthropic/claude-sonnet-4.6", "claude-sonnet-4.6"),
+            ("deepseek/deepseek-v4-pro", "deepseek-v4-pro"),
+            ("moonshotai/kimi-k2.6", "kimi-k2.6"),
+            ("openai/gpt-image-2", "gpt-image-2"),
+            ("gpt-image-2-2026-04-21", "gpt-image-2"),
+        ];
+
+        for (incoming_model, expected_pricing_model) in cases {
+            let cost = calculate_request_cost(
+                &settings,
+                Some(incoming_model),
+                None,
+                Some(1),
+                Some(1),
+                Some(0),
+            )
+            .expect("provider-prefixed model should be priced");
+
+            assert_eq!(cost.pricing_model, expected_pricing_model);
+        }
+    }
+
+    #[test]
+    fn leaves_removed_gpt_5_4_image_model_unpriced() {
+        let settings = default_model_pricing_settings();
+        let cost = calculate_request_cost(
+            &settings,
+            Some("gpt-5.4-image-2"),
+            None,
+            Some(1),
+            Some(1),
+            Some(0),
+        );
+
+        assert!(cost.is_none());
+    }
+
+    #[test]
     fn calculates_long_context_request_cost_from_mapped_model() {
         let settings = default_model_pricing_settings();
         let cost = calculate_request_cost(
@@ -725,6 +779,18 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_default_settings_without_creating_custom_version() {
+        let default_settings = default_model_pricing_settings();
+        let normalized = normalize_model_pricing_settings(ModelPricingSettingsInput {
+            models: default_settings.models.clone(),
+        })
+        .expect("default settings");
+
+        assert_eq!(normalized.version, DEFAULT_PRICING_VERSION);
+        assert_eq!(normalized.models, default_settings.models);
+    }
+
+    #[test]
     fn rejects_duplicate_aliases() {
         let result = normalize_model_pricing_settings(ModelPricingSettingsInput {
             models: vec![
@@ -760,9 +826,52 @@ mod tests {
     }
 
     #[test]
+    fn rejects_duplicate_providerless_lookup_keys() {
+        let result = normalize_model_pricing_settings(ModelPricingSettingsInput {
+            models: vec![
+                ModelPricingModel {
+                    model_id: "openai/custom-model".to_string(),
+                    aliases: Vec::new(),
+                    short: ModelPricingTier {
+                        input_nano_usd_per_token: 1,
+                        cached_input_nano_usd_per_token: 1,
+                        output_nano_usd_per_token: 1,
+                    },
+                    long: None,
+                    long_context_input_token_threshold: None,
+                },
+                ModelPricingModel {
+                    model_id: "custom-model".to_string(),
+                    aliases: Vec::new(),
+                    short: ModelPricingTier {
+                        input_nano_usd_per_token: 1,
+                        cached_input_nano_usd_per_token: 1,
+                        output_nano_usd_per_token: 1,
+                    },
+                    long: None,
+                    long_context_input_token_threshold: None,
+                },
+            ],
+        });
+
+        assert!(result
+            .expect_err("providerless duplicate")
+            .to_ascii_lowercase()
+            .contains("custom-model"));
+    }
+
+    #[test]
     fn default_settings_include_new_vendor_models() {
         let settings = default_model_pricing_settings();
         assert_eq!(settings.version, DEFAULT_PRICING_VERSION);
+        assert!(
+            settings
+                .models
+                .iter()
+                .all(|model| !model.model_id.contains('/')
+                    && model.aliases.iter().all(|alias| !alias.contains('/'))),
+            "default model pricing should use providerless model ids"
+        );
 
         let gpt_5_3_codex = settings
             .models
@@ -778,10 +887,35 @@ mod tests {
             .iter()
             .find(|model| model.model_id == "claude-sonnet-4.6")
             .expect("claude-sonnet-4.6 should exist");
-        assert!(claude_sonnet
-            .aliases
+        assert_eq!(claude_sonnet.short.input_nano_usd_per_token, 3_000);
+        assert!(claude_sonnet.aliases.is_empty());
+
+        let claude_opus = settings
+            .models
             .iter()
-            .any(|alias| alias == "anthropic/claude-sonnet-4.6"));
+            .find(|model| model.model_id == "claude-opus-4-7")
+            .expect("claude-opus-4-7 should exist");
+        assert_eq!(claude_opus.short.input_nano_usd_per_token, 5_000);
+        assert_eq!(claude_opus.short.cached_input_nano_usd_per_token, 500);
+        assert_eq!(claude_opus.short.output_nano_usd_per_token, 25_000);
+
+        assert!(settings
+            .models
+            .iter()
+            .any(|model| model.model_id == "gpt-image-2"));
+        let gpt_image_2 = settings
+            .models
+            .iter()
+            .find(|model| model.model_id == "gpt-image-2")
+            .expect("gpt-image-2 should exist");
+        assert_eq!(
+            gpt_image_2.aliases,
+            vec!["gpt-image-2-2026-04-21".to_string()]
+        );
+        assert!(!settings
+            .models
+            .iter()
+            .any(|model| model.model_id == "gpt-5.4-image-2"));
     }
 
     #[tokio::test]
@@ -854,6 +988,50 @@ WHERE id = 1;
                 .ok()
                 .as_deref(),
             Some("short")
+        );
+    }
+
+    #[tokio::test]
+    async fn backfill_prices_provider_prefixed_default_models() {
+        let pool = setup_pool().await;
+        sqlx::query(
+            r#"
+INSERT INTO request_logs (
+  ts_ms,
+  path,
+  provider,
+  upstream_id,
+  model,
+  mapped_model,
+  stream,
+  status,
+  input_tokens,
+  output_tokens,
+  total_tokens,
+  cached_tokens,
+  latency_ms,
+  pricing_version
+)
+VALUES (1, '/v1/chat/completions', 'openai', 'test', 'openai/gpt-5.5', NULL, 0, 200, 100, 10, 110, 20, 30, 'old');
+"#,
+        )
+        .execute(&pool)
+        .await
+        .expect("insert request log");
+
+        backfill_request_log_costs(&pool)
+            .await
+            .expect("backfill costs");
+
+        let row = sqlx::query("SELECT cost_nano_usd, pricing_model FROM request_logs LIMIT 1;")
+            .fetch_one(&pool)
+            .await
+            .expect("priced row");
+
+        assert_eq!(row.try_get::<i64, _>("cost_nano_usd").ok(), Some(710_000));
+        assert_eq!(
+            row.try_get::<String, _>("pricing_model").ok().as_deref(),
+            Some("gpt-5.5")
         );
     }
 }
