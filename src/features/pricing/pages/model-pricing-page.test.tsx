@@ -40,11 +40,11 @@ vi.mock("sonner", () => ({
 
 const snapshot: ModelPricingSettingsSnapshot = {
   settings: {
-    version: "2026-05-16.providerless-v1",
+    version: "2026-05-16.providerless-v2",
     models: [
       {
         modelId: "gpt-5.5",
-        aliases: [],
+        aliases: ["openai/gpt-5.5", "gpt-5.5-latest"],
         short: {
           inputNanoUsdPerToken: 5_000,
           cachedInputNanoUsdPerToken: 500,
@@ -60,7 +60,7 @@ const snapshot: ModelPricingSettingsSnapshot = {
     ],
   },
   defaultSettings: {
-    version: "2026-05-16.providerless-v1",
+    version: "2026-05-16.providerless-v2",
     models: [],
   },
 };
@@ -96,6 +96,9 @@ describe("pricing/ModelPricingPage", () => {
     const { container } = renderPage();
 
     expect(await screen.findByDisplayValue("gpt-5.5")).toBeInTheDocument();
+    expect(
+      screen.getByDisplayValue("openai/gpt-5.5, gpt-5.5-latest"),
+    ).toBeInTheDocument();
     expect(screen.getByDisplayValue("5.000")).toBeInTheDocument();
     expect(screen.getByDisplayValue("0.500")).toBeInTheDocument();
     expect(screen.getByDisplayValue("30.000")).toBeInTheDocument();

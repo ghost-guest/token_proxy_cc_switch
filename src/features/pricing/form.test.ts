@@ -8,11 +8,11 @@ import {
 import type { ModelPricingSettings } from "@/features/pricing/types";
 
 const settings: ModelPricingSettings = {
-  version: "2026-05-16.providerless-v1",
+  version: "2026-05-16.providerless-v2",
   models: [
     {
       modelId: "gpt-5.5",
-      aliases: ["gpt-5.5-latest"],
+      aliases: ["openai/gpt-5.5", "gpt-5.5-latest"],
       short: {
         inputNanoUsdPerToken: 5_000,
         cachedInputNanoUsdPerToken: 500,
@@ -34,7 +34,7 @@ describe("pricing/form", () => {
 
     expect(rows[0]).toMatchObject({
       modelId: "gpt-5.5",
-      aliasesText: "gpt-5.5-latest",
+      aliasesText: "openai/gpt-5.5, gpt-5.5-latest",
       shortInputUsdPerMillion: "5.000",
       shortCachedUsdPerMillion: "0.500",
       shortOutputUsdPerMillion: "30.000",
@@ -56,7 +56,7 @@ describe("pricing/form", () => {
         models: [
           {
             modelId: "gpt-5.5",
-            aliases: ["gpt-5.5-latest"],
+            aliases: ["openai/gpt-5.5", "gpt-5.5-latest"],
             short: {
               inputNanoUsdPerToken: 5_000,
               cachedInputNanoUsdPerToken: 500,
@@ -104,10 +104,10 @@ describe("pricing/form", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("drops provider-prefixed self aliases", () => {
+  it("keeps provider-prefixed aliases that add a lookup key", () => {
     const row: ModelPricingFormRow = {
       ...toPricingRows(settings)[0],
-      aliasesText: "openai/gpt-5.5",
+      aliasesText: "gpt-5.5, openai/gpt-5.5",
     };
     const result = toPricingSettingsInput([row]);
 
@@ -117,7 +117,7 @@ describe("pricing/form", () => {
         models: [
           expect.objectContaining({
             modelId: "gpt-5.5",
-            aliases: [],
+            aliases: ["openai/gpt-5.5"],
           }),
         ],
       },
@@ -148,7 +148,7 @@ describe("pricing/form", () => {
       ...toPricingRows(settings)[0],
       id: "decimal-row",
       modelId: "kimi-k2.6",
-      aliasesText: "kimi-k2.6",
+      aliasesText: "kimi-k2.6, moonshotai/kimi-k2.6",
       shortInputUsdPerMillion: "0.750",
       shortCachedUsdPerMillion: "0.150",
       shortOutputUsdPerMillion: "3.500",
@@ -162,7 +162,7 @@ describe("pricing/form", () => {
         models: [
           {
             modelId: "kimi-k2.6",
-            aliases: [],
+            aliases: ["moonshotai/kimi-k2.6"],
             short: {
               inputNanoUsdPerToken: 750,
               cachedInputNanoUsdPerToken: 150,

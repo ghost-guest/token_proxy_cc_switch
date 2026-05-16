@@ -96,21 +96,28 @@ export function toPricingSettingsInput(
       return { ok: false, message: m.model_pricing_error_model_required() };
     }
     const rowLookupKeys = new Set(modelLookupKeys(modelId));
-    const rowAliases = parseAliases(row.aliasesText).filter(
-      (alias) =>
-        !modelLookupKeys(alias).some((lookupKey) => rowLookupKeys.has(lookupKey)),
-    );
-    const canonicalAliases = [modelId, ...rowAliases];
-    for (const alias of canonicalAliases) {
-      for (const lookupKey of modelLookupKeys(alias)) {
-        if (aliases.has(lookupKey)) {
-          return {
-            ok: false,
-            message: m.model_pricing_error_duplicate_alias({ alias: lookupKey }),
-          };
-        }
-        aliases.add(lookupKey);
+    const rowAliases: string[] = [];
+    for (const alias of parseAliases(row.aliasesText)) {
+      const aliasLookupKeys = modelLookupKeys(alias);
+      const newLookupKeys = aliasLookupKeys.filter(
+        (lookupKey) => !rowLookupKeys.has(lookupKey),
+      );
+      if (newLookupKeys.length === 0 && normalizeAlias(alias) === normalizeAlias(modelId)) {
+        continue;
       }
+      for (const lookupKey of newLookupKeys) {
+        rowLookupKeys.add(lookupKey);
+      }
+      rowAliases.push(alias);
+    }
+    for (const lookupKey of rowLookupKeys) {
+      if (aliases.has(lookupKey)) {
+        return {
+          ok: false,
+          message: m.model_pricing_error_duplicate_alias({ alias: lookupKey }),
+        };
+      }
+      aliases.add(lookupKey);
     }
 
     const short = parseTier({
@@ -236,19 +243,23 @@ function parsePositiveInteger(value: string) {
 
 function parseAliases(value: string) {
   const seen = new Set<string>();
+  const seenAliases = new Set<string>();
   const aliases: string[] = [];
   for (const item of value.split(/[,\n]/)) {
     const trimmed = item.trim();
     if (!trimmed) {
       continue;
     }
+    const normalized = normalizeAlias(trimmed);
     const lookupKeys = modelLookupKeys(trimmed);
-    if (lookupKeys.some((lookupKey) => seen.has(lookupKey))) {
+    const newLookupKeys = lookupKeys.filter((lookupKey) => !seen.has(lookupKey));
+    if (newLookupKeys.length === 0 && seenAliases.has(normalized)) {
       continue;
     }
-    for (const lookupKey of lookupKeys) {
+    for (const lookupKey of newLookupKeys) {
       seen.add(lookupKey);
     }
+    seenAliases.add(normalized);
     aliases.push(trimmed);
   }
   return aliases;

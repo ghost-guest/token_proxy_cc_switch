@@ -444,7 +444,7 @@
   "model_pricing_reset_confirm_title": "Restore default prices?",
   "model_pricing_reset_confirm_description": "This will replace the current model pricing table with the built-in defaults and recalculate logged request costs.",
   "model_pricing_reset_confirm_action": "Restore",
-  "model_pricing_aliases_placeholder": "gpt-5.5-latest, opus-4-7",
+  "model_pricing_aliases_placeholder": "openai/model, model-latest",
   "model_pricing_error_at_least_one": "At least one model price is required.",
   "model_pricing_error_model_required": "Model ID is required.",
   "model_pricing_error_duplicate_alias": "Duplicate model alias: {alias}",
