@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 
@@ -13,10 +14,22 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { getSectionRoute } from "@/features/config/sections";
-import { formatBytes, useUpdater, type UpdateStatus } from "@/features/update/updater";
+import {
+  canStartUpdateCheck,
+  formatBytes,
+  useUpdater,
+  type UpdateStatus,
+} from "@/features/update/updater";
 import { m } from "@/paraglide/messages.js";
 
 type ToastId = string | number;
+type VisibleWindowCheckState = {
+  appProxyUrlReady: boolean;
+  runAutoCheck: (reason: string) => void;
+  status: UpdateStatus;
+};
+
+export const MAIN_WINDOW_VISIBLE_EVENT = "main-window-visible";
 
 // React StrictMode in dev will mount -> unmount -> mount components to surface side effects.
 // Use a module-level guard to ensure we only auto-check once per app launch.
@@ -41,6 +54,11 @@ export function UpdateNotifier() {
   const availableToastIdRef = useRef<ToastId | null>(null);
   const progressToastIdRef = useRef<ToastId | null>(null);
   const lastStatusRef = useRef<UpdateStatus>(state.status);
+  const visibleWindowCheckRef = useRef<VisibleWindowCheckState>({
+    appProxyUrlReady: state.appProxyUrlReady,
+    runAutoCheck: () => undefined,
+    status: state.status,
+  });
   const installedRestartPromptKey =
     state.status === "installed"
       ? `${state.updateInfo?.version ?? "installed"}:${state.lastCheckedAt}`
@@ -57,6 +75,22 @@ export function UpdateNotifier() {
     [state.downloadState.downloaded, state.downloadState.total, state.status]
   );
 
+  const runAutoCheck = useCallback(
+    (reason: string) => {
+      console.info("[updater] checking for updates", { reason });
+      void checkForUpdate({ source: "auto" });
+    },
+    [checkForUpdate]
+  );
+
+  useLayoutEffect(() => {
+    visibleWindowCheckRef.current = {
+      appProxyUrlReady: state.appProxyUrlReady,
+      runAutoCheck,
+      status: state.status,
+    };
+  }, [runAutoCheck, state.appProxyUrlReady, state.status]);
+
   useEffect(() => {
     if (didRunAutoCheck || !state.appProxyUrlReady) {
       return;
@@ -64,8 +98,47 @@ export function UpdateNotifier() {
 
     // Wait for config to load so app_proxy_url can be applied.
     didRunAutoCheck = true;
-    void checkForUpdate({ source: "auto" });
-  }, [checkForUpdate, state.appProxyUrlReady]);
+    runAutoCheck("startup");
+  }, [runAutoCheck, state.appProxyUrlReady]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+
+    // Tauri emits this whenever the tray or single-instance path shows the main window.
+    listen(MAIN_WINDOW_VISIBLE_EVENT, () => {
+      const visibleState = visibleWindowCheckRef.current;
+      if (
+        !visibleState.appProxyUrlReady ||
+        !canStartUpdateCheck(visibleState.status)
+      ) {
+        console.info("[updater] skip visible-window update check", {
+          appProxyUrlReady: visibleState.appProxyUrlReady,
+          status: visibleState.status,
+        });
+        return;
+      }
+
+      visibleState.runAutoCheck("main-window-visible");
+    })
+      .then((stopListening) => {
+        if (disposed) {
+          stopListening();
+          return;
+        }
+        unlisten = stopListening;
+      })
+      .catch((error: unknown) => {
+        console.warn("[updater] failed to listen for main window visibility", error);
+      });
+
+    return () => {
+      disposed = true;
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const previousStatus = lastStatusRef.current;
@@ -95,16 +168,19 @@ export function UpdateNotifier() {
       }
     }
 
-    // Avoid stacked update popups: when workflow enters download/install/restart stages,
-    // dismiss the "update available" toast to prevent an unclickable toast under modal dialogs.
+    // Rechecks replace the update resource; remove stale available-update actions first.
     if (
-      (state.status === "downloading" ||
+      (state.status === "checking" ||
+        state.status === "uptodate" ||
+        state.status === "error" ||
+        state.status === "downloading" ||
         state.status === "installing" ||
         state.status === "installed") &&
       availableToastIdRef.current
     ) {
       toast.dismiss(availableToastIdRef.current);
       availableToastIdRef.current = null;
+      availableToastVersionRef.current = null;
     }
 
     if (state.status === "downloading" || state.status === "installing") {

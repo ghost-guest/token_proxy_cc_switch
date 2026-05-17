@@ -2,7 +2,9 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -36,6 +38,27 @@ export type DownloadState = {
 export type UpdateCheckSource = "auto" | "manual";
 
 type UpdaterCheckResult = Awaited<ReturnType<typeof check>>;
+
+async function closeUpdateHandle(updateHandle: UpdaterCheckResult, reason: string) {
+  if (!updateHandle) {
+    return;
+  }
+
+  try {
+    await updateHandle.close();
+  } catch (error) {
+    console.warn("[updater] failed to close update handle", { error, reason });
+  }
+}
+
+export function canStartUpdateCheck(status: UpdateStatus) {
+  return (
+    status !== "checking" &&
+    status !== "downloading" &&
+    status !== "installing" &&
+    status !== "installed"
+  );
+}
 
 type UpdateState = {
   status: UpdateStatus;
@@ -90,6 +113,9 @@ type UpdaterProviderProps = {
 };
 
 export function UpdaterProvider({ children }: UpdaterProviderProps) {
+  const checkInFlightRef = useRef(false);
+  const statusRef = useRef<UpdateStatus>("idle");
+  const updateHandleRef = useRef<UpdaterCheckResult>(null);
   const [state, setState] = useState<UpdateState>({
     status: "idle",
     statusMessage: "",
@@ -101,6 +127,14 @@ export function UpdaterProvider({ children }: UpdaterProviderProps) {
     appProxyUrl: "",
     appProxyUrlReady: false,
   });
+
+  useEffect(() => {
+    statusRef.current = state.status;
+  }, [state.status]);
+
+  useEffect(() => {
+    updateHandleRef.current = state.updateHandle;
+  }, [state.updateHandle]);
 
   const setAppProxyUrl = useCallback((value: string) => {
     setState((prev) => {
@@ -118,6 +152,23 @@ export function UpdaterProvider({ children }: UpdaterProviderProps) {
   const checkForUpdate = useCallback(
     async (args?: { source: UpdateCheckSource }) => {
       const source = args?.source ?? "manual";
+      const status = statusRef.current;
+      if (checkInFlightRef.current) {
+        console.info("[updater] skip update check while one is already running", { source });
+        return;
+      }
+      if (!canStartUpdateCheck(status)) {
+        console.info("[updater] skip update check while update workflow is busy", {
+          source,
+          status,
+        });
+        return;
+      }
+      checkInFlightRef.current = true;
+      statusRef.current = "checking";
+
+      const staleUpdateHandle = updateHandleRef.current;
+      updateHandleRef.current = null;
 
       setState((prev) => ({
         ...prev,
@@ -130,8 +181,11 @@ export function UpdaterProvider({ children }: UpdaterProviderProps) {
       }));
 
       try {
+        await closeUpdateHandle(staleUpdateHandle, "before-check");
         const proxy = state.appProxyUrl.trim();
         const result = await check(proxy ? { proxy } : undefined);
+        updateHandleRef.current = result;
+        statusRef.current = result ? "available" : "uptodate";
         setState((prev) => ({
           ...prev,
           status: result ? "available" : "uptodate",
@@ -140,22 +194,27 @@ export function UpdaterProvider({ children }: UpdaterProviderProps) {
           lastCheckedAt: new Date().toLocaleString(),
         }));
       } catch (error) {
+        statusRef.current = "error";
         setState((prev) => ({
           ...prev,
           status: "error",
           statusMessage: parseError(error),
+          updateHandle: null,
         }));
+      } finally {
+        checkInFlightRef.current = false;
       }
     },
     [state.appProxyUrl]
   );
 
   const downloadAndInstall = useCallback(async () => {
-    const updateHandle = state.updateHandle;
+    const updateHandle = updateHandleRef.current;
     if (!updateHandle) {
       return;
     }
 
+    statusRef.current = "downloading";
     setState((prev) => ({
       ...prev,
       status: "downloading",
@@ -185,27 +244,29 @@ export function UpdaterProvider({ children }: UpdaterProviderProps) {
         return;
       }
       if (progress.event === "Finished") {
+        statusRef.current = "installing";
         setState((prev) => ({ ...prev, status: "installing" }));
       }
     };
 
     try {
       await updateHandle.downloadAndInstall(onProgress);
-      setState((prev) => ({ ...prev, status: "installed" }));
+      statusRef.current = "installed";
+      updateHandleRef.current = null;
+      setState((prev) => ({ ...prev, status: "installed", updateHandle: null }));
     } catch (error) {
+      statusRef.current = "error";
+      updateHandleRef.current = null;
       setState((prev) => ({
         ...prev,
         status: "error",
         statusMessage: parseError(error),
+        updateHandle: null,
       }));
     } finally {
-      try {
-        await updateHandle.close();
-      } catch (_) {
-        // ignore updater close errors to avoid masking update failures
-      }
+      await closeUpdateHandle(updateHandle, "after-download-install");
     }
-  }, [state.updateHandle]);
+  }, []);
 
   const relaunchApp = useCallback(async () => {
     setState((prev) => ({ ...prev, statusMessage: "" }));

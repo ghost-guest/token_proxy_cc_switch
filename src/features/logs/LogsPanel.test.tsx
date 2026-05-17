@@ -619,4 +619,50 @@ describe("logs/LogsPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows response error when logged response body is blank", async () => {
+    const user = userEvent.setup();
+    readRequestLogDetailMock.mockResolvedValueOnce({
+      id: 1,
+      tsMs: 100,
+      path: "/v1/chat/completions",
+      provider: "codex",
+      upstreamId: "alpha",
+      accountId: "codex-a.json",
+      model: "gpt-5",
+      mappedModel: null,
+      stream: false,
+      status: 502,
+      inputTokens: 10,
+      outputTokens: 20,
+      totalTokens: 30,
+      cachedTokens: 5,
+      costNanoUsd: 1_210_000_000,
+      pricingVersion: "2026-05-08.openai-openrouter-v2",
+      pricingModel: "gpt-5.5",
+      pricingContextTier: "short",
+      latencyMs: 30,
+      upstreamRequestId: "req-1",
+      usageJson: null,
+      requestHeaders: null,
+      requestBody: null,
+      responseBody: "   ",
+      responseError: "HTTP 502: upstream quota denied",
+    });
+
+    renderPanel();
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "alpha · openai · codex-a.json" })
+      ).toBeInTheDocument();
+    });
+    await user.click(
+      screen.getByRole("button", { name: "alpha · openai · codex-a.json" })
+    );
+    await waitFor(() => {
+      expect(readRequestLogDetailMock).toHaveBeenCalledWith(1);
+    });
+
+    expect(await screen.findByText("HTTP 502: upstream quota denied")).toBeInTheDocument();
+  });
+
 });

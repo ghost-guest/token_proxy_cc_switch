@@ -1,6 +1,7 @@
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 pub(crate) const MAIN_WINDOW_LABEL: &str = "main";
+const MAIN_WINDOW_VISIBLE_EVENT: &str = "main-window-visible";
 
 // 主窗口显示/销毁时同步 Dock/任务栏展示状态。
 pub(crate) fn set_main_window_visibility(app: &tauri::AppHandle, visible: bool) {
@@ -34,6 +35,7 @@ pub(crate) fn show_or_create_main_window(app: &tauri::AppHandle) {
         let _ = window.show();
         let _ = window.set_focus();
         sync_main_window_menu_item(app);
+        emit_main_window_visible(app);
         return;
     }
 
@@ -59,6 +61,7 @@ pub(crate) fn show_or_create_main_window(app: &tauri::AppHandle) {
             return;
         }
         sync_main_window_menu_item(&app_handle);
+        emit_main_window_visible(&app_handle);
     });
 }
 
@@ -98,4 +101,13 @@ fn sync_main_window_menu_item(app: &tauri::AppHandle) {
     if let Some(tray_state) = app.try_state::<crate::tray::TrayState>() {
         tray_state.sync_main_window_menu_item(app);
     }
+}
+
+// 前端监听此事件后执行检查更新；失败只记录日志，不阻断窗口展示。
+fn emit_main_window_visible(app: &tauri::AppHandle) {
+    if let Err(err) = app.emit(MAIN_WINDOW_VISIBLE_EVENT, ()) {
+        tracing::warn!(error = %err, "emit main window visible event failed");
+        return;
+    }
+    tracing::info!("main window visible event emitted");
 }

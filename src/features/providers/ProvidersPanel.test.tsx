@@ -90,6 +90,8 @@ const providerMocks = vi.hoisted(() => {
   }));
   const beginKiroLogin = vi.fn();
   const beginCodexLogin = vi.fn();
+  const resetKiroLogin = vi.fn();
+  const resetCodexLogin = vi.fn();
   const importKiroIde = vi.fn(async () => [
     {
       account_id: "kiro-1",
@@ -263,6 +265,8 @@ const providerMocks = vi.hoisted(() => {
     setCodexStatus,
     beginKiroLogin,
     beginCodexLogin,
+    resetKiroLogin,
+    resetCodexLogin,
     importKiroIde,
     importKiroKam,
     importCodexFile,
@@ -397,6 +401,7 @@ vi.mock("@/features/kiro/use-kiro-login", () => ({
   useKiroLogin: () => ({
     login: { status: "idle" },
     beginLogin: providerMocks.beginKiroLogin,
+    resetLogin: providerMocks.resetKiroLogin,
   }),
 }));
 
@@ -404,6 +409,7 @@ vi.mock("@/features/codex/use-codex-login", () => ({
   useCodexLogin: () => ({
     login: { status: "idle" },
     beginLogin: providerMocks.beginCodexLogin,
+    resetLogin: providerMocks.resetCodexLogin,
   }),
 }));
 
@@ -443,11 +449,7 @@ function getAccountsTable() {
 }
 
 function getAddLabel() {
-  const label = m.providers_add_account();
-  if (label.endsWith("账户")) {
-    return label.slice(0, -2);
-  }
-  return label.replace(/\s*account$/i, "").trim();
+  return m.providers_add_account();
 }
 
 async function openAddAccountDialog(user: ReturnType<typeof userEvent.setup>) {
@@ -464,6 +466,14 @@ async function switchAddProviderToCodex(user: ReturnType<typeof userEvent.setup>
     throw new Error("Missing providers add codex switch button");
   }
   await user.click(switchButton);
+}
+
+function getAddProviderPanel(provider: "kiro" | "codex") {
+  const panel = document.querySelector(`[data-slot="providers-add-panel-${provider}"]`);
+  if (!(panel instanceof HTMLElement)) {
+    throw new Error(`Missing providers add ${provider} panel`);
+  }
+  return panel;
 }
 
 afterEach(() => {
@@ -793,13 +803,56 @@ describe("providers/ProvidersPanel", () => {
     const user = userEvent.setup();
     render(<ProvidersPanel />);
 
+    expect(within(getToolbar()).getByRole("button", { name: m.providers_add_account() })).toBeInTheDocument();
+
     await openAddAccountDialog(user);
 
     const dialog = screen.getByRole("dialog");
     expect(dialog).toBeInTheDocument();
     expect(within(dialog).getByText(getAddLabel())).toBeInTheDocument();
+    expect(within(dialog).queryByText(m.config_section_providers_desc())).not.toBeInTheDocument();
     expect(within(dialog).getByText(m.providers_kiro_title())).toBeInTheDocument();
     expect(within(dialog).getByText(m.providers_codex_title())).toBeInTheDocument();
+  });
+
+  it("resets login state when closing the add account dialog", async () => {
+    const user = userEvent.setup();
+    render(<ProvidersPanel />);
+
+    await openAddAccountDialog(user);
+    const dialog = screen.getByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Close" }));
+
+    expect(providerMocks.resetKiroLogin).toHaveBeenCalledTimes(1);
+    expect(providerMocks.resetCodexLogin).toHaveBeenCalledTimes(1);
+  });
+
+  it("resets login state when dismissing the add account dialog with Escape", async () => {
+    const user = userEvent.setup();
+    render(<ProvidersPanel />);
+
+    await openAddAccountDialog(user);
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => {
+      expect(providerMocks.resetKiroLogin).toHaveBeenCalledTimes(1);
+      expect(providerMocks.resetCodexLogin).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("keeps provider choice while open and resets it only after reopening", async () => {
+    const user = userEvent.setup();
+    render(<ProvidersPanel />);
+
+    await openAddAccountDialog(user);
+    await switchAddProviderToCodex(user);
+    expect(getAddProviderPanel("codex")).toBeInTheDocument();
+
+    const dialog = screen.getByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Close" }));
+    await openAddAccountDialog(user);
+
+    expect(getAddProviderPanel("kiro")).toBeInTheDocument();
   });
 
   it("starts kiro aws builder id login from toolbar action", async () => {

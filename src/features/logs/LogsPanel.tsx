@@ -86,6 +86,11 @@ function getCaptureRemainingSeconds(state: RequestDetailCaptureState, nowMs: num
   return Math.max(1, Math.ceil(remainingMs / CAPTURE_COUNTDOWN_TICK_MS));
 }
 
+function getResponseDetailValue(detail: RequestLogDetail) {
+  // 空白响应体没有排障价值，优先回退到错误摘要。
+  return detail.responseBody?.trim() ? detail.responseBody : detail.responseError;
+}
+
 type DetailFieldProps = {
   label: string;
   value: string | null | undefined;
@@ -400,7 +405,7 @@ function RequestDetailSheet({
                 />
                 <DetailSection
                   title={m.logs_detail_response()}
-                  value={detail.responseBody ?? detail.responseError}
+                  value={getResponseDetailValue(detail)}
                 />
               </div>
             ) : null}

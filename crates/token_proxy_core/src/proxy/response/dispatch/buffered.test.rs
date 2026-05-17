@@ -1,6 +1,6 @@
 use super::buffered::{
     buffer_event_stream_response, build_buffered_response, empty_chat_completion_retry_message,
-    value_is_absent,
+    response_error_for_status, value_is_absent,
 };
 use crate::proxy::openai_compat::FormatTransform;
 use crate::proxy::{
@@ -50,6 +50,34 @@ fn value_is_absent_accepts_null_empty_string_and_empty_array() {
     assert!(!value_is_absent(Some(
         &json!([{"type":"text","text":"ok"}])
     )));
+}
+
+#[test]
+fn response_error_for_status_includes_status_and_body() {
+    let body = Bytes::from_static(br#"{"error":{"message":"quota denied"}}"#);
+
+    let error = response_error_for_status(StatusCode::BAD_GATEWAY, &body);
+
+    assert_eq!(
+        error.as_deref(),
+        Some(r#"HTTP 502: {"error":{"message":"quota denied"}}"#)
+    );
+}
+
+#[test]
+fn response_error_for_status_keeps_status_when_body_is_empty() {
+    let error = response_error_for_status(StatusCode::TOO_MANY_REQUESTS, &Bytes::new());
+
+    assert_eq!(error.as_deref(), Some("HTTP 429"));
+}
+
+#[test]
+fn response_error_for_status_ignores_success() {
+    let body = Bytes::from_static(br#"{"id":"resp_ok"}"#);
+
+    let error = response_error_for_status(StatusCode::OK, &body);
+
+    assert_eq!(error, None);
 }
 
 #[test]

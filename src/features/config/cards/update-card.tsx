@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import {
+  canStartUpdateCheck,
   formatBytes,
   useUpdater,
   type DownloadState,
@@ -234,8 +235,7 @@ export function UpdateCard() {
     () => resolveProgressLabel(state.status, state.downloadState),
     [state.downloadState, state.status]
   );
-  const canCheck =
-    state.status !== "checking" && state.status !== "downloading" && state.status !== "installing";
+  const canCheck = canStartUpdateCheck(state.status);
   const canInstall = state.status === "available" && !!state.updateHandle;
   const canRelaunch = state.status === "installed";
   const triggerManualCheck = useCallback(() => {

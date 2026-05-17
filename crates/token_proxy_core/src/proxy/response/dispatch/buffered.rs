@@ -875,18 +875,23 @@ fn maybe_override_response_model(bytes: Bytes, model_override: Option<&str>) -> 
     model::rewrite_response_model(&bytes, model_override).unwrap_or(bytes)
 }
 
-fn response_error_text(bytes: &Bytes) -> String {
+fn response_error_text(status: StatusCode, bytes: &Bytes) -> String {
     let slice = bytes.as_ref();
-    if slice.len() <= RESPONSE_ERROR_LIMIT_BYTES {
-        return String::from_utf8_lossy(slice).to_string();
+    let body = if slice.len() <= RESPONSE_ERROR_LIMIT_BYTES {
+        String::from_utf8_lossy(slice).to_string()
+    } else {
+        let truncated = &slice[..RESPONSE_ERROR_LIMIT_BYTES];
+        format!("{}... (truncated)", String::from_utf8_lossy(truncated))
+    };
+    if body.trim().is_empty() {
+        return format!("HTTP {}", status.as_u16());
     }
-    let truncated = &slice[..RESPONSE_ERROR_LIMIT_BYTES];
-    format!("{}... (truncated)", String::from_utf8_lossy(truncated))
+    format!("HTTP {}: {body}", status.as_u16())
 }
 
-fn response_error_for_status(status: StatusCode, bytes: &Bytes) -> Option<String> {
+pub(super) fn response_error_for_status(status: StatusCode, bytes: &Bytes) -> Option<String> {
     if status.is_client_error() || status.is_server_error() {
-        Some(response_error_text(bytes))
+        Some(response_error_text(status, bytes))
     } else {
         None
     }

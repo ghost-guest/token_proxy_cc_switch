@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { Plus, RefreshCw, Search } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -8,7 +8,6 @@ import {
   Dialog,
   DialogBody,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -66,9 +65,11 @@ type ProvidersToolbarProps = {
   search: string;
   providerFilter: ProviderFilterValue;
   statusFilter: StatusFilterValue;
+  addDialogProvider: AddDialogProvider;
   onSearchChange: (value: string) => void;
   onProviderFilterChange: (value: ProviderFilterValue) => void;
   onStatusFilterChange: (value: StatusFilterValue) => void;
+  onAddDialogProviderChange: (provider: AddDialogProvider) => void;
   onRefresh: () => void;
   addDialogOpen: boolean;
   onAddDialogOpenChange: (open: boolean) => void;
@@ -177,20 +178,18 @@ function StatusFilterSelect({
 }
 
 function getAddLabel() {
-  const label = m.providers_add_account();
-  if (label.endsWith("账户")) {
-    return label.slice(0, -2);
-  }
-  return label.replace(/\s*account$/i, "").trim();
+  return m.providers_add_account();
 }
 
 function ProvidersToolbar({
   search,
   providerFilter,
   statusFilter,
+  addDialogProvider,
   onSearchChange,
   onProviderFilterChange,
   onStatusFilterChange,
+  onAddDialogProviderChange,
   onRefresh,
   addDialogOpen,
   onAddDialogOpenChange,
@@ -245,6 +244,8 @@ function ProvidersToolbar({
       <ProvidersAddAccountDialog
         open={addDialogOpen}
         onOpenChange={onAddDialogOpenChange}
+        activeProvider={addDialogProvider}
+        onActiveProviderChange={onAddDialogProviderChange}
         onKiroLogin={onKiroLogin}
         onImportKiroIde={onImportKiroIde}
         onImportKiroKam={onImportKiroKam}
@@ -305,6 +306,8 @@ function ProvidersAddAccountDialog({
   onCodexLogin,
   onImportCodexFile,
   onImportCodexDirectory,
+  activeProvider,
+  onActiveProviderChange,
   kiroActionBusy,
   codexActionBusy,
   kiroStatusText,
@@ -321,6 +324,8 @@ function ProvidersAddAccountDialog({
   onCodexLogin: () => Promise<void>;
   onImportCodexFile: () => Promise<void>;
   onImportCodexDirectory: () => Promise<void>;
+  activeProvider: AddDialogProvider;
+  onActiveProviderChange: (provider: AddDialogProvider) => void;
   kiroActionBusy: boolean;
   codexActionBusy: boolean;
   kiroStatusText: string;
@@ -329,22 +334,13 @@ function ProvidersAddAccountDialog({
   codexStatusText: string;
   codexLoginUrl: string;
 }) {
-  const [activeProvider, setActiveProvider] = useState<AddDialogProvider>("kiro");
-
-  useEffect(() => {
-    if (open) {
-      setActiveProvider("kiro");
-    }
-  }, [open]);
-
   const addLabel = getAddLabel();
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-slot="providers-add-account-dialog">
+    <Dialog modal open={open} onOpenChange={onOpenChange}>
+      <DialogContent data-slot="providers-add-account-dialog" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>{addLabel}</DialogTitle>
-          <DialogDescription>{m.config_section_providers_desc()}</DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-4">
           <div
@@ -355,7 +351,7 @@ function ProvidersAddAccountDialog({
               type="button"
               size="sm"
               variant={activeProvider === "kiro" ? "default" : "ghost"}
-              onClick={() => setActiveProvider("kiro")}
+              onClick={() => onActiveProviderChange("kiro")}
               data-slot="providers-add-provider-kiro"
             >
               {m.providers_kiro_title()}
@@ -364,7 +360,7 @@ function ProvidersAddAccountDialog({
               type="button"
               size="sm"
               variant={activeProvider === "codex" ? "default" : "ghost"}
-              onClick={() => setActiveProvider("codex")}
+              onClick={() => onActiveProviderChange("codex")}
               data-slot="providers-add-provider-codex"
             >
               {m.providers_codex_title()}
@@ -510,7 +506,9 @@ function useProviderFilters() {
 function buildToolbarProps(
   filters: ReturnType<typeof useProviderFilters>,
   addDialogOpen: boolean,
+  addDialogProvider: AddDialogProvider,
   onAddDialogOpenChange: (open: boolean) => void,
+  onAddDialogProviderChange: (provider: AddDialogProvider) => void,
   onKiroLogin: (method: KiroLoginMethod) => Promise<void>,
   onImportKiroIde: () => Promise<void>,
   onImportKiroKam: () => Promise<void>,
@@ -531,9 +529,11 @@ function buildToolbarProps(
     search: filters.search,
     providerFilter: filters.providerFilter,
     statusFilter: filters.statusFilter,
+    addDialogProvider,
     onSearchChange: filters.setSearch,
     onProviderFilterChange: filters.setProviderFilter,
     onStatusFilterChange: filters.setStatusFilter,
+    onAddDialogProviderChange,
     addDialogOpen,
     onAddDialogOpenChange,
     onKiroLogin,
@@ -950,6 +950,21 @@ function useProvidersPanelState() {
   const kiroLogin = useKiroLogin({ onRefresh: refreshKiroData });
   const codexLogin = useCodexLogin({ onRefresh: refreshCodexData });
   const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [addDialogProvider, setAddDialogProvider] = useState<AddDialogProvider>("kiro");
+  const resetKiroLogin = kiroLogin.resetLogin;
+  const resetCodexLogin = codexLogin.resetLogin;
+  const handleAddDialogOpenChange = useCallback((nextOpen: boolean) => {
+    setAddDialogOpen(nextOpen);
+    if (nextOpen) {
+      setAddDialogProvider("kiro");
+      return;
+    }
+    if (!nextOpen) {
+      // 弹窗关闭是用户取消授权的明确信号，立即清理两个授权流的 UI 状态。
+      resetKiroLogin();
+      resetCodexLogin();
+    }
+  }, [resetCodexLogin, resetKiroLogin]);
   const [kiroImporting, setKiroImporting] = useState(false);
   const [codexImporting, setCodexImporting] = useState(false);
   const [batchDeleting, setBatchDeleting] = useState(false);
@@ -1061,7 +1076,9 @@ function useProvidersPanelState() {
   const toolbarProps = buildToolbarProps(
     filters,
     addDialogOpen,
-    setAddDialogOpen,
+    addDialogProvider,
+    handleAddDialogOpenChange,
+    setAddDialogProvider,
     loginKiro,
     importKiroIde,
     importKiroKam,

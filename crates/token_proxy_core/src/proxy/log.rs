@@ -194,12 +194,7 @@ pub(crate) fn build_log_entry(
     usage: UsageSnapshot,
     response_error: Option<String>,
 ) -> LogEntry {
-    let response_error = if captures_request_detail(&context.request_headers, &context.request_body)
-    {
-        response_error
-    } else {
-        None
-    };
+    // 错误摘要用于本地排障，不随请求详情捕获开关关闭；完整响应体仍在 attach_response_body 里受控。
     let timing = context.timing_snapshot();
     let upstream_first_body_chunk_ms = timing
         .upstream_first_body_chunk_ms
@@ -417,7 +412,7 @@ mod tests {
     }
 
     #[test]
-    fn build_log_entry_drops_response_error_when_detail_capture_is_off() {
+    fn build_log_entry_keeps_response_error_when_detail_capture_is_off() {
         let context = test_log_context(None, None);
 
         let entry = build_log_entry(
@@ -426,7 +421,7 @@ mod tests {
             Some("upstream secret".to_string()),
         );
 
-        assert_eq!(entry.response_error, None);
+        assert_eq!(entry.response_error.as_deref(), Some("upstream secret"));
     }
 
     #[test]
