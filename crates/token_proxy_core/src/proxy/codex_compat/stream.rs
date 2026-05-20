@@ -601,7 +601,7 @@ where
         if is_codex_business_output_event(&value) {
             self.context.mark_first_output();
         }
-        if let Some(delta) = extract_output_text_delta(&value) {
+        if let Some(delta) = extract_output_token_delta(&value) {
             token_texts.push(delta.to_string());
         }
         self.out
@@ -856,11 +856,33 @@ fn restore_tool_names_in_item(
     item.insert("name".to_string(), Value::String(restored.clone()));
 }
 
-fn extract_output_text_delta(value: &Value) -> Option<&str> {
-    if value.get("type").and_then(Value::as_str) != Some("response.output_text.delta") {
+fn extract_output_token_delta(value: &Value) -> Option<&str> {
+    // Realtime token rate only counts incremental Responses events. Final snapshot
+    // events may also carry text/arguments/code and would double-count prior deltas.
+    let event_type = value.get("type").and_then(Value::as_str)?;
+    if !is_realtime_output_delta_event(event_type) {
         return None;
     }
     value.get("delta").and_then(Value::as_str)
+}
+
+fn is_realtime_output_delta_event(event_type: &str) -> bool {
+    event_type.ends_with(".delta")
+        && matches!(
+            event_type
+                .strip_prefix("response.")
+                .unwrap_or(event_type)
+                .strip_suffix(".delta")
+                .unwrap_or(event_type),
+            "output_text"
+                | "reasoning_text"
+                | "reasoning_summary_text"
+                | "refusal"
+                | "function_call_arguments"
+                | "mcp_call_arguments"
+                | "custom_tool_call_input"
+                | "code_interpreter_call_code"
+        )
 }
 
 fn is_codex_business_output_event(value: &Value) -> bool {

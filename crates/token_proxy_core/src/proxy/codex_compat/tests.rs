@@ -327,6 +327,66 @@ async fn stream_codex_to_responses_emits_compatible_terminal_event_when_upstream
 }
 
 #[tokio::test]
+async fn stream_codex_to_responses_counts_reasoning_summary_delta_for_token_rate() {
+    let (first_chunk, output_tokens) = first_codex_responses_output_tokens(
+        "data: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"thinking out loud\"}\n\n",
+    )
+    .await;
+
+    assert!(
+        String::from_utf8_lossy(&first_chunk).contains("response.reasoning_summary_text.delta"),
+        "chunk: {:?}",
+        first_chunk
+    );
+    assert!(output_tokens > 0, "output_tokens: {output_tokens}");
+}
+
+#[tokio::test]
+async fn stream_codex_to_responses_counts_official_output_delta_events_for_token_rate() {
+    for event in [
+        "data: {\"type\":\"response.reasoning_text.delta\",\"delta\":\"private reasoning\"}\n\n",
+        "data: {\"type\":\"response.refusal.delta\",\"delta\":\"cannot comply\"}\n\n",
+        "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"output_index\":0,\"delta\":\"{\\\"city\\\":\"}\n\n",
+        "data: {\"type\":\"response.mcp_call_arguments.delta\",\"item_id\":\"mcp_1\",\"output_index\":0,\"delta\":\"{\\\"query\\\":\"}\n\n",
+        "data: {\"type\":\"response.custom_tool_call_input.delta\",\"item_id\":\"ctc_1\",\"output_index\":0,\"delta\":\"partial input\"}\n\n",
+        "data: {\"type\":\"response.code_interpreter_call_code.delta\",\"item_id\":\"ci_1\",\"output_index\":0,\"delta\":\"print(1)\"}\n\n",
+    ] {
+        let (_, output_tokens) = first_codex_responses_output_tokens(event).await;
+
+        assert!(output_tokens > 0, "event should count output tokens: {event}");
+    }
+}
+
+#[tokio::test]
+async fn stream_codex_to_responses_does_not_count_final_snapshots_for_token_rate() {
+    for event in [
+        "data: {\"type\":\"response.output_text.done\",\"item_id\":\"msg_1\",\"output_index\":0,\"content_index\":0,\"text\":\"final text\"}\n\n",
+        "data: {\"type\":\"response.reasoning_text.done\",\"item_id\":\"rs_1\",\"output_index\":0,\"content_index\":0,\"text\":\"final reasoning\"}\n\n",
+        "data: {\"type\":\"response.custom_tool_call_input.done\",\"item_id\":\"ctc_1\",\"output_index\":0,\"input\":\"final input\"}\n\n",
+        "data: {\"type\":\"response.code_interpreter_call_code.done\",\"item_id\":\"ci_1\",\"output_index\":0,\"code\":\"print(1)\"}\n\n",
+        "data: {\"type\":\"response.mcp_call_arguments.done\",\"item_id\":\"mcp_1\",\"output_index\":0,\"arguments\":\"{\\\"query\\\":\\\"repo\\\"}\"}\n\n",
+        "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_done\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"final text\"}]}]}}\n\n",
+    ] {
+        let (_, output_tokens) = first_codex_responses_output_tokens(event).await;
+
+        assert_eq!(
+            output_tokens, 0,
+            "final snapshot should not count realtime output tokens: {event}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn stream_codex_to_responses_ignores_empty_delta_for_token_rate() {
+    let (_, output_tokens) = first_codex_responses_output_tokens(
+        "data: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"\"}\n\n",
+    )
+    .await;
+
+    assert_eq!(output_tokens, 0);
+}
+
+#[tokio::test]
 async fn stream_codex_to_responses_closes_after_terminal_without_upstream_close() {
     let upstream = futures_util::stream::unfold(0usize, |index| async move {
         if index == 0 {
@@ -510,6 +570,22 @@ fn join_stream_chunks(chunks: &[Result<Bytes, std::io::Error>]) -> String {
         .map(|chunk| String::from_utf8_lossy(chunk).to_string())
         .collect::<Vec<_>>()
         .join("")
+}
+
+async fn first_codex_responses_output_tokens(event: &str) -> (Bytes, u64) {
+    let upstream = futures_util::stream::iter(vec![Ok::<Bytes, std::io::Error>(Bytes::from(
+        event.to_string(),
+    ))]);
+    let token_rate = TokenRateTracker::new();
+    let tracker = token_rate.register(Some("gpt-5.5".to_string()), None).await;
+    let context = test_log_context();
+    let log = Arc::new(LogWriter::new(None));
+    let stream = stream_codex_to_responses(upstream, context, log, tracker);
+    futures_util::pin_mut!(stream);
+    let first_chunk = stream.next().await.expect("stream item").expect("chunk");
+    let snapshot = token_rate.snapshot().await;
+
+    (first_chunk, snapshot.output)
 }
 
 #[test]

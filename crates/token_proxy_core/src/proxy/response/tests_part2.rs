@@ -45,6 +45,36 @@ fn stream_with_logging_marks_first_output_on_responses_non_preamble_event() {
 }
 
 #[test]
+fn stream_with_logging_does_not_count_responses_final_snapshot_text_for_token_rate() {
+    super::run_async(async {
+        let (log, context, _sqlite_pool) = super::setup_responses_stream().await;
+        let upstream = futures_util::stream::iter(vec![
+            Ok::<Bytes, std::io::Error>(Bytes::from(
+                "data: {\"type\":\"response.output_text.done\",\"item_id\":\"msg_1\",\"output_index\":0,\"content_index\":0,\"text\":\"final text\"}\n\n",
+            )),
+            Ok(Bytes::from("data: [DONE]\n\n")),
+        ]);
+        let token_rate = crate::proxy::token_rate::TokenRateTracker::new();
+        let token_tracker = token_rate.register(None, None).await;
+        let stream =
+            super::super::streaming::stream_with_logging(upstream, context, log, token_tracker);
+        futures_util::pin_mut!(stream);
+        let first_chunk = stream
+            .next()
+            .await
+            .expect("first stream item")
+            .expect("stream ok");
+        let snapshot = token_rate.snapshot().await;
+
+        assert!(
+            String::from_utf8_lossy(&first_chunk).contains("response.output_text.done"),
+            "chunk: {first_chunk:?}"
+        );
+        assert_eq!(snapshot.output, 0, "snapshot: {snapshot:?}");
+    });
+}
+
+#[test]
 fn stream_with_logging_closes_after_responses_terminal_without_upstream_close() {
     super::run_async(async {
         let (log, context, _sqlite_pool) = super::setup_responses_stream().await;

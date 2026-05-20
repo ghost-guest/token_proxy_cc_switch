@@ -605,12 +605,19 @@ fn extract_stream_text_from_value(provider: &str, value: &Value) -> Option<Strin
     match provider {
         PROVIDER_OPENAI | PROVIDER_OPENAI_RESPONSES | PROVIDER_CODEX => {
             extract_openai_stream_text(value)
+                .or_else(|| extract_openai_responses_delta_text(value))
+                .or_else(|| {
+                    if value.get("type").is_none() {
+                        extract_fallback_stream_text(value)
+                    } else {
+                        None
+                    }
+                })
         }
         PROVIDER_ANTHROPIC => extract_anthropic_stream_text(value),
         PROVIDER_GEMINI => extract_gemini_stream_text(value),
-        _ => None,
+        _ => extract_fallback_stream_text(value),
     }
-    .or_else(|| extract_fallback_stream_text(value))
 }
 
 fn openai_responses_data_starts_client_output(provider: &str, value: &Value) -> bool {
@@ -645,6 +652,38 @@ fn extract_openai_stream_text(value: &Value) -> Option<String> {
             .map(|text| text.to_string());
     }
     None
+}
+
+fn extract_openai_responses_delta_text(value: &Value) -> Option<String> {
+    // Responses final snapshot events can carry full text/arguments/code. Realtime
+    // rate only counts incremental deltas to avoid double-counting completed frames.
+    let event_type = value.get("type").and_then(Value::as_str)?;
+    if !is_openai_responses_realtime_output_delta(event_type) {
+        return None;
+    }
+    value
+        .get("delta")
+        .and_then(Value::as_str)
+        .map(|text| text.to_string())
+}
+
+fn is_openai_responses_realtime_output_delta(event_type: &str) -> bool {
+    event_type.ends_with(".delta")
+        && matches!(
+            event_type
+                .strip_prefix("response.")
+                .unwrap_or(event_type)
+                .strip_suffix(".delta")
+                .unwrap_or(event_type),
+            "output_text"
+                | "reasoning_text"
+                | "reasoning_summary_text"
+                | "refusal"
+                | "function_call_arguments"
+                | "mcp_call_arguments"
+                | "custom_tool_call_input"
+                | "code_interpreter_call_code"
+        )
 }
 
 fn extract_anthropic_stream_text(value: &Value) -> Option<String> {
