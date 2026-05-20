@@ -114,6 +114,117 @@ async fn filters_safety_identifier_for_openai_responses_upstream() {
 }
 
 #[tokio::test]
+async fn strips_sampling_params_for_openai_responses_reasoning_model() {
+    let upstream = test_upstream(false, false, false);
+    let meta = RequestMeta {
+        stream: false,
+        original_model: Some("openai/gpt-5.5".to_string()),
+        mapped_model: Some("gpt-5.5".to_string()),
+        reasoning_effort: None,
+        response_format: None,
+        estimated_input_tokens: None,
+    };
+    let body = ReplayableBody::from_bytes(Bytes::from_static(
+        br#"{"model":"openai/gpt-5.5","temperature":0.7,"top_p":0.9,"input":"hi"}"#,
+    ));
+
+    let rewritten = match build_json_transformed_body(
+        "openai-response",
+        &upstream,
+        "/v1/responses",
+        &body,
+        &meta,
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(_) => panic!("rewrite result"),
+    };
+    let rewritten = rewritten.expect("should strip sampling params");
+    let bytes = rewritten
+        .read_bytes_if_small(1024)
+        .await
+        .expect("read rewritten bytes")
+        .expect("rewritten body exists");
+    let value: Value = serde_json::from_slice(&bytes).expect("json");
+
+    assert_eq!(value.get("model").and_then(Value::as_str), Some("gpt-5.5"));
+    assert!(value.get("temperature").is_none());
+    assert!(value.get("top_p").is_none());
+}
+
+#[tokio::test]
+async fn strips_sampling_params_for_openai_responses_reasoning_model_from_prefixed_original() {
+    let upstream = test_upstream(false, false, false);
+    let meta = RequestMeta {
+        stream: false,
+        original_model: Some("openai/gpt-5.5".to_string()),
+        mapped_model: None,
+        reasoning_effort: None,
+        response_format: None,
+        estimated_input_tokens: None,
+    };
+    let body = ReplayableBody::from_bytes(Bytes::from_static(
+        br#"{"model":"openai/gpt-5.5","temperature":0.7,"top_p":0.9,"input":"hi"}"#,
+    ));
+
+    let rewritten = match build_json_transformed_body(
+        "openai-response",
+        &upstream,
+        "/v1/responses",
+        &body,
+        &meta,
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(_) => panic!("rewrite result"),
+    };
+    let rewritten = rewritten.expect("should strip sampling params");
+    let bytes = rewritten
+        .read_bytes_if_small(1024)
+        .await
+        .expect("read rewritten bytes")
+        .expect("rewritten body exists");
+    let value: Value = serde_json::from_slice(&bytes).expect("json");
+
+    assert_eq!(
+        value.get("model").and_then(Value::as_str),
+        Some("openai/gpt-5.5")
+    );
+    assert!(value.get("temperature").is_none());
+    assert!(value.get("top_p").is_none());
+}
+
+#[tokio::test]
+async fn rejects_large_openai_responses_reasoning_body_when_sampling_params_cannot_be_checked() {
+    let upstream = test_upstream(false, false, false);
+    let meta = RequestMeta {
+        stream: false,
+        original_model: Some("gpt-5.5".to_string()),
+        mapped_model: None,
+        reasoning_effort: None,
+        response_format: None,
+        estimated_input_tokens: None,
+    };
+    let input = "x".repeat(REQUEST_FILTER_LIMIT_BYTES + 1);
+    let body = ReplayableBody::from_bytes(Bytes::from(format!(
+        r#"{{"model":"gpt-5.5","temperature":0.7,"input":"{input}"}}"#
+    )));
+
+    let result =
+        build_json_transformed_body("openai-response", &upstream, "/v1/responses", &body, &meta)
+            .await;
+
+    match result {
+        Err(AttemptOutcome::Fatal(response)) => {
+            assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        }
+        Ok(_) | Err(_) => panic!("large reasoning body should fail closed"),
+    }
+}
+
+#[tokio::test]
 async fn filter_safety_identifier_is_noop_when_disabled() {
     let upstream = test_upstream(false, false, false);
     let body = ReplayableBody::from_bytes(Bytes::from_static(

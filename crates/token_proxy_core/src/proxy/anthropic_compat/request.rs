@@ -2,7 +2,7 @@ use axum::body::Bytes;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
 
-use super::super::http_client::ProxyHttpClients;
+use super::super::{http_client::ProxyHttpClients, model};
 use super::media;
 use super::tools;
 
@@ -148,11 +148,13 @@ pub(super) async fn anthropic_request_to_responses(
         out.insert("instructions".to_string(), Value::String(instructions));
     }
 
-    if let Some(temperature) = object.get("temperature") {
-        out.insert("temperature".to_string(), temperature.clone());
-    }
-    if let Some(top_p) = object.get("top_p") {
-        out.insert("top_p".to_string(), top_p.clone());
+    if !model::is_openai_responses_reasoning_model(model) {
+        if let Some(temperature) = object.get("temperature") {
+            out.insert("temperature".to_string(), temperature.clone());
+        }
+        if let Some(top_p) = object.get("top_p") {
+            out.insert("top_p".to_string(), top_p.clone());
+        }
     }
 
     if let Some(reasoning) = map_anthropic_thinking_to_responses_reasoning(object.get("thinking")) {

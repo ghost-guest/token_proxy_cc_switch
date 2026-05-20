@@ -57,6 +57,24 @@ fn responses_and_gemini_request_conversions() {
 }
 
 #[test]
+fn gemini_to_responses_strips_sampling_params_for_reasoning_model_hint() {
+    let http_clients = ProxyHttpClients::new().expect("http clients");
+    let gemini_value = transform_request_value(
+        FormatTransform::GeminiToResponses,
+        json!({
+            "contents": [{ "role": "user", "parts": [{ "text": "hello" }] }],
+            "generationConfig": { "temperature": 0.7, "topP": 0.8 }
+        }),
+        &http_clients,
+        Some("gpt-5.5"),
+    );
+
+    assert_eq!(gemini_value["model"], json!("gpt-5.5"));
+    assert!(gemini_value.get("temperature").is_none());
+    assert!(gemini_value.get("top_p").is_none());
+}
+
+#[test]
 fn gemini_to_responses_request_preserves_audio_and_file_parts() {
     let http_clients = ProxyHttpClients::new().expect("http clients");
     let gemini_value = transform_request_value(

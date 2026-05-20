@@ -1972,6 +1972,69 @@ fn prefixed_model_routes_to_target_upstream_and_strips_prefix_before_forwarding(
     });
 }
 
+#[test]
+fn prefixed_responses_reasoning_model_strips_sampling_params_before_forwarding() {
+    run_async(async {
+        let upstream = spawn_mock_upstream(
+            StatusCode::OK,
+            json!({
+                "id": "resp_beta",
+                "object": "response",
+                "created_at": 123,
+                "model": "gpt-5",
+                "status": "completed",
+                "output": [],
+                "usage": { "input_tokens": 1, "output_tokens": 1, "total_tokens": 2 }
+            }),
+        )
+        .await;
+        let data_dir = next_test_data_dir(
+            "prefixed_responses_reasoning_model_strips_sampling_params_before_forwarding",
+        );
+        let config = config_with_runtime_upstreams(&[(
+            PROVIDER_RESPONSES,
+            0,
+            "beta",
+            upstream.base_url.as_str(),
+            FORMATS_RESPONSES,
+        )]);
+        let state = build_test_state_handle(config, data_dir.clone()).await;
+
+        let response = proxy_request(
+            State(state),
+            Method::POST,
+            Uri::from_static(RESPONSES_PATH),
+            axum::http::HeaderMap::new(),
+            Body::from(
+                json!({
+                    "model": "beta/gpt-5",
+                    "input": "hi",
+                    "temperature": 0.7,
+                    "top_p": 0.9
+                })
+                .to_string(),
+            ),
+        )
+        .await;
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("proxy response bytes");
+        let json: Value = serde_json::from_slice(&body).expect("proxy response json");
+        let requests = upstream.requests();
+
+        upstream.abort();
+        let _ = std::fs::remove_dir_all(&data_dir);
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["model"].as_str(), Some("beta/gpt-5"));
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].body["model"].as_str(), Some("gpt-5"));
+        assert!(requests[0].body.get("temperature").is_none());
+        assert!(requests[0].body.get("top_p").is_none());
+    });
+}
+
 async fn wait_for_logged_account_id(pool: &sqlx::SqlitePool) -> Option<String> {
     for _ in 0..50 {
         let row = sqlx::query("SELECT account_id FROM request_logs ORDER BY id DESC LIMIT 1;")

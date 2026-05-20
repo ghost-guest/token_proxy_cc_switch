@@ -53,6 +53,33 @@ fn chat_request_to_responses_maps_common_fields() {
 }
 
 #[test]
+fn chat_request_to_responses_strips_sampling_params_for_reasoning_models() {
+    let http_clients = ProxyHttpClients::new().expect("http clients");
+    let input = bytes_from_json(json!({
+        "model": "gpt-5.4-mini",
+        "messages": [{ "role": "user", "content": "hi" }],
+        "temperature": 0.7,
+        "top_p": 0.9
+    }));
+
+    let output = run_async(async {
+        transform_request_body(
+            FormatTransform::ChatToResponses,
+            &input,
+            &http_clients,
+            None,
+        )
+        .await
+        .expect("transform")
+    });
+    let value = json_from_bytes(output);
+
+    assert_eq!(value["model"], json!("gpt-5.4-mini"));
+    assert!(value.get("temperature").is_none());
+    assert!(value.get("top_p").is_none());
+}
+
+#[test]
 fn chat_request_to_responses_accepts_responses_shaped_body_when_transforming() {
     let http_clients = ProxyHttpClients::new().expect("http clients");
     let input_items = json!([
@@ -66,6 +93,8 @@ fn chat_request_to_responses_accepts_responses_shaped_body_when_transforming() {
         "model": "gpt-5.5",
         "input": input_items,
         "stream": true,
+        "temperature": 0.7,
+        "top_p": 0.9,
         "service_tier": "priority",
         "metadata": { "client": "cursor" },
         "stream_options": { "include_usage": true },
@@ -89,6 +118,8 @@ fn chat_request_to_responses_accepts_responses_shaped_body_when_transforming() {
     assert_eq!(value["input"], input_items);
     assert_eq!(value["stream"], json!(true));
     assert_eq!(value["service_tier"], json!("priority"));
+    assert!(value.get("temperature").is_none());
+    assert!(value.get("top_p").is_none());
     assert!(value.get("messages").is_none());
     assert!(value.get("metadata").is_none());
     assert!(value.get("stream_options").is_none());

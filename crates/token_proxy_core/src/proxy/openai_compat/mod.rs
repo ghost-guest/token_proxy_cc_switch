@@ -3,7 +3,7 @@ use serde_json::{json, Map, Value};
 
 use super::{
     anthropic_compat, codex_compat, compat_content, compat_reason, gemini_compat,
-    http_client::ProxyHttpClients,
+    http_client::ProxyHttpClients, model,
 };
 
 mod extract;
@@ -235,6 +235,8 @@ fn chat_request_to_responses(body: &Bytes) -> Result<Bytes, String> {
     );
     copy_key(object, &mut output, "text");
 
+    strip_sampling_params_for_reasoning_responses_model(&mut output);
+
     if let Some(max_output_tokens) = object
         .get("max_completion_tokens")
         .or_else(|| object.get("max_tokens"))
@@ -299,10 +301,22 @@ fn responses_shaped_chat_request_to_responses(
     ] {
         output.remove(key);
     }
+    strip_sampling_params_for_reasoning_responses_model(&mut output);
 
     serde_json::to_vec(&Value::Object(output))
         .map(Bytes::from)
         .map_err(|err| format!("Failed to serialize request: {err}"))
+}
+
+fn strip_sampling_params_for_reasoning_responses_model(output: &mut Map<String, Value>) {
+    if output
+        .get("model")
+        .and_then(Value::as_str)
+        .is_some_and(model::is_openai_responses_reasoning_model)
+    {
+        output.remove("temperature");
+        output.remove("top_p");
+    }
 }
 
 fn responses_request_to_chat(body: &Bytes) -> Result<Bytes, String> {

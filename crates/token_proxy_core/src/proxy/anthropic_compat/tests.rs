@@ -90,6 +90,31 @@ fn anthropic_request_to_responses_maps_tools_and_tool_blocks() {
 }
 
 #[test]
+fn anthropic_request_to_responses_strips_sampling_params_for_reasoning_models() {
+    let http_clients = ProxyHttpClients::new().expect("http clients");
+    let input = bytes_from_json(json!({
+        "model": "gpt-5.4-mini",
+        "max_tokens": 123,
+        "temperature": 0.7,
+        "top_p": 0.9,
+        "messages": [
+            { "role": "user", "content": [{ "type": "text", "text": "hi" }] }
+        ]
+    }));
+
+    let output = run_async(async {
+        anthropic_request_to_responses(&input, &http_clients)
+            .await
+            .expect("transform")
+    });
+    let value = json_from_bytes(output);
+
+    assert_eq!(value["model"], json!("gpt-5.4-mini"));
+    assert!(value.get("temperature").is_none());
+    assert!(value.get("top_p").is_none());
+}
+
+#[test]
 fn anthropic_request_to_responses_maps_reasoning_context_and_structured_output() {
     let http_clients = ProxyHttpClients::new().expect("http clients");
 

@@ -1,7 +1,9 @@
 use axum::{body::Bytes, http::StatusCode};
 use serde_json::{Map, Value};
 
-use super::super::{config::UpstreamRuntime, http, request_body::ReplayableBody, RequestMeta};
+use super::super::{
+    config::UpstreamRuntime, http, model, request_body::ReplayableBody, RequestMeta,
+};
 use super::{request::split_path_query, AttemptOutcome};
 
 const OPENAI_CHAT_PATH: &str = "/v1/chat/completions";
@@ -41,6 +43,8 @@ async fn build_json_transformed_body(
         return Ok(None);
     }
 
+    let must_strip_sampling =
+        should_strip_openai_responses_sampling_params(provider, upstream_path, meta);
     let read_limit = json_transform_read_limit(provider, upstream, upstream_path, meta);
     let Some(bytes) = body.read_bytes_if_small(read_limit).await.map_err(|err| {
         AttemptOutcome::Fatal(http::error_response(
@@ -49,6 +53,9 @@ async fn build_json_transformed_body(
         ))
     })?
     else {
+        if must_strip_sampling {
+            return Err(openai_responses_sampling_params_payload_too_large());
+        }
         return Ok(None);
     };
 
@@ -64,6 +71,14 @@ async fn build_json_transformed_body(
     changed |= rewrite_model_mapping(object, meta, body_len);
     changed |= apply_reasoning_effort(provider, upstream_path, object, meta, body_len);
     changed |= filter_openai_responses_fields(provider, upstream, upstream_path, object, body_len);
+    changed |= strip_openai_responses_sampling_params(
+        provider,
+        upstream_path,
+        object,
+        meta,
+        body_len,
+        must_strip_sampling,
+    )?;
     changed |= rewrite_developer_roles_if_needed(upstream, upstream_path, object, body_len);
     if !changed {
         return Ok(None);
@@ -88,6 +103,9 @@ fn json_transform_read_limit(
     if should_filter_openai_responses_fields(provider, upstream, upstream_path) {
         limit = limit.max(REQUEST_FILTER_LIMIT_BYTES);
     }
+    if should_strip_openai_responses_sampling_params(provider, upstream_path, meta) {
+        limit = limit.max(REQUEST_FILTER_LIMIT_BYTES);
+    }
     if should_rewrite_developer_roles(upstream, upstream_path) {
         limit = limit.max(REQUEST_FILTER_LIMIT_BYTES);
     }
@@ -103,6 +121,7 @@ fn needs_json_transform(
     (meta.model_override().is_some() && meta.mapped_model.is_some())
         || should_apply_reasoning_effort(provider, upstream_path, meta)
         || should_filter_openai_responses_fields(provider, upstream, upstream_path)
+        || should_strip_openai_responses_sampling_params(provider, upstream_path, meta)
         || should_rewrite_developer_roles(upstream, upstream_path)
 }
 
@@ -214,6 +233,49 @@ fn filter_openai_responses_fields(
         changed |= object.remove("safety_identifier").is_some();
     }
     changed
+}
+
+fn should_strip_openai_responses_sampling_params(
+    provider: &str,
+    upstream_path: &str,
+    meta: &RequestMeta,
+) -> bool {
+    let model = meta
+        .mapped_model
+        .as_deref()
+        .or(meta.original_model.as_deref());
+    provider == "openai-response"
+        && upstream_path == OPENAI_RESPONSES_PATH
+        && model.is_some_and(model::is_openai_responses_reasoning_model)
+}
+
+fn strip_openai_responses_sampling_params(
+    provider: &str,
+    upstream_path: &str,
+    object: &mut Map<String, Value>,
+    meta: &RequestMeta,
+    body_len: usize,
+    must_strip_sampling: bool,
+) -> Result<bool, AttemptOutcome> {
+    if must_strip_sampling && body_len > REQUEST_FILTER_LIMIT_BYTES {
+        return Err(openai_responses_sampling_params_payload_too_large());
+    }
+    if !should_strip_openai_responses_sampling_params(provider, upstream_path, meta) {
+        return Ok(false);
+    }
+    let mut changed = false;
+    changed |= object.remove("temperature").is_some();
+    changed |= object.remove("top_p").is_some();
+    Ok(changed)
+}
+
+fn openai_responses_sampling_params_payload_too_large() -> AttemptOutcome {
+    AttemptOutcome::Fatal(http::error_response(
+        StatusCode::PAYLOAD_TOO_LARGE,
+        format!(
+            "OpenAI Responses reasoning model request is too large to validate sampling parameters; limit is {REQUEST_FILTER_LIMIT_BYTES} bytes."
+        ),
+    ))
 }
 
 fn should_rewrite_developer_roles(upstream: &UpstreamRuntime, upstream_path: &str) -> bool {
