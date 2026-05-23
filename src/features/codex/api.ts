@@ -15,6 +15,20 @@ export async function importCodexFile(path: string) {
   return await invoke<CodexAccountSummary[]>("codex_import_file", { path });
 }
 
+export async function importCodexText(contents: string) {
+  return await invoke<CodexAccountSummary[]>("codex_import_text", { contents });
+}
+
+export async function importCodexRefreshTokens(
+  contents: string,
+  clientKind: "codex" | "mobile"
+) {
+  return await invoke<CodexAccountSummary[]>("codex_import_refresh_tokens", {
+    contents,
+    clientKind,
+  });
+}
+
 export async function startCodexLogin() {
   return await invoke<CodexLoginStartResponse>("codex_start_login");
 }

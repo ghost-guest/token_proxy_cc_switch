@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { open } from "@tauri-apps/plugin-dialog";
 
@@ -117,6 +117,24 @@ const providerMocks = vi.hoisted(() => {
     },
   ]);
   const importCodexFile = vi.fn(async () => [
+    {
+      account_id: "codex-1",
+      email: "bob@example.com",
+      expires_at: "2026-04-01T00:00:00Z",
+      status: "expired" as const,
+      priority: 1,
+    },
+  ]);
+  const importCodexText = vi.fn(async () => [
+    {
+      account_id: "codex-1",
+      email: "bob@example.com",
+      expires_at: "2026-04-01T00:00:00Z",
+      status: "expired" as const,
+      priority: 1,
+    },
+  ]);
+  const importCodexRefreshTokens = vi.fn(async () => [
     {
       account_id: "codex-1",
       email: "bob@example.com",
@@ -270,6 +288,8 @@ const providerMocks = vi.hoisted(() => {
     importKiroIde,
     importKiroKam,
     importCodexFile,
+    importCodexText,
+    importCodexRefreshTokens,
     deleteProviderAccounts,
     listProviderAccountsPage,
     toastError,
@@ -344,6 +364,8 @@ vi.mock("@/features/codex/use-codex-accounts", () => ({
     setStatus: providerMocks.setCodexStatus,
     logout: providerMocks.logoutCodex,
     importFile: providerMocks.importCodexFile,
+    importText: providerMocks.importCodexText,
+    importRefreshTokens: providerMocks.importCodexRefreshTokens,
   }),
 }));
 
@@ -466,6 +488,14 @@ async function switchAddProviderToCodex(user: ReturnType<typeof userEvent.setup>
     throw new Error("Missing providers add codex switch button");
   }
   await user.click(switchButton);
+}
+
+async function switchCodexMode(user: ReturnType<typeof userEvent.setup>, mode: string) {
+  const modeButton = document.querySelector(`[data-slot="providers-add-codex-mode-${mode}"]`);
+  if (!(modeButton instanceof HTMLButtonElement)) {
+    throw new Error(`Missing codex mode button: ${mode}`);
+  }
+  await user.click(modeButton);
 }
 
 function getAddProviderPanel(provider: "kiro" | "codex") {
@@ -983,6 +1013,7 @@ describe("providers/ProvidersPanel", () => {
     render(<ProvidersPanel />);
     await openAddAccountDialog(user);
     await switchAddProviderToCodex(user);
+    await switchCodexMode(user, "file");
 
     const importButton = document.querySelector('[data-slot="providers-add-codex-import-file"]');
     if (!(importButton instanceof HTMLButtonElement)) {
@@ -1009,6 +1040,7 @@ describe("providers/ProvidersPanel", () => {
     render(<ProvidersPanel />);
     await openAddAccountDialog(user);
     await switchAddProviderToCodex(user);
+    await switchCodexMode(user, "file");
 
     const importButton = document.querySelector('[data-slot="providers-add-codex-import-directory"]');
     if (!(importButton instanceof HTMLButtonElement)) {
@@ -1027,6 +1059,61 @@ describe("providers/ProvidersPanel", () => {
     expect(providerMocks.refreshCodexQuotas).not.toHaveBeenCalled();
   });
 
+  it("imports codex refresh tokens from manual input", async () => {
+    const user = userEvent.setup();
+
+    render(<ProvidersPanel />);
+    await openAddAccountDialog(user);
+    await switchAddProviderToCodex(user);
+    await switchCodexMode(user, "refresh_token");
+
+    const panel = getAddProviderPanel("codex");
+    await user.type(
+      within(panel).getByRole("textbox"),
+      "rt-one\nrt-two"
+    );
+    await user.click(within(panel).getByRole("button", { name: m.codex_manual_import_button() }));
+
+    expect(providerMocks.importCodexRefreshTokens).toHaveBeenCalledWith("rt-one\nrt-two", "codex");
+    expect(providerMocks.refreshCodexQuotaCache).toHaveBeenCalledWith(["codex-1"]);
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("imports codex mobile refresh tokens from manual input", async () => {
+    const user = userEvent.setup();
+
+    render(<ProvidersPanel />);
+    await openAddAccountDialog(user);
+    await switchAddProviderToCodex(user);
+    await switchCodexMode(user, "mobile_refresh_token");
+
+    const panel = getAddProviderPanel("codex");
+    await user.type(within(panel).getByRole("textbox"), "mobile-rt");
+    await user.click(within(panel).getByRole("button", { name: m.codex_manual_import_button() }));
+
+    expect(providerMocks.importCodexRefreshTokens).toHaveBeenCalledWith("mobile-rt", "mobile");
+    expect(providerMocks.refreshCodexQuotaCache).toHaveBeenCalledWith(["codex-1"]);
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("imports codex JSON or access token from manual input", async () => {
+    const user = userEvent.setup();
+    const payload = JSON.stringify({ access_token: "access-token", expires_in: 3600 });
+
+    render(<ProvidersPanel />);
+    await openAddAccountDialog(user);
+    await switchAddProviderToCodex(user);
+    await switchCodexMode(user, "codex_session");
+
+    const panel = getAddProviderPanel("codex");
+    fireEvent.change(within(panel).getByRole("textbox"), { target: { value: payload } });
+    await user.click(within(panel).getByRole("button", { name: m.codex_manual_import_button() }));
+
+    expect(providerMocks.importCodexText).toHaveBeenCalledWith(payload);
+    expect(providerMocks.refreshCodexQuotaCache).toHaveBeenCalledWith(["codex-1"]);
+    expect(open).not.toHaveBeenCalled();
+  });
+
   it("shows codex import success toast before post-import refresh finishes", async () => {
     const user = userEvent.setup();
     let resolveRefreshQuota: (() => void) | undefined;
@@ -1040,6 +1127,7 @@ describe("providers/ProvidersPanel", () => {
     render(<ProvidersPanel />);
     await openAddAccountDialog(user);
     await switchAddProviderToCodex(user);
+    await switchCodexMode(user, "file");
 
     const importButton = document.querySelector('[data-slot="providers-add-codex-import-file"]');
     if (!(importButton instanceof HTMLButtonElement)) {
@@ -1098,6 +1186,7 @@ describe("providers/ProvidersPanel", () => {
     render(<ProvidersPanel />);
     await openAddAccountDialog(user);
     await switchAddProviderToCodex(user);
+    await switchCodexMode(user, "file");
 
     const importFileButton = document.querySelector('[data-slot="providers-add-codex-import-file"]');
     if (!(importFileButton instanceof HTMLButtonElement)) {

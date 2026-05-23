@@ -37,6 +37,8 @@ pub struct CodexTokenRecord {
     pub access_token: String,
     pub refresh_token: String,
     #[serde(default)]
+    pub client_id: Option<String>,
+    #[serde(default)]
     pub id_token: String,
     #[serde(default = "default_auto_refresh_enabled")]
     pub auto_refresh_enabled: bool,

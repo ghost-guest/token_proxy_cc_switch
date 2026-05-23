@@ -24,6 +24,24 @@ pub async fn codex_import_file(
 }
 
 #[tauri::command]
+pub async fn codex_import_text(
+    codex_store: tauri::State<'_, Arc<codex::CodexAccountStore>>,
+    contents: String,
+) -> Result<Vec<codex::CodexAccountSummary>, String> {
+    codex_store.import_text(&contents).await
+}
+
+#[tauri::command]
+pub async fn codex_import_refresh_tokens(
+    codex_store: tauri::State<'_, Arc<codex::CodexAccountStore>>,
+    contents: String,
+    client_kind: String,
+) -> Result<Vec<codex::CodexAccountSummary>, String> {
+    let client = parse_codex_refresh_token_client(&client_kind)?;
+    codex_store.import_refresh_tokens(&contents, client).await
+}
+
+#[tauri::command]
 pub async fn codex_fetch_quotas(
     codex_store: tauri::State<'_, Arc<codex::CodexAccountStore>>,
 ) -> Result<Vec<codex::CodexQuotaSummary>, String> {
@@ -116,4 +134,12 @@ pub async fn codex_logout(
     account_id: String,
 ) -> Result<(), String> {
     codex_login.logout(&account_id).await
+}
+
+fn parse_codex_refresh_token_client(value: &str) -> Result<codex::CodexRefreshTokenClient, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "codex" => Ok(codex::CodexRefreshTokenClient::Codex),
+        "mobile" => Ok(codex::CodexRefreshTokenClient::Mobile),
+        other => Err(format!("Unsupported Codex refresh token client: {other}")),
+    }
 }

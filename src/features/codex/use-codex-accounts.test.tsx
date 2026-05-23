@@ -6,6 +6,8 @@ import { useCodexAccounts } from "@/features/codex/use-codex-accounts";
 const apiMocks = vi.hoisted(() => ({
   listCodexAccounts: vi.fn(),
   importCodexFile: vi.fn(),
+  importCodexText: vi.fn(),
+  importCodexRefreshTokens: vi.fn(),
   refreshCodexQuotaCache: vi.fn(),
   refreshCodexQuotaNow: vi.fn(),
   setCodexAutoRefresh: vi.fn(),
@@ -17,6 +19,8 @@ const apiMocks = vi.hoisted(() => ({
 vi.mock("@/features/codex/api", () => ({
   listCodexAccounts: apiMocks.listCodexAccounts,
   importCodexFile: apiMocks.importCodexFile,
+  importCodexText: apiMocks.importCodexText,
+  importCodexRefreshTokens: apiMocks.importCodexRefreshTokens,
   refreshCodexQuotaCache: apiMocks.refreshCodexQuotaCache,
   refreshCodexQuotaNow: apiMocks.refreshCodexQuotaNow,
   setCodexAutoRefresh: apiMocks.setCodexAutoRefresh,
@@ -89,5 +93,51 @@ describe("codex/use-codex-accounts", () => {
 
     expect(apiMocks.importCodexFile).toHaveBeenCalledWith("/tmp/codex-account.json");
     expect(apiMocks.listCodexAccounts).not.toHaveBeenCalled();
+  });
+
+  it("importText 不会在导入成功后额外拉账户列表", async () => {
+    apiMocks.importCodexText.mockResolvedValue([
+      {
+        account_id: "codex-1",
+        email: "bob@example.com",
+        expires_at: "2026-04-01T00:00:00Z",
+        status: "active",
+      },
+    ]);
+
+    const { result } = renderHook(() => useCodexAccounts({ autoLoad: false }));
+
+    await act(async () => {
+      await expect(result.current.importText("{\"access_token\":\"token\"}")).resolves.toEqual([
+        {
+          account_id: "codex-1",
+          email: "bob@example.com",
+          expires_at: "2026-04-01T00:00:00Z",
+          status: "active",
+        },
+      ]);
+    });
+
+    expect(apiMocks.importCodexText).toHaveBeenCalledWith("{\"access_token\":\"token\"}");
+    expect(apiMocks.listCodexAccounts).not.toHaveBeenCalled();
+  });
+
+  it("importRefreshTokens 传递 Codex refresh token client", async () => {
+    apiMocks.importCodexRefreshTokens.mockResolvedValue([
+      {
+        account_id: "codex-1",
+        email: "bob@example.com",
+        expires_at: "2026-04-01T00:00:00Z",
+        status: "active",
+      },
+    ]);
+
+    const { result } = renderHook(() => useCodexAccounts({ autoLoad: false }));
+
+    await act(async () => {
+      await result.current.importRefreshTokens("rt-one", "mobile");
+    });
+
+    expect(apiMocks.importCodexRefreshTokens).toHaveBeenCalledWith("rt-one", "mobile");
   });
 });

@@ -60,6 +60,7 @@ type AccountBase = {
 };
 
 type AddDialogProvider = "kiro" | "codex";
+type CodexManualInputMode = "login" | "refresh_token" | "mobile_refresh_token" | "codex_session" | "file";
 
 type ProvidersToolbarProps = {
   search: string;
@@ -77,6 +78,8 @@ type ProvidersToolbarProps = {
   onImportKiroIde: () => Promise<void>;
   onImportKiroKam: () => Promise<void>;
   onCodexLogin: () => Promise<void>;
+  onImportCodexRefreshTokens: (contents: string, clientKind: "codex" | "mobile") => Promise<void>;
+  onImportCodexText: (contents: string) => Promise<void>;
   onImportCodexFile: () => Promise<void>;
   onImportCodexDirectory: () => Promise<void>;
   refreshing: boolean;
@@ -197,6 +200,8 @@ function ProvidersToolbar({
   onImportKiroIde,
   onImportKiroKam,
   onCodexLogin,
+  onImportCodexRefreshTokens,
+  onImportCodexText,
   onImportCodexFile,
   onImportCodexDirectory,
   refreshing,
@@ -250,6 +255,8 @@ function ProvidersToolbar({
         onImportKiroIde={onImportKiroIde}
         onImportKiroKam={onImportKiroKam}
         onCodexLogin={onCodexLogin}
+        onImportCodexRefreshTokens={onImportCodexRefreshTokens}
+        onImportCodexText={onImportCodexText}
         onImportCodexFile={onImportCodexFile}
         onImportCodexDirectory={onImportCodexDirectory}
         kiroActionBusy={kiroActionBusy}
@@ -297,6 +304,49 @@ function CodexLoginHint({ loginUrl }: { loginUrl: string }) {
   );
 }
 
+function countInputLines(value: string) {
+  return value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean).length;
+}
+
+function codexModeLabel(mode: CodexManualInputMode) {
+  if (mode === "refresh_token") {
+    return m.codex_manual_mode_refresh_token();
+  }
+  if (mode === "mobile_refresh_token") {
+    return m.codex_manual_mode_mobile_refresh_token();
+  }
+  if (mode === "codex_session") {
+    return m.codex_manual_mode_json_access_token();
+  }
+  if (mode === "file") {
+    return m.codex_manual_mode_file();
+  }
+  return m.codex_manual_mode_login();
+}
+
+function codexManualPlaceholder(mode: CodexManualInputMode) {
+  if (mode === "codex_session") {
+    return m.codex_manual_json_placeholder();
+  }
+  if (mode === "mobile_refresh_token") {
+    return m.codex_manual_mobile_refresh_token_placeholder();
+  }
+  return m.codex_manual_refresh_token_placeholder();
+}
+
+function codexManualDescription(mode: CodexManualInputMode) {
+  if (mode === "codex_session") {
+    return m.codex_manual_json_desc();
+  }
+  if (mode === "mobile_refresh_token") {
+    return m.codex_manual_mobile_refresh_token_desc();
+  }
+  return m.codex_manual_refresh_token_desc();
+}
+
 function ProvidersAddAccountDialog({
   open,
   onOpenChange,
@@ -304,6 +354,8 @@ function ProvidersAddAccountDialog({
   onImportKiroIde,
   onImportKiroKam,
   onCodexLogin,
+  onImportCodexRefreshTokens,
+  onImportCodexText,
   onImportCodexFile,
   onImportCodexDirectory,
   activeProvider,
@@ -322,6 +374,8 @@ function ProvidersAddAccountDialog({
   onImportKiroIde: () => Promise<void>;
   onImportKiroKam: () => Promise<void>;
   onCodexLogin: () => Promise<void>;
+  onImportCodexRefreshTokens: (contents: string, clientKind: "codex" | "mobile") => Promise<void>;
+  onImportCodexText: (contents: string) => Promise<void>;
   onImportCodexFile: () => Promise<void>;
   onImportCodexDirectory: () => Promise<void>;
   activeProvider: AddDialogProvider;
@@ -335,6 +389,37 @@ function ProvidersAddAccountDialog({
   codexLoginUrl: string;
 }) {
   const addLabel = getAddLabel();
+  const [codexMode, setCodexMode] = useState<CodexManualInputMode>("login");
+  const [codexManualInput, setCodexManualInput] = useState("");
+  const manualLineCount = countInputLines(codexManualInput);
+  const showManualInput =
+    codexMode === "refresh_token" ||
+    codexMode === "mobile_refresh_token" ||
+    codexMode === "codex_session";
+  const submitCodexManualInput = async () => {
+    const contents = codexManualInput.trim();
+    if (!contents) {
+      return;
+    }
+    // 只记录模式和输入规模，避免把 token 明文写入前端日志。
+    console.debug("[providers-codex-import] manual import submitted", {
+      mode: codexMode,
+      lines: manualLineCount,
+      length: contents.length,
+    });
+    if (codexMode === "refresh_token") {
+      await onImportCodexRefreshTokens(contents, "codex");
+    } else if (codexMode === "mobile_refresh_token") {
+      await onImportCodexRefreshTokens(contents, "mobile");
+    } else {
+      await onImportCodexText(contents);
+    }
+    setCodexManualInput("");
+  };
+  const switchCodexMode = (mode: CodexManualInputMode) => {
+    setCodexMode(mode);
+    setCodexManualInput("");
+  };
 
   return (
     <Dialog modal open={open} onOpenChange={onOpenChange}>
@@ -437,7 +522,24 @@ function ProvidersAddAccountDialog({
             </div>
           ) : (
             <div data-slot="providers-add-panel-codex" className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-3">
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex flex-wrap rounded-lg border border-border/60 bg-background/70 p-1">
+                {(["login", "refresh_token", "mobile_refresh_token", "codex_session", "file"] as const).map(
+                  (mode) => (
+                    <Button
+                      key={mode}
+                      type="button"
+                      size="sm"
+                      variant={codexMode === mode ? "default" : "ghost"}
+                      onClick={() => switchCodexMode(mode)}
+                      disabled={codexActionBusy}
+                      data-slot={`providers-add-codex-mode-${mode}`}
+                    >
+                      {codexModeLabel(mode)}
+                    </Button>
+                  )
+                )}
+              </div>
+              {codexMode === "login" ? (
                 <Button
                   type="button"
                   variant="secondary"
@@ -450,6 +552,47 @@ function ProvidersAddAccountDialog({
                 >
                   {m.codex_login_button()}
                 </Button>
+              ) : null}
+              {showManualInput ? (
+                <div className="space-y-2">
+                  <div>
+                    <label className="text-xs font-medium text-foreground">
+                      {codexModeLabel(codexMode)}
+                    </label>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {codexManualDescription(codexMode)}
+                    </p>
+                  </div>
+                  <textarea
+                    value={codexManualInput}
+                    onChange={(event) => setCodexManualInput(event.target.value)}
+                    placeholder={codexManualPlaceholder(codexMode)}
+                    spellCheck={false}
+                    rows={codexMode === "codex_session" ? 8 : 4}
+                    className="border-input bg-background placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 min-h-24 w-full resize-y rounded-md border px-3 py-2 font-mono text-sm shadow-xs outline-none focus-visible:ring-[3px]"
+                    data-slot="providers-add-codex-manual-input"
+                  />
+                  {manualLineCount > 1 ? (
+                    <p className="text-xs text-muted-foreground">
+                      {m.codex_manual_input_count({ count: manualLineCount })}
+                    </p>
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      void submitCodexManualInput();
+                    }}
+                    disabled={codexActionBusy || !codexManualInput.trim()}
+                    data-slot="providers-add-codex-manual-submit"
+                  >
+                    {m.codex_manual_import_button()}
+                  </Button>
+                </div>
+              ) : null}
+              {codexMode === "file" ? (
+                <div className="flex flex-wrap items-center gap-2">
                 <Button
                   type="button"
                   variant="outline"
@@ -474,7 +617,8 @@ function ProvidersAddAccountDialog({
                 >
                   {m.codex_import_directory_button()}
                 </Button>
-              </div>
+                </div>
+              ) : null}
               {codexStatusText ? (
                 <p className="text-xs text-muted-foreground">{codexStatusText}</p>
               ) : null}
@@ -513,6 +657,8 @@ function buildToolbarProps(
   onImportKiroIde: () => Promise<void>,
   onImportKiroKam: () => Promise<void>,
   onCodexLogin: () => Promise<void>,
+  onImportCodexRefreshTokens: (contents: string, clientKind: "codex" | "mobile") => Promise<void>,
+  onImportCodexText: (contents: string) => Promise<void>,
   onImportCodexFile: () => Promise<void>,
   onImportCodexDirectory: () => Promise<void>,
   onRefresh: () => void,
@@ -540,6 +686,8 @@ function buildToolbarProps(
     onImportKiroIde,
     onImportKiroKam,
     onCodexLogin,
+    onImportCodexRefreshTokens,
+    onImportCodexText,
     onImportCodexFile,
     onImportCodexDirectory,
     onRefresh,
@@ -1057,6 +1205,33 @@ function useProvidersPanelState() {
       setCodexImporting(false);
     }
   }, [codexAccounts, syncImportedCodexAccounts]);
+  const importCodexText = useCallback(async (contents: string) => {
+    setCodexImporting(true);
+    try {
+      const imported = await codexAccounts.importText(contents);
+      toast.success(m.codex_import_success());
+      void syncImportedCodexAccounts(imported.map((item) => item.account_id));
+    } catch (error) {
+      toast.error(parseError(error));
+    } finally {
+      setCodexImporting(false);
+    }
+  }, [codexAccounts, syncImportedCodexAccounts]);
+  const importCodexRefreshTokens = useCallback(
+    async (contents: string, clientKind: "codex" | "mobile") => {
+      setCodexImporting(true);
+      try {
+        const imported = await codexAccounts.importRefreshTokens(contents, clientKind);
+        toast.success(m.codex_import_success());
+        void syncImportedCodexAccounts(imported.map((item) => item.account_id));
+      } catch (error) {
+        toast.error(parseError(error));
+      } finally {
+        setCodexImporting(false);
+      }
+    },
+    [codexAccounts, syncImportedCodexAccounts]
+  );
   const refreshBusy = kiroAccounts.loading || codexAccounts.loading || providerAccounts.loading;
   const kiroActionBusy =
     kiroImporting ||
@@ -1083,6 +1258,8 @@ function useProvidersPanelState() {
     importKiroIde,
     importKiroKam,
     loginCodex,
+    importCodexRefreshTokens,
+    importCodexText,
     importCodexFile,
     importCodexDirectory,
     refreshAll,

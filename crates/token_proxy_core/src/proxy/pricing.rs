@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::fmt::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const DEFAULT_PRICING_VERSION: &str = "2026-05-16.providerless-v2";
+pub const DEFAULT_PRICING_VERSION: &str = "2026-05-23.gemini-3-5-flash";
 
 const DEFAULT_LONG_CONTEXT_INPUT_TOKEN_THRESHOLD: u64 = 272_000;
 const SETTINGS_ROW_ID: i64 = 1;
@@ -163,6 +163,17 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
                     input_nano_usd_per_token: 500,
                     cached_input_nano_usd_per_token: 50,
                     output_nano_usd_per_token: 3_000,
+                },
+                long: None,
+                long_context_input_token_threshold: None,
+            },
+            ModelPricingModel {
+                model_id: "gemini-3.5-flash".to_string(),
+                aliases: alias_list(&["google/gemini-3.5-flash", "models/gemini-3.5-flash"]),
+                short: ModelPricingTier {
+                    input_nano_usd_per_token: 1_500,
+                    cached_input_nano_usd_per_token: 150,
+                    output_nano_usd_per_token: 9_000,
                 },
                 long: None,
                 long_context_input_token_threshold: None,
@@ -710,6 +721,8 @@ mod tests {
             ("opus-4-7", "claude-opus-4-7"),
             ("anthropic/claude-sonnet-4.6", "claude-sonnet-4.6"),
             ("models/gemini-3-flash-preview", "gemini-3-flash-preview"),
+            ("google/gemini-3.5-flash", "gemini-3.5-flash"),
+            ("models/gemini-3.5-flash", "gemini-3.5-flash"),
             ("deepseek/deepseek-v4-pro", "deepseek-v4-pro"),
             ("moonshotai/kimi-k2.6", "kimi-k2.6"),
             ("openai/gpt-5.5", "gpt-5.5"),
@@ -895,6 +908,19 @@ mod tests {
             .models
             .iter()
             .all(|model| !model.model_id.contains('/')));
+
+        let gemini_flash = settings
+            .models
+            .iter()
+            .find(|model| model.model_id == "gemini-3.5-flash")
+            .expect("gemini-3.5-flash should exist");
+        assert_eq!(gemini_flash.short.input_nano_usd_per_token, 1_500);
+        assert_eq!(gemini_flash.short.cached_input_nano_usd_per_token, 150);
+        assert_eq!(gemini_flash.short.output_nano_usd_per_token, 9_000);
+        assert_eq!(
+            gemini_flash.aliases,
+            vec!["google/gemini-3.5-flash", "models/gemini-3.5-flash"]
+        );
 
         let gpt_5_3_codex = settings
             .models

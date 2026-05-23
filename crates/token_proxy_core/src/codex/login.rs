@@ -223,6 +223,11 @@ async fn run_auth_code_login(
     let record = CodexTokenRecord {
         access_token: token.access_token,
         refresh_token: token.refresh_token,
+        client_id: Some(
+            super::oauth::CodexRefreshTokenClient::Codex
+                .client_id()
+                .to_string(),
+        ),
         id_token: token.id_token,
         auto_refresh_enabled: true,
         status: super::types::CodexAccountStatus::Active,

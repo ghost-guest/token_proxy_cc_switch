@@ -1059,6 +1059,11 @@ async fn build_test_state_handle_with_paths(
                         crate::codex::CodexTokenRecord {
                             access_token: "codex-access-token".to_string(),
                             refresh_token: "codex-refresh-token".to_string(),
+                            client_id: Some(
+                                crate::codex::CodexRefreshTokenClient::Codex
+                                    .client_id()
+                                    .to_string(),
+                            ),
                             id_token: "codex-id-token".to_string(),
                             auto_refresh_enabled: true,
                             status: crate::codex::CodexAccountStatus::Active,
@@ -1122,6 +1127,11 @@ async fn seed_codex_account(
             crate::codex::CodexTokenRecord {
                 access_token: access_token.to_string(),
                 refresh_token: "codex-refresh-token".to_string(),
+                client_id: Some(
+                    crate::codex::CodexRefreshTokenClient::Codex
+                        .client_id()
+                        .to_string(),
+                ),
                 id_token: "codex-id-token".to_string(),
                 auto_refresh_enabled: true,
                 status: crate::codex::CodexAccountStatus::Active,

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 
 import {
   importCodexFile,
+  importCodexRefreshTokens,
+  importCodexText,
   listCodexAccounts,
   refreshCodexQuotaCache,
   refreshCodexQuotaNow,
@@ -144,6 +146,39 @@ export function useCodexAccounts(options?: UseCodexAccountsOptions) {
     }
   }, []);
 
+  const importText = useCallback(async (contents: string) => {
+    setLoading(true);
+    try {
+      const imported = await importCodexText(contents);
+      setError("");
+      return imported;
+    } catch (err) {
+      const message = parseError(err);
+      setError(message);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const importRefreshTokens = useCallback(
+    async (contents: string, clientKind: "codex" | "mobile") => {
+      setLoading(true);
+      try {
+        const imported = await importCodexRefreshTokens(contents, clientKind);
+        setError("");
+        return imported;
+      } catch (err) {
+        const message = parseError(err);
+        setError(message);
+        throw err;
+      } finally {
+        setLoading(false);
+      }
+    },
+    []
+  );
+
   const refreshQuotaCache = useCallback(async (accountIds?: string[]) => {
     await refreshCodexQuotaCache(accountIds);
   }, []);
@@ -171,6 +206,8 @@ export function useCodexAccounts(options?: UseCodexAccountsOptions) {
     setPriority,
     logout,
     importFile,
+    importText,
+    importRefreshTokens,
     refreshQuotaCache,
     refreshQuotaNow,
   };

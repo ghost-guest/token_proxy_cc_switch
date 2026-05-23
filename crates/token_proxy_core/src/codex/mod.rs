@@ -6,6 +6,7 @@ mod store;
 mod types;
 
 pub use login::CodexLoginManager;
+pub use oauth::CodexRefreshTokenClient;
 pub use quota::fetch_quotas;
 pub use store::CodexAccountStore;
 pub use types::{

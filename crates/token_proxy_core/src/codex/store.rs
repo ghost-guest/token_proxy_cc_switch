@@ -14,7 +14,7 @@ use crate::oauth_util::{
 use crate::paths::TokenProxyPaths;
 use crate::provider_accounts;
 
-use super::oauth::CodexOAuthClient;
+use super::oauth::{CodexOAuthClient, CodexRefreshTokenClient};
 use super::types::{CodexAccountStatus, CodexAccountSummary, CodexTokenRecord};
 
 pub struct CodexAccountStore {
@@ -108,6 +108,47 @@ impl CodexAccountStore {
             } else {
                 "No valid Codex accounts found in JSON file.".to_string()
             });
+        }
+        Ok(imported)
+    }
+
+    pub async fn import_text(&self, contents: &str) -> Result<Vec<CodexAccountSummary>, String> {
+        let records = parse_import_records(contents)?;
+        self.import_records(records, "text").await
+    }
+
+    pub async fn import_refresh_tokens(
+        &self,
+        contents: &str,
+        client: CodexRefreshTokenClient,
+    ) -> Result<Vec<CodexAccountSummary>, String> {
+        let refresh_tokens = parse_refresh_token_lines(contents)?;
+        if refresh_tokens.is_empty() {
+            return Err("Refresh token is required.".to_string());
+        }
+
+        let mut imported = Vec::new();
+        let mut errors = Vec::new();
+        for refresh_token in refresh_tokens {
+            match self
+                .import_refresh_token(refresh_token.as_str(), client)
+                .await
+            {
+                Ok(summary) => imported.push(summary),
+                Err(err) => errors.push(err),
+            }
+        }
+
+        tracing::info!(
+            client = client.as_str(),
+            imported = imported.len(),
+            failed = errors.len(),
+            "codex refresh token import finished"
+        );
+        if imported.is_empty() {
+            return Err(errors.into_iter().next().unwrap_or_else(|| {
+                "No valid Codex accounts found in refresh token input.".to_string()
+            }));
         }
         Ok(imported)
     }
@@ -232,6 +273,9 @@ impl CodexAccountStore {
             // instead of creating duplicate local entries. Keep app-local settings.
             record.auto_refresh_enabled = existing_record.auto_refresh_enabled;
             record.status = existing_record.status;
+            if record.client_id.is_none() {
+                record.client_id = existing_record.client_id.clone();
+            }
             if record.proxy_url.is_none() {
                 record.proxy_url = existing_record.proxy_url.clone();
             }
@@ -249,6 +293,62 @@ impl CodexAccountStore {
         }
         let account_id = self.unique_account_id(&id_part).await?;
         self.save_record(account_id, record).await
+    }
+
+    async fn import_records(
+        &self,
+        records: Vec<CodexTokenRecord>,
+        source: &str,
+    ) -> Result<Vec<CodexAccountSummary>, String> {
+        let mut imported = Vec::new();
+        for record in records {
+            if let Ok(summary) = self.save_new_account(record).await {
+                imported.push(summary);
+            }
+        }
+        tracing::info!(
+            source,
+            imported = imported.len(),
+            "codex account import finished"
+        );
+        if imported.is_empty() {
+            return Err("No valid Codex accounts found in input.".to_string());
+        }
+        Ok(imported)
+    }
+
+    async fn import_refresh_token(
+        &self,
+        refresh_token: &str,
+        client: CodexRefreshTokenClient,
+    ) -> Result<CodexAccountSummary, String> {
+        let proxy_url = self.effective_proxy_url(None).await;
+        let oauth = CodexOAuthClient::new(proxy_url.as_deref())?;
+        let response = oauth
+            .refresh_token_with_client(refresh_token, client)
+            .await?;
+        let mut record = CodexTokenRecord {
+            access_token: response.access_token,
+            refresh_token: if response.refresh_token.trim().is_empty() {
+                refresh_token.to_string()
+            } else {
+                response.refresh_token
+            },
+            client_id: Some(client.client_id().to_string()),
+            id_token: response.id_token,
+            auto_refresh_enabled: true,
+            status: CodexAccountStatus::Active,
+            account_id: None,
+            user_id: None,
+            email: None,
+            expires_at: expires_at_from_seconds(response.expires_in),
+            last_refresh: Some(now_rfc3339()),
+            proxy_url: None,
+            priority: 0,
+            quota: super::types::CodexQuotaCache::default(),
+        };
+        fill_record_from_jwt(&mut record);
+        self.save_new_account(record).await
     }
 
     pub(crate) async fn delete_account(&self, account_id: &str) -> Result<(), String> {
@@ -284,7 +384,15 @@ impl CodexAccountStore {
     ) -> Result<CodexTokenRecord, String> {
         let proxy_url = self.effective_proxy_url(record.proxy_url.as_deref()).await;
         let client = CodexOAuthClient::new(proxy_url.as_deref())?;
-        let response = client.refresh_token(&record.refresh_token).await?;
+        let refresh_client = refresh_token_client_for_record(&record)?;
+        tracing::debug!(
+            account_id,
+            client = refresh_client.as_str(),
+            "codex account refresh start"
+        );
+        let response = client
+            .refresh_token_with_client(&record.refresh_token, refresh_client)
+            .await?;
         let mut refreshed = CodexTokenRecord {
             access_token: response.access_token,
             refresh_token: if response.refresh_token.trim().is_empty() {
@@ -292,6 +400,7 @@ impl CodexAccountStore {
             } else {
                 response.refresh_token
             },
+            client_id: Some(refresh_client.client_id().to_string()),
             id_token: if response.id_token.trim().is_empty() {
                 record.id_token.clone()
             } else {
@@ -697,6 +806,20 @@ fn record_needs_refresh(record: &CodexTokenRecord) -> bool {
     record.is_expired() || paid_quota_disagrees_with_free_access_token_claim(record)
 }
 
+fn refresh_token_client_for_record(
+    record: &CodexTokenRecord,
+) -> Result<CodexRefreshTokenClient, String> {
+    let Some(client_id) = record.client_id.as_deref() else {
+        return Ok(CodexRefreshTokenClient::Codex);
+    };
+    CodexRefreshTokenClient::from_client_id(client_id).ok_or_else(|| {
+        format!(
+            "Unsupported Codex refresh token client_id: {}",
+            client_id.trim()
+        )
+    })
+}
+
 fn paid_quota_disagrees_with_free_access_token_claim(record: &CodexTokenRecord) -> bool {
     if !is_paid_plan(record.quota.plan_type.as_deref()) {
         return false;
@@ -724,10 +847,61 @@ fn extract_chatgpt_plan_type_from_jwt(token: &str) -> Option<String> {
 }
 
 fn parse_import_records(contents: &str) -> Result<Vec<CodexTokenRecord>, String> {
-    let value: Value = serde_json::from_str(contents)
-        .map_err(|err| format!("Invalid Codex account JSON file: {err}"))?;
+    let trimmed = contents.trim();
+    if trimmed.is_empty() {
+        return Err("Codex account input is required.".to_string());
+    }
+
+    if looks_like_json(trimmed) {
+        match parse_json_stream_records(trimmed) {
+            Ok(records) => return Ok(records),
+            Err(err) if trimmed.contains('\n') => {
+                if let Ok(records) = parse_import_lines(trimmed, Some(&err)) {
+                    return Ok(records);
+                }
+                return Err(format!("Invalid Codex account JSON file: {err}"));
+            }
+            Err(err) => return Err(format!("Invalid Codex account JSON file: {err}")),
+        }
+    }
+
+    parse_import_lines(trimmed, None)
+}
+
+fn looks_like_json(value: &str) -> bool {
+    let trimmed = value.trim_start();
+    trimmed.starts_with('{') || trimmed.starts_with('[')
+}
+
+fn parse_json_stream_records(contents: &str) -> Result<Vec<CodexTokenRecord>, serde_json::Error> {
     let mut records = Vec::new();
-    collect_import_records(&value, &mut records);
+    let stream = serde_json::Deserializer::from_str(contents).into_iter::<Value>();
+    for value in stream {
+        collect_import_records(&value?, &mut records);
+    }
+    Ok(records)
+}
+
+fn parse_import_lines(
+    contents: &str,
+    json_error: Option<&serde_json::Error>,
+) -> Result<Vec<CodexTokenRecord>, String> {
+    let mut records = Vec::new();
+    for (index, line) in contents
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .enumerate()
+    {
+        if looks_like_json(line) {
+            let parsed = serde_json::from_str::<Value>(line).map_err(|err| {
+                format!("Invalid Codex account JSON on line {}: {err}", index + 1)
+            })?;
+            collect_import_records(&parsed, &mut records);
+            continue;
+        }
+        records.push(raw_access_token_record(line, json_error)?);
+    }
     Ok(records)
 }
 
@@ -772,6 +946,47 @@ fn collect_import_records(value: &Value, records: &mut Vec<CodexTokenRecord>) {
     }
 }
 
+fn parse_refresh_token_lines(contents: &str) -> Result<Vec<String>, String> {
+    Ok(contents
+        .lines()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
+fn raw_access_token_record(
+    access_token: &str,
+    json_error: Option<&serde_json::Error>,
+) -> Result<CodexTokenRecord, String> {
+    let expires_at = jwt_expires_at(access_token).ok_or_else(|| {
+        if let Some(json_error) = json_error {
+            return format!(
+                "Invalid Codex account JSON file: {json_error}. Raw access token input must include a JWT exp claim."
+            );
+        }
+        "Raw access token input must include a JWT exp claim.".to_string()
+    })?;
+    let mut record = CodexTokenRecord {
+        access_token: access_token.to_string(),
+        refresh_token: String::new(),
+        client_id: None,
+        id_token: String::new(),
+        auto_refresh_enabled: false,
+        status: CodexAccountStatus::Active,
+        account_id: None,
+        user_id: None,
+        email: None,
+        expires_at,
+        last_refresh: Some(now_rfc3339()),
+        proxy_url: None,
+        priority: 0,
+        quota: super::types::CodexQuotaCache::default(),
+    };
+    fill_record_from_jwt(&mut record);
+    Ok(record)
+}
+
 fn parse_import_record(value: &Value) -> Option<CodexTokenRecord> {
     let provider = find_string(value, &[&["type"], &["provider"], &["kind"]]);
     if let Some(provider) = provider {
@@ -784,16 +999,26 @@ fn parse_import_record(value: &Value) -> Option<CodexTokenRecord> {
         value,
         &[
             &["access_token"],
+            &["accessToken"],
+            &["tokens", "access_token"],
+            &["tokens", "accessToken"],
             &["token", "access_token"],
+            &["token", "accessToken"],
             &["token_data", "access_token"],
+            &["token_data", "accessToken"],
         ],
     )?;
     let refresh_token = find_string(
         value,
         &[
             &["refresh_token"],
+            &["refreshToken"],
+            &["tokens", "refresh_token"],
+            &["tokens", "refreshToken"],
             &["token", "refresh_token"],
+            &["token", "refreshToken"],
             &["token_data", "refresh_token"],
+            &["token_data", "refreshToken"],
         ],
     )
     .unwrap_or_default();
@@ -801,8 +1026,13 @@ fn parse_import_record(value: &Value) -> Option<CodexTokenRecord> {
         value,
         &[
             &["id_token"],
+            &["idToken"],
+            &["tokens", "id_token"],
+            &["tokens", "idToken"],
             &["token", "id_token"],
+            &["token", "idToken"],
             &["token_data", "id_token"],
+            &["token_data", "idToken"],
         ],
     )
     .unwrap_or_default();
@@ -820,9 +1050,14 @@ fn parse_import_record(value: &Value) -> Option<CodexTokenRecord> {
         &[
             &["expires_at"],
             &["expired"],
+            &["tokens", "expires_at"],
+            &["tokens", "expiresAt"],
+            &["tokens", "expired"],
             &["token", "expires_at"],
+            &["token", "expiresAt"],
             &["token", "expired"],
             &["token_data", "expires_at"],
+            &["token_data", "expiresAt"],
             &["token_data", "expired"],
         ],
     )
@@ -831,8 +1066,13 @@ fn parse_import_record(value: &Value) -> Option<CodexTokenRecord> {
             value,
             &[
                 &["expires_in"],
+                &["expiresIn"],
+                &["tokens", "expires_in"],
+                &["tokens", "expiresIn"],
                 &["token", "expires_in"],
+                &["token", "expiresIn"],
                 &["token_data", "expires_in"],
+                &["token_data", "expiresIn"],
             ],
         )
         .map(expires_at_from_seconds)
@@ -843,10 +1083,13 @@ fn parse_import_record(value: &Value) -> Option<CodexTokenRecord> {
         &[
             &["account_id"],
             &["chatgpt_account_id"],
+            &["tokens", "chatgpt_account_id"],
             &["account", "uuid"],
             &["account", "id"],
             &["token_data", "account_id"],
+            &["token_data", "chatgpt_account_id"],
             &["data", "account_id"],
+            &["data", "chatgpt_account_id"],
         ],
     );
     let user_id = find_string(
@@ -854,6 +1097,7 @@ fn parse_import_record(value: &Value) -> Option<CodexTokenRecord> {
         &[
             &["user_id"],
             &["chatgpt_user_id"],
+            &["tokens", "chatgpt_user_id"],
             &["user", "id"],
             &["user", "uuid"],
             &["account", "user_id"],
@@ -886,10 +1130,26 @@ fn parse_import_record(value: &Value) -> Option<CodexTokenRecord> {
         ],
     )
     .or_else(|| Some(now_rfc3339()));
+    let client_id = find_string(
+        value,
+        &[
+            &["client_id"],
+            &["clientId"],
+            &["tokens", "client_id"],
+            &["tokens", "clientId"],
+            &["token", "client_id"],
+            &["token", "clientId"],
+            &["token_data", "client_id"],
+            &["token_data", "clientId"],
+            &["data", "client_id"],
+            &["data", "clientId"],
+        ],
+    );
 
     Some(CodexTokenRecord {
         access_token,
         refresh_token,
+        client_id,
         id_token,
         auto_refresh_enabled,
         status: CodexAccountStatus::Active,
@@ -996,6 +1256,13 @@ fn format_unix_timestamp(value: i64) -> Option<String> {
         .ok()?
         .format(&time::format_description::well_known::Rfc3339)
         .ok()
+}
+
+fn jwt_expires_at(token: &str) -> Option<String> {
+    let exp = decode_jwt_payload(token)?
+        .get("exp")
+        .and_then(Value::as_i64)?;
+    format_unix_timestamp(exp)
 }
 
 #[cfg(test)]
@@ -1121,6 +1388,7 @@ mod tests {
         CodexTokenRecord {
             access_token: build_access_token_with_plan(access_claim_plan_type),
             refresh_token: "refresh-token".to_string(),
+            client_id: Some(CodexRefreshTokenClient::Codex.client_id().to_string()),
             id_token: build_id_token("paid@example.com", "acct-paid"),
             auto_refresh_enabled: true,
             status: CodexAccountStatus::Active,
@@ -1165,6 +1433,28 @@ mod tests {
         let record = build_record_with_quota_and_access_claim("prolite", "prolite");
 
         assert!(!record_needs_refresh(&record));
+    }
+
+    #[test]
+    fn refresh_token_client_for_record_uses_persisted_client_id() {
+        let mut record = build_record_with_quota_and_access_claim("free", "free");
+
+        record.client_id = None;
+        assert_eq!(
+            refresh_token_client_for_record(&record).expect("missing client_id defaults to codex"),
+            CodexRefreshTokenClient::Codex
+        );
+
+        record.client_id = Some(CodexRefreshTokenClient::Mobile.client_id().to_string());
+        assert_eq!(
+            refresh_token_client_for_record(&record).expect("mobile client_id should resolve"),
+            CodexRefreshTokenClient::Mobile
+        );
+
+        record.client_id = Some("unknown-client".to_string());
+        let err = refresh_token_client_for_record(&record)
+            .expect_err("unknown client_id should fail fast");
+        assert!(err.contains("Unsupported Codex refresh token client_id"));
     }
 
     #[test]
@@ -1299,6 +1589,112 @@ mod tests {
             assert_eq!(record.email.as_deref(), Some("carol@example.com"));
             assert!(record.expires_at().is_some());
             assert!(!record.is_expired());
+
+            let _ = std::fs::remove_dir_all(data_dir);
+        });
+    }
+
+    #[test]
+    fn import_text_parses_sub2api_oauth_token_response() {
+        run_async(async {
+            let (store, data_dir) = create_test_store();
+            let imported = store
+                .import_text(
+                    serde_json::to_string_pretty(&json!({
+                        "access_token": "access-token",
+                        "refresh_token": "refresh-token",
+                        "id_token": build_id_token("text@example.com", "acct-text"),
+                        "token_type": "Bearer",
+                        "expires_in": 7200,
+                    }))
+                    .expect("serialize test json")
+                    .as_str(),
+                )
+                .await
+                .expect("text import should succeed");
+
+            assert_eq!(imported.len(), 1);
+            assert_eq!(imported[0].email.as_deref(), Some("text@example.com"));
+
+            let record = store
+                .get_account_record(&imported[0].account_id)
+                .await
+                .expect("record should exist");
+            assert_eq!(record.account_id.as_deref(), Some("acct-text"));
+            assert_eq!(record.email.as_deref(), Some("text@example.com"));
+
+            let _ = std::fs::remove_dir_all(data_dir);
+        });
+    }
+
+    #[test]
+    fn import_text_preserves_refresh_token_client_id() {
+        run_async(async {
+            let (store, data_dir) = create_test_store();
+            let imported = store
+                .import_text(
+                    serde_json::to_string_pretty(&json!({
+                        "tokens": {
+                            "accessToken": "access-token",
+                            "refreshToken": "refresh-token",
+                            "idToken": build_id_token("mobile@example.com", "acct-mobile"),
+                            "expires_in": 7200,
+                            "client_id": CodexRefreshTokenClient::Mobile.client_id(),
+                        },
+                    }))
+                    .expect("serialize test json")
+                    .as_str(),
+                )
+                .await
+                .expect("text import should succeed");
+
+            let record = store
+                .get_account_record(&imported[0].account_id)
+                .await
+                .expect("record should exist");
+            assert_eq!(
+                record.client_id.as_deref(),
+                Some(CodexRefreshTokenClient::Mobile.client_id())
+            );
+
+            let _ = std::fs::remove_dir_all(data_dir);
+        });
+    }
+
+    #[test]
+    fn import_text_parses_raw_access_token_lines() {
+        run_async(async {
+            let (store, data_dir) = create_test_store();
+            let expires_at = OffsetDateTime::now_utc() + time::Duration::hours(2);
+            let access_token = {
+                let payload = json!({
+                    "exp": expires_at.unix_timestamp(),
+                    "email": "raw@example.com",
+                    "https://api.openai.com/auth": {
+                        "chatgpt_account_id": "acct-raw",
+                        "chatgpt_user_id": "user-raw",
+                    },
+                });
+                let encoded = URL_SAFE_NO_PAD
+                    .encode(serde_json::to_vec(&payload).expect("serialize payload"));
+                format!("header.{encoded}.signature")
+            };
+
+            let imported = store
+                .import_text(access_token.as_str())
+                .await
+                .expect("raw access token import should succeed");
+
+            assert_eq!(imported.len(), 1);
+            assert_eq!(imported[0].email.as_deref(), Some("raw@example.com"));
+
+            let record = store
+                .get_account_record(&imported[0].account_id)
+                .await
+                .expect("record should exist");
+            assert_eq!(record.account_id.as_deref(), Some("acct-raw"));
+            assert_eq!(record.refresh_token, "");
+            assert!(!record.auto_refresh_enabled);
 
             let _ = std::fs::remove_dir_all(data_dir);
         });
@@ -2053,6 +2449,7 @@ mod tests {
                     "type": "codex",
                     "access_token": "first-access-token",
                     "refresh_token": "first-refresh-token",
+                    "client_id": CodexRefreshTokenClient::Mobile.client_id(),
                     "account_id": "acct-overwrite",
                     "email": "overwrite@example.com",
                     "expired": future_rfc3339(6),
@@ -2113,6 +2510,10 @@ mod tests {
                 .expect("record should exist");
             assert_eq!(record.access_token, "second-access-token");
             assert_eq!(record.refresh_token, "second-refresh-token");
+            assert_eq!(
+                record.client_id.as_deref(),
+                Some(CodexRefreshTokenClient::Mobile.client_id())
+            );
             assert_eq!(record.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
 
             let _ = std::fs::remove_dir_all(data_dir);
@@ -2507,6 +2908,7 @@ INSERT INTO provider_accounts (
             let first = CodexTokenRecord {
                 access_token: "access-1".to_string(),
                 refresh_token: "refresh-1".to_string(),
+                client_id: Some(CodexRefreshTokenClient::Codex.client_id().to_string()),
                 id_token: "".to_string(),
                 auto_refresh_enabled: true,
                 status: CodexAccountStatus::Disabled,
@@ -2522,6 +2924,7 @@ INSERT INTO provider_accounts (
             let second = CodexTokenRecord {
                 access_token: "access-2".to_string(),
                 refresh_token: "refresh-2".to_string(),
+                client_id: Some(CodexRefreshTokenClient::Codex.client_id().to_string()),
                 id_token: "".to_string(),
                 auto_refresh_enabled: true,
                 status: CodexAccountStatus::Active,
