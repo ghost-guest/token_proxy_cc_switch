@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::fmt::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const DEFAULT_PRICING_VERSION: &str = "2026-05-23.gemini-3-5-flash";
+pub const DEFAULT_PRICING_VERSION: &str = "2026-05-24.gpt-5-2";
 
 const DEFAULT_LONG_CONTEXT_INPUT_TOKEN_THRESHOLD: u64 = 272_000;
 const SETTINGS_ROW_ID: i64 = 1;
@@ -203,6 +203,28 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
             ModelPricingModel {
                 model_id: "gpt-5.3-codex".to_string(),
                 aliases: alias_list(&["openai/gpt-5.3-codex"]),
+                short: ModelPricingTier {
+                    input_nano_usd_per_token: 1_750,
+                    cached_input_nano_usd_per_token: 175,
+                    output_nano_usd_per_token: 14_000,
+                },
+                long: None,
+                long_context_input_token_threshold: None,
+            },
+            ModelPricingModel {
+                model_id: "gpt-5.2".to_string(),
+                aliases: alias_list(&["openai/gpt-5.2"]),
+                short: ModelPricingTier {
+                    input_nano_usd_per_token: 1_750,
+                    cached_input_nano_usd_per_token: 175,
+                    output_nano_usd_per_token: 14_000,
+                },
+                long: None,
+                long_context_input_token_threshold: None,
+            },
+            ModelPricingModel {
+                model_id: "gpt-5.2-codex".to_string(),
+                aliases: alias_list(&["openai/gpt-5.2-codex"]),
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 1_750,
                     cached_input_nano_usd_per_token: 175,
@@ -727,6 +749,8 @@ mod tests {
             ("moonshotai/kimi-k2.6", "kimi-k2.6"),
             ("openai/gpt-5.5", "gpt-5.5"),
             ("gpt-5.5-latest", "gpt-5.5"),
+            ("openai/gpt-5.2", "gpt-5.2"),
+            ("openai/gpt-5.2-codex", "gpt-5.2-codex"),
             ("openai/gpt-image-2", "gpt-image-2"),
             ("gpt-image-2-2026-04-21", "gpt-image-2"),
             ("openai/gpt-image-2-2026-04-21", "gpt-image-2"),
@@ -931,6 +955,26 @@ mod tests {
         assert_eq!(gpt_5_3_codex.short.cached_input_nano_usd_per_token, 175);
         assert_eq!(gpt_5_3_codex.short.output_nano_usd_per_token, 14_000);
         assert_eq!(gpt_5_3_codex.aliases, vec!["openai/gpt-5.3-codex"]);
+
+        let gpt_5_2 = settings
+            .models
+            .iter()
+            .find(|model| model.model_id == "gpt-5.2")
+            .expect("gpt-5.2 should exist");
+        assert_eq!(gpt_5_2.short.input_nano_usd_per_token, 1_750);
+        assert_eq!(gpt_5_2.short.cached_input_nano_usd_per_token, 175);
+        assert_eq!(gpt_5_2.short.output_nano_usd_per_token, 14_000);
+        assert_eq!(gpt_5_2.aliases, vec!["openai/gpt-5.2"]);
+
+        let gpt_5_2_codex = settings
+            .models
+            .iter()
+            .find(|model| model.model_id == "gpt-5.2-codex")
+            .expect("gpt-5.2-codex should exist");
+        assert_eq!(gpt_5_2_codex.short.input_nano_usd_per_token, 1_750);
+        assert_eq!(gpt_5_2_codex.short.cached_input_nano_usd_per_token, 175);
+        assert_eq!(gpt_5_2_codex.short.output_nano_usd_per_token, 14_000);
+        assert_eq!(gpt_5_2_codex.aliases, vec!["openai/gpt-5.2-codex"]);
 
         let claude_sonnet = settings
             .models
