@@ -33,6 +33,7 @@ target/
 
 .reference
 .magi
+.codegraph/
 
 findings.md
 progress.md
