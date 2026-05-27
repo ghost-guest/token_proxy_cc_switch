@@ -1,5 +1,7 @@
 use serde_json::{Map, Value};
 
+use crate::proxy::codex_tool_types::is_codex_tool_call_output_item_type;
+
 pub(super) fn extract_input_messages(object: &Map<String, Value>) -> Result<Vec<Value>, String> {
     let input = object.get("input");
     match input {
@@ -42,7 +44,9 @@ fn responses_input_item_to_chat_message(item: &Value) -> Result<Value, String> {
 
     match item_type {
         "message" => responses_message_item_to_chat_message(item),
-        "function_call_output" => responses_function_call_output_item_to_chat_message(item),
+        item_type if is_codex_tool_call_output_item_type(item_type) => {
+            responses_function_call_output_item_to_chat_message(item)
+        }
         "function_call" => responses_function_call_item_to_chat_message(item),
         other => Err(format!("Unsupported Responses input item type: {other}")),
     }
@@ -160,5 +164,32 @@ fn responses_message_content_to_chat_content(value: &Value) -> Option<Value> {
         }
         Value::Null => None,
         _ => Some(Value::String(String::new())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_input_messages_maps_new_tool_output_types_to_tool_messages() {
+        let request = serde_json::json!({
+            "input": [
+                { "type": "tool_search_output", "call_id": "call_search", "output": "search ok" },
+                { "type": "custom_tool_call_output", "call_id": "call_custom", "output": "custom ok" },
+                { "type": "mcp_tool_call_output", "call_id": "call_mcp", "output": "mcp ok" }
+            ]
+        });
+        let messages =
+            extract_input_messages(request.as_object().expect("object")).expect("messages");
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0]["role"], "tool");
+        assert_eq!(messages[0]["tool_call_id"], "call_search");
+        assert_eq!(messages[0]["content"], "search ok");
+        assert_eq!(messages[1]["tool_call_id"], "call_custom");
+        assert_eq!(messages[1]["content"], "custom ok");
+        assert_eq!(messages[2]["tool_call_id"], "call_mcp");
+        assert_eq!(messages[2]["content"], "mcp ok");
     }
 }

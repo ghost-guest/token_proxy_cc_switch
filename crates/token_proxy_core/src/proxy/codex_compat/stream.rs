@@ -537,8 +537,9 @@ where
                     }
                 }
                 Some(Err(err)) => {
-                    self.log_usage_once();
-                    return Err(std::io::Error::new(std::io::ErrorKind::Other, err));
+                    self.fail_with_response_failed(format!(
+                        "Failed to read upstream response: {err}"
+                    ));
                 }
                 None => {
                     self.upstream_ended = true;
@@ -579,14 +580,15 @@ where
             self.fail_stream(invalid_event_message(data));
             return;
         };
-        if matches!(
-            value.get("type").and_then(Value::as_str),
-            Some("response.failed" | "error")
-        ) {
+        if matches!(value.get("type").and_then(Value::as_str), Some("error")) {
             self.fail_stream(stream_error_message(&value));
             return;
         }
-        let Some(event_type) = value.get("type").and_then(Value::as_str) else {
+        let Some(event_type) = value
+            .get("type")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+        else {
             self.fail_stream(malformed_event_message(&value));
             return;
         };
@@ -594,8 +596,11 @@ where
         if event_type == "response.created" {
             self.update_from_created(&value);
         }
-        if is_responses_terminal_event(event_type) {
+        if is_responses_terminal_event(&event_type) {
             self.saw_terminal_event = true;
+            if event_type == "response.failed" {
+                self.response_error_override = Some(stream_error_message(&value));
+            }
         }
         restore_tool_names_in_event(&mut value, &self.tool_name_map);
         if is_codex_business_output_event(&value) {
@@ -604,8 +609,15 @@ where
         if let Some(delta) = extract_output_token_delta(&value) {
             token_texts.push(delta.to_string());
         }
-        self.out
-            .push_back(Bytes::from(format!("data: {}\n\n", value.to_string())));
+        if event_type == "response.failed" {
+            self.out.push_back(Bytes::from(format!(
+                "event: response.failed\ndata: {}\n\n",
+                value
+            )));
+        } else {
+            self.out
+                .push_back(Bytes::from(format!("data: {value}\n\n")));
+        }
         if self.saw_terminal_event {
             self.out.push_back(Bytes::from("data: [DONE]\n\n"));
             self.sent_done = true;
@@ -640,7 +652,7 @@ where
             "OpenAI Responses stream semantic timeout"
         );
         self.response_error_override = Some(message.clone());
-        stream_responses_error_done_sse(&message)
+        stream_responses_failed_done_sse(&message, &self.response_id, self.created, &self.model)
     }
 
     fn push_semantic_timeout_if_due(&mut self) {
@@ -702,6 +714,18 @@ where
         self.out.push_back(Bytes::from("data: [DONE]\n\n"));
         self.sent_done = true;
         self.write_log_once(Some(message));
+    }
+
+    fn fail_with_response_failed(&mut self, message: String) {
+        self.context.status = 502;
+        self.response_error_override = Some(message.clone());
+        self.out.push_back(stream_responses_failed_done_sse(
+            &message,
+            &self.response_id,
+            self.created,
+            &self.model,
+        ));
+        self.sent_done = true;
     }
 }
 
@@ -773,22 +797,46 @@ pub(crate) fn stream_chat_error_sse(message: &str) -> Bytes {
 }
 
 pub(crate) fn stream_responses_error_sse(message: &str) -> Bytes {
+    let created = now_unix_seconds();
     Bytes::from(format!(
-        "data: {}\n\n",
+        "event: response.failed\ndata: {}\n\n",
         json!({
-            "type": "error",
-            "error": {
-                "message": message,
-                "type": "proxy_error"
+            "type": "response.failed",
+            "response": {
+                "id": format!("resp_proxy_{created}"),
+                "object": "response",
+                "created_at": created,
+                "model": "unknown",
+                "status": "failed",
+                "output": [],
+                "error": {
+                    "code": "server_error",
+                    "message": message,
+                }
             }
         })
     ))
 }
 
-fn stream_responses_error_done_sse(message: &str) -> Bytes {
-    let mut bytes = stream_responses_error_sse(message).to_vec();
-    bytes.extend_from_slice(b"data: [DONE]\n\n");
-    Bytes::from(bytes)
+fn stream_responses_failed_done_sse(message: &str, id: &str, created: i64, model: &str) -> Bytes {
+    Bytes::from(format!(
+        "event: response.failed\ndata: {}\n\ndata: [DONE]\n\n",
+        json!({
+            "type": "response.failed",
+            "response": {
+                "id": id,
+                "object": "response",
+                "created_at": created,
+                "model": model,
+                "status": "failed",
+                "output": [],
+                "error": {
+                    "code": "server_error",
+                    "message": message,
+                }
+            }
+        })
+    ))
 }
 
 fn stream_responses_compatible_incomplete_sse(id: &str, created: i64, model: &str) -> Bytes {

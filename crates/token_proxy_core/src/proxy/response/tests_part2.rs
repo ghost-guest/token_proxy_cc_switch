@@ -115,7 +115,7 @@ fn stream_with_logging_closes_after_responses_terminal_without_upstream_close() 
 }
 
 #[test]
-fn stream_with_logging_semantic_timeout_emits_protocol_error_and_done() {
+fn stream_with_logging_semantic_timeout_emits_response_failed_and_done() {
     super::run_async(async {
         let (log, mut context, sqlite_pool) = super::setup_responses_stream().await;
         context.request_headers = Some("{}".to_string());
@@ -156,8 +156,12 @@ fn stream_with_logging_semantic_timeout_emits_protocol_error_and_done() {
             .map(|chunk| String::from_utf8_lossy(chunk).to_string())
             .collect::<String>();
 
-        assert!(body.contains("\"type\":\"error\""), "chunks: {body}");
-        assert!(body.contains("\"type\":\"proxy_error\""), "chunks: {body}");
+        assert!(body.contains("event: response.failed"), "chunks: {body}");
+        assert!(
+            body.contains("\"type\":\"response.failed\""),
+            "chunks: {body}"
+        );
+        assert!(body.contains("\"status\":\"failed\""), "chunks: {body}");
         assert!(body.contains("semantic timeout"), "chunks: {body}");
         assert!(body.contains("data: [DONE]"), "chunks: {body}");
 
@@ -175,6 +179,49 @@ fn stream_with_logging_semantic_timeout_emits_protocol_error_and_done() {
                 .is_some_and(|value| value.contains("semantic timeout")),
             "unexpected response_error: {response_error:?}"
         );
+    });
+}
+
+#[test]
+fn stream_with_logging_upstream_error_emits_response_failed_after_stream_started() {
+    super::run_async(async {
+        let (log, context, _sqlite_pool) = super::setup_responses_stream().await;
+        let upstream = futures_util::stream::iter(vec![
+            Ok::<Bytes, std::io::Error>(Bytes::from(
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n",
+            )),
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "upstream reset",
+            )),
+        ]);
+        let token_tracker = crate::proxy::token_rate::TokenRateTracker::new()
+            .register(None, None)
+            .await;
+        let stream = super::super::streaming::stream_with_logging_and_semantic_timeout(
+            upstream,
+            context,
+            log,
+            token_tracker,
+            Some(Duration::from_secs(30)),
+        );
+
+        let chunks = stream
+            .map(|item| item.expect("upstream error should become response.failed SSE"))
+            .collect::<Vec<Bytes>>()
+            .await;
+        let body = chunks
+            .iter()
+            .map(|chunk| String::from_utf8_lossy(chunk).to_string())
+            .collect::<String>();
+
+        assert!(body.contains("event: response.failed"), "chunks: {body}");
+        assert!(
+            body.contains("\"type\":\"response.failed\""),
+            "chunks: {body}"
+        );
+        assert!(body.contains("upstream reset"), "chunks: {body}");
+        assert!(body.contains("data: [DONE]"), "chunks: {body}");
     });
 }
 
@@ -229,7 +276,7 @@ fn stream_with_model_override_closes_after_responses_terminal_without_upstream_c
 }
 
 #[test]
-fn stream_with_model_override_semantic_timeout_emits_protocol_error_and_done() {
+fn stream_with_model_override_semantic_timeout_emits_response_failed_and_done() {
     super::run_async(async {
         let (log, context, _sqlite_pool) = super::setup_responses_stream().await;
         let upstream = futures_util::stream::unfold(0usize, |index| async move {
@@ -271,8 +318,12 @@ fn stream_with_model_override_semantic_timeout_emits_protocol_error_and_done() {
             .map(|chunk| String::from_utf8_lossy(chunk).to_string())
             .collect::<String>();
 
-        assert!(body.contains("\"type\":\"error\""), "chunks: {body}");
-        assert!(body.contains("\"type\":\"proxy_error\""), "chunks: {body}");
+        assert!(body.contains("event: response.failed"), "chunks: {body}");
+        assert!(
+            body.contains("\"type\":\"response.failed\""),
+            "chunks: {body}"
+        );
+        assert!(body.contains("\"status\":\"failed\""), "chunks: {body}");
         assert!(body.contains("semantic timeout"), "chunks: {body}");
         assert!(body.contains("data: [DONE]"), "chunks: {body}");
     });

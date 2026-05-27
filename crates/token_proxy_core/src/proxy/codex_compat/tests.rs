@@ -289,7 +289,11 @@ async fn stream_codex_to_responses_emits_error_event_for_invalid_json_event() {
         .await;
     let text = join_stream_chunks(&chunks);
 
-    assert!(text.contains("\"type\":\"error\""), "chunks: {text}");
+    assert!(text.contains("event: response.failed"), "chunks: {text}");
+    assert!(
+        text.contains("\"type\":\"response.failed\""),
+        "chunks: {text}"
+    );
     assert!(text.contains("invalid JSON stream event"), "chunks: {text}");
     assert!(text.contains("data: [DONE]"), "chunks: {text}");
 }
@@ -453,9 +457,42 @@ async fn stream_codex_to_responses_semantic_timeout_ignores_heartbeat_comments()
     .expect("heartbeat-only Codex stream should not hang");
     let text = join_stream_chunks(&chunks);
 
-    assert!(text.contains("\"type\":\"error\""), "chunks: {text}");
-    assert!(text.contains("\"type\":\"proxy_error\""), "chunks: {text}");
+    assert!(text.contains("event: response.failed"), "chunks: {text}");
+    assert!(
+        text.contains("\"type\":\"response.failed\""),
+        "chunks: {text}"
+    );
+    assert!(text.contains("\"status\":\"failed\""), "chunks: {text}");
     assert!(text.contains("semantic timeout"), "chunks: {text}");
+    assert!(text.contains("data: [DONE]"), "chunks: {text}");
+}
+
+#[tokio::test]
+async fn stream_codex_to_responses_upstream_error_emits_response_failed_after_stream_started() {
+    let upstream = futures_util::stream::iter(vec![
+        Ok::<Bytes, std::io::Error>(Bytes::from(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n",
+        )),
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "codex stream reset",
+        )),
+    ]);
+    let tracker = TokenRateTracker::new().register(None, None).await;
+    let context = test_log_context();
+    let log = Arc::new(LogWriter::new(None));
+
+    let chunks = stream_codex_to_responses(upstream, context, log, tracker)
+        .collect::<Vec<_>>()
+        .await;
+    let text = join_stream_chunks(&chunks);
+
+    assert!(text.contains("event: response.failed"), "chunks: {text}");
+    assert!(
+        text.contains("\"type\":\"response.failed\""),
+        "chunks: {text}"
+    );
+    assert!(text.contains("codex stream reset"), "chunks: {text}");
     assert!(text.contains("data: [DONE]"), "chunks: {text}");
 }
 
@@ -718,6 +755,65 @@ fn responses_request_to_codex_strips_output_parts_from_function_call_output() {
     let input_items = value["input"].as_array().expect("input array");
     assert_eq!(input_items.len(), 1);
     assert!(input_items[0].get("output_parts").is_none());
+}
+
+#[test]
+fn responses_request_to_codex_strips_output_parts_from_new_tool_output_types() {
+    let input = json!({
+        "model": "gpt-5",
+        "input": [
+            {
+                "type": "tool_search_output",
+                "call_id": "call_search",
+                "output": "search ok",
+                "output_parts": [{ "type": "text", "text": "search ok" }]
+            },
+            {
+                "type": "custom_tool_call_output",
+                "call_id": "call_custom",
+                "output": "custom ok",
+                "output_parts": [{ "type": "text", "text": "custom ok" }]
+            },
+            {
+                "type": "mcp_tool_call_output",
+                "call_id": "call_mcp",
+                "output": "mcp ok",
+                "output_parts": [{ "type": "text", "text": "mcp ok" }]
+            }
+        ]
+    });
+    let bytes = Bytes::from(input.to_string());
+    let output = responses_request_to_codex(&bytes, Some("gpt-5-codex")).expect("convert");
+    let value: serde_json::Value = serde_json::from_slice(&output).expect("json");
+    let input_items = value["input"].as_array().expect("input array");
+
+    assert_eq!(input_items.len(), 3);
+    assert_eq!(input_items[0]["type"], "tool_search_output");
+    assert_eq!(input_items[1]["type"], "custom_tool_call_output");
+    assert_eq!(input_items[2]["type"], "mcp_tool_call_output");
+    assert!(input_items
+        .iter()
+        .all(|item| item.get("output_parts").is_none()));
+}
+
+#[test]
+fn responses_request_to_codex_adds_missing_names_to_tool_call_context_items() {
+    let input = json!({
+        "model": "gpt-5",
+        "input": [
+            { "type": "tool_call", "call_id": "call_tool" },
+            { "type": "local_shell_call", "call_id": "call_shell", "tool_name": "shell" },
+            { "type": "tool_search_call", "call_id": "call_search", "function": { "name": "search" } }
+        ]
+    });
+    let bytes = Bytes::from(input.to_string());
+    let output = responses_request_to_codex(&bytes, Some("gpt-5-codex")).expect("convert");
+    let value: serde_json::Value = serde_json::from_slice(&output).expect("json");
+    let input_items = value["input"].as_array().expect("input array");
+
+    assert_eq!(input_items[0]["name"], "tool");
+    assert_eq!(input_items[1]["name"], "shell");
+    assert_eq!(input_items[2]["name"], "search");
 }
 
 #[test]

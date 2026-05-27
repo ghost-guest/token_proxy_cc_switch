@@ -352,6 +352,40 @@ fn responses_request_to_anthropic_preserves_structured_tool_result_parts_and_err
 }
 
 #[test]
+fn responses_request_to_anthropic_maps_new_tool_output_types_to_tool_results() {
+    let http_clients = ProxyHttpClients::new().expect("http clients");
+
+    let input = bytes_from_json(json!({
+        "model": "gpt-4.1",
+        "input": [
+            { "type": "tool_search_output", "call_id": "call_search", "output": "search ok" },
+            { "type": "custom_tool_call_output", "call_id": "call_custom", "output": "custom ok" },
+            { "type": "mcp_tool_call_output", "call_id": "call_mcp", "output": "mcp ok" }
+        ]
+    }));
+
+    let output = run_async(async {
+        responses_request_to_anthropic(&input, &http_clients)
+            .await
+            .expect("transform")
+    });
+    let value = json_from_bytes(output);
+    let messages = value["messages"].as_array().expect("messages array");
+    let content = messages[0]["content"].as_array().expect("tool results");
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["role"], json!("user"));
+    assert_eq!(content.len(), 3);
+    assert_eq!(content[0]["type"], json!("tool_result"));
+    assert_eq!(content[0]["tool_use_id"], json!("call_search"));
+    assert_eq!(content[0]["content"], json!("search ok"));
+    assert_eq!(content[1]["tool_use_id"], json!("call_custom"));
+    assert_eq!(content[1]["content"], json!("custom ok"));
+    assert_eq!(content[2]["tool_use_id"], json!("call_mcp"));
+    assert_eq!(content[2]["content"], json!("mcp ok"));
+}
+
+#[test]
 fn responses_request_to_anthropic_sanitizes_tool_use_ids_and_adds_missing_results() {
     let http_clients = ProxyHttpClients::new().expect("http clients");
 

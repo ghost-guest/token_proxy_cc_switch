@@ -86,6 +86,9 @@ fn build_runtime_config(config: ProxyConfigFile) -> Result<ProxyConfig, String> 
         upstream_no_data_timeout: resolve_upstream_no_data_timeout(
             config.upstream_no_data_timeout_secs,
         )?,
+        openai_response_header_timeout: resolve_openai_response_header_timeout(
+            config.openai_response_header_timeout_secs,
+        )?,
         upstream_strategy: resolve_upstream_strategy(config.upstream_strategy)?,
         hot_model_mappings: config.hot_model_mappings,
         upstreams,
@@ -112,6 +115,17 @@ fn resolve_upstream_no_data_timeout(value: u64) -> Result<Duration, String> {
         return Err("upstream_no_data_timeout_secs is too large.".to_string());
     }
     Ok(duration)
+}
+
+fn resolve_openai_response_header_timeout(value: u64) -> Result<Option<Duration>, String> {
+    if value == 0 {
+        return Ok(None);
+    }
+    let duration = Duration::from_secs(value);
+    if Instant::now().checked_add(duration).is_none() {
+        return Err("openai_response_header_timeout_secs is too large.".to_string());
+    }
+    Ok(Some(duration))
 }
 
 fn resolve_upstream_strategy(value: UpstreamStrategy) -> Result<UpstreamStrategyRuntime, String> {

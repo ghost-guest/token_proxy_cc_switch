@@ -152,13 +152,14 @@ async fn send_upstream_request_once(
     let upstream_body =
         request_body::build_upstream_body(provider, upstream, upstream_path_with_query, body, meta)
             .await?;
+    let response_header_timeout = response_header_timeout_for_provider(&state.config, provider);
     match send_request_once(
         client,
         &method,
         upstream_url,
         request_headers,
         upstream_body,
-        state.config.upstream_no_data_timeout,
+        response_header_timeout,
         start_time,
         timings,
     )
@@ -186,6 +187,7 @@ async fn send_upstream_request_once(
             selected_account_id,
             request_detail,
             start_time,
+            response_header_timeout,
             cooldown_scope,
         )),
     }
@@ -290,13 +292,14 @@ async fn send_codex_attempt(
         request_body::build_upstream_body(provider, upstream, upstream_path_with_query, body, meta)
             .await
             .map_err(CodexAttemptError::Fatal)?;
+    let response_header_timeout = response_header_timeout_for_provider(&state.config, provider);
     match send_request_once(
         client,
         method,
         upstream_url,
         request_headers,
         upstream_body,
-        state.config.upstream_no_data_timeout,
+        response_header_timeout,
         start_time,
         timings,
     )
@@ -312,6 +315,7 @@ async fn send_codex_attempt(
             selected_account_id,
             request_detail,
             start_time,
+            response_header_timeout,
             cooldown_scope,
         ))),
         Err(SendFailure::Transport(err)) => {
@@ -372,19 +376,19 @@ async fn send_request_once(
     upstream_url: &str,
     request_headers: &HeaderMap,
     upstream_body: reqwest::Body,
-    upstream_no_data_timeout: Duration,
+    response_header_timeout: Option<Duration>,
     start_time: Instant,
     timings: RequestTimings,
 ) -> Result<reqwest::Response, SendFailure> {
-    let upstream_response = timeout(
-        upstream_no_data_timeout,
-        client
-            .request(method.clone(), upstream_url)
-            .headers(request_headers.clone())
-            .body(upstream_body)
-            .send(),
-    )
-    .await;
+    let request = client
+        .request(method.clone(), upstream_url)
+        .headers(request_headers.clone())
+        .body(upstream_body)
+        .send();
+    let upstream_response = match response_header_timeout {
+        Some(duration) => timeout(duration, request).await,
+        None => Ok(request.await),
+    };
     match upstream_response {
         Ok(Ok(response)) => {
             timings.mark_upstream_response_headers(start_time.elapsed().as_millis());
@@ -392,6 +396,16 @@ async fn send_request_once(
         }
         Ok(Err(err)) => Err(SendFailure::Transport(err)),
         Err(_) => Err(SendFailure::Timeout),
+    }
+}
+
+fn response_header_timeout_for_provider(
+    config: &crate::proxy::config::ProxyConfig,
+    provider: &str,
+) -> Option<Duration> {
+    match provider {
+        "openai" | "openai-response" | "codex" => config.openai_response_header_timeout,
+        _ => Some(config.upstream_no_data_timeout),
     }
 }
 
@@ -460,12 +474,13 @@ fn handle_upstream_timeout(
     selected_account_id: Option<&str>,
     request_detail: Option<&RequestDetailSnapshot>,
     start_time: Instant,
+    response_header_timeout: Option<Duration>,
     cooldown_scope: &CooldownScope,
 ) -> AttemptOutcome {
-    let message = format!(
-        "Upstream did not respond within {}s.",
-        state.config.upstream_no_data_timeout.as_secs()
-    );
+    let timeout_secs = response_header_timeout
+        .unwrap_or(state.config.upstream_no_data_timeout)
+        .as_secs();
+    let message = format!("Upstream did not respond within {}s.", timeout_secs);
     mark_account_retryable_failure(
         state,
         provider,
@@ -552,4 +567,69 @@ fn map_upstream_error(
         start_time,
     );
     AttemptOutcome::Fatal(http::error_response(StatusCode::BAD_GATEWAY, error_message))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::logging::LogLevel;
+    use crate::proxy::config::{ProxyConfig, UpstreamStrategyRuntime};
+    use std::collections::HashMap;
+
+    fn test_config(openai_response_header_timeout: Option<Duration>) -> ProxyConfig {
+        ProxyConfig {
+            host: "127.0.0.1".to_string(),
+            port: 9208,
+            local_api_key: None,
+            cors_enabled: false,
+            model_list_prefix: false,
+            log_level: LogLevel::Silent,
+            max_request_body_bytes: 1024,
+            retryable_failure_cooldown: Duration::from_secs(15),
+            codex_session_scoped_cooldown_enabled: false,
+            upstream_no_data_timeout: Duration::from_secs(120),
+            openai_response_header_timeout,
+            upstream_strategy: UpstreamStrategyRuntime::default(),
+            hot_model_mappings: HashMap::new(),
+            upstreams: HashMap::new(),
+            kiro_preferred_endpoint: None,
+        }
+    }
+
+    #[test]
+    fn openai_response_header_timeout_defaults_to_disabled_for_openai_and_codex() {
+        let config = test_config(None);
+
+        assert_eq!(
+            response_header_timeout_for_provider(&config, "openai"),
+            None
+        );
+        assert_eq!(
+            response_header_timeout_for_provider(&config, "openai-response"),
+            None
+        );
+        assert_eq!(response_header_timeout_for_provider(&config, "codex"), None);
+        assert_eq!(
+            response_header_timeout_for_provider(&config, "anthropic"),
+            Some(Duration::from_secs(120))
+        );
+    }
+
+    #[test]
+    fn openai_response_header_timeout_overrides_openai_and_codex_when_configured() {
+        let config = test_config(Some(Duration::from_secs(45)));
+
+        assert_eq!(
+            response_header_timeout_for_provider(&config, "openai-response"),
+            Some(Duration::from_secs(45))
+        );
+        assert_eq!(
+            response_header_timeout_for_provider(&config, "codex"),
+            Some(Duration::from_secs(45))
+        );
+        assert_eq!(
+            response_header_timeout_for_provider(&config, "anthropic"),
+            Some(Duration::from_secs(120))
+        );
+    }
 }

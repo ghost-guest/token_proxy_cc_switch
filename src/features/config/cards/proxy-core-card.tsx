@@ -215,6 +215,23 @@ function ProxyCoreFields({
           {m.proxy_core_upstream_no_data_timeout_secs_help()}
         </p>
       </div>
+      <div className="grid gap-2">
+        <Label htmlFor="openai-response-header-timeout-secs">
+          {m.proxy_core_openai_response_header_timeout_secs_label()}
+        </Label>
+        <Input
+          id="openai-response-header-timeout-secs"
+          value={form.openaiResponseHeaderTimeoutSecs}
+          onChange={(event) =>
+            onChange({ openaiResponseHeaderTimeoutSecs: event.target.value })
+          }
+          placeholder="0"
+          inputMode="numeric"
+        />
+        <p className="text-xs text-muted-foreground">
+          {m.proxy_core_openai_response_header_timeout_secs_help()}
+        </p>
+      </div>
     </>
   );
 }

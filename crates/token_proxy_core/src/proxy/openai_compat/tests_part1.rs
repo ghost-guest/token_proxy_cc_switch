@@ -850,6 +850,42 @@ fn responses_request_to_chat_converts_function_call_output_to_tool_message() {
 }
 
 #[test]
+fn responses_request_to_chat_converts_new_tool_output_types_to_tool_messages() {
+    let http_clients = ProxyHttpClients::new().expect("http clients");
+    let input = bytes_from_json(json!({
+        "model": "gpt-4.1",
+        "input": [
+            { "type": "tool_search_output", "call_id": "call_search", "output": "search ok" },
+            { "type": "custom_tool_call_output", "call_id": "call_custom", "output": "custom ok" },
+            { "type": "mcp_tool_call_output", "call_id": "call_mcp", "output": "mcp ok" }
+        ],
+        "stream": false
+    }));
+
+    let output = run_async(async {
+        transform_request_body(
+            FormatTransform::ResponsesToChat,
+            &input,
+            &http_clients,
+            None,
+        )
+        .await
+        .expect("transform")
+    });
+    let value = json_from_bytes(output);
+    let messages = value["messages"].as_array().expect("messages array");
+
+    assert_eq!(messages.len(), 3);
+    assert_eq!(messages[0]["role"], json!("tool"));
+    assert_eq!(messages[0]["tool_call_id"], json!("call_search"));
+    assert_eq!(messages[0]["content"], json!("search ok"));
+    assert_eq!(messages[1]["tool_call_id"], json!("call_custom"));
+    assert_eq!(messages[1]["content"], json!("custom ok"));
+    assert_eq!(messages[2]["tool_call_id"], json!("call_mcp"));
+    assert_eq!(messages[2]["content"], json!("mcp ok"));
+}
+
+#[test]
 fn chat_response_to_responses_maps_tool_calls_into_output() {
     let input = bytes_from_json(json!({
         "id": "chatcmpl_123",

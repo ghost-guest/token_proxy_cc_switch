@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use std::{
     collections::VecDeque,
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use super::super::log::{attach_response_body, build_log_entry, LogContext, LogWriter};
@@ -181,6 +181,17 @@ where
                     self.write_terminal_log_once();
                     return Ok(None);
                 }
+                let message = format!("Failed to read upstream response: {err}");
+                if semantics.responses_events {
+                    let out_chunk =
+                        openai_response_failed_done_chunk(&message, self.context.model.as_deref());
+                    self.response_body_buf
+                        .push_str(&String::from_utf8_lossy(out_chunk.as_ref()));
+                    self.terminal_seen = true;
+                    self.terminal_error = Some(message);
+                    self.context.mark_first_client_flush();
+                    return Ok(Some((out_chunk, self)));
+                }
                 self.write_log_once(None);
                 Err(std::io::Error::new(std::io::ErrorKind::Other, err))
             }
@@ -237,7 +248,7 @@ where
         );
         self.terminal_seen = true;
         self.terminal_error = Some(message.clone());
-        openai_error_done_chunk(&message)
+        openai_response_failed_done_chunk(&message, self.context.model.as_deref())
     }
 
     fn openai_stream_semantics(&self) -> OpenAiStreamSemantics {
@@ -400,6 +411,18 @@ where
                     }
                 }
                 Some(Err(err)) => {
+                    let semantics = self.openai_stream_semantics();
+                    if semantics.responses_events {
+                        let message = format!("Failed to read upstream response: {err}");
+                        let out_chunk =
+                            openai_response_failed_done_chunk(&message, Some(&self.model_override));
+                        self.response_body_buf
+                            .push_str(&String::from_utf8_lossy(out_chunk.as_ref()));
+                        self.terminal_seen = true;
+                        self.terminal_error = Some(message);
+                        self.context.mark_first_client_flush();
+                        return Ok(Some((out_chunk, self)));
+                    }
                     self.write_log_once(None);
                     return Err(std::io::Error::new(std::io::ErrorKind::Other, err));
                 }
@@ -471,7 +494,7 @@ where
         );
         self.terminal_seen = true;
         self.terminal_error = Some(message.clone());
-        openai_error_done_chunk(&message)
+        openai_response_failed_done_chunk(&message, self.context.model.as_deref())
     }
 
     fn openai_stream_semantics(&self) -> OpenAiStreamSemantics {
@@ -480,6 +503,12 @@ where
 
     fn push_event_output(&mut self, data: &str) {
         let output = rewrite_sse_data(data, &self.model_override);
+        if sse_data_type(&output).as_deref() == Some("response.failed") {
+            self.out.push_back(Bytes::from(format!(
+                "event: response.failed\ndata: {output}\n\n"
+            )));
+            return;
+        }
         self.out
             .push_back(Bytes::from(format!("data: {output}\n\n")));
     }
@@ -558,15 +587,48 @@ fn append_openai_done(chunk: Bytes) -> Bytes {
     Bytes::from(bytes)
 }
 
-fn openai_error_done_chunk(message: &str) -> Bytes {
-    let payload = json!({
-        "type": "error",
+fn openai_response_failed_done_chunk(message: &str, model: Option<&str>) -> Bytes {
+    let payload = openai_response_failed_payload(message, model);
+    Bytes::from(format!(
+        "event: response.failed\ndata: {payload}\n\ndata: [DONE]\n\n"
+    ))
+}
+
+fn openai_response_failed_payload(message: &str, model: Option<&str>) -> Value {
+    let mut response = json!({
+        "id": synthetic_response_id(),
+        "object": "response",
+        "status": "failed",
+        "output": [],
         "error": {
-            "type": "proxy_error",
+            "code": "server_error",
             "message": message,
         }
     });
-    Bytes::from(format!("data: {payload}\n\ndata: [DONE]\n\n"))
+    if let Some(model) = model.filter(|value| !value.trim().is_empty()) {
+        response["model"] = json!(model);
+    }
+    json!({
+        "type": "response.failed",
+        "response": response,
+    })
+}
+
+fn synthetic_response_id() -> String {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    format!("resp_proxy_{millis}")
+}
+
+fn sse_data_type(data: &str) -> Option<String> {
+    serde_json::from_str::<Value>(data).ok().and_then(|value| {
+        value
+            .get("type")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    })
 }
 
 fn openai_stream_semantics(provider: &str, path: &str) -> OpenAiStreamSemantics {

@@ -35,6 +35,7 @@ fn config_with_addr_and_body_limit(
         retryable_failure_cooldown: Duration::from_secs(15),
         codex_session_scoped_cooldown_enabled: false,
         upstream_no_data_timeout: Duration::from_secs(120),
+        openai_response_header_timeout: None,
         upstream_strategy: crate::proxy::config::UpstreamStrategyRuntime::default(),
         hot_model_mappings: HashMap::new(),
         upstreams: HashMap::new(),

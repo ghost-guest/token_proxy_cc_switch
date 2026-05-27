@@ -1,5 +1,7 @@
 use serde_json::{json, Map, Value};
 
+use crate::proxy::codex_tool_types::is_codex_tool_call_output_item_type;
+
 use super::message::extract_text_from_part;
 
 pub(super) fn responses_input_to_chat_messages(items: &[Value]) -> Result<Vec<Value>, String> {
@@ -34,7 +36,12 @@ fn responses_input_item_to_chat_messages(item: &Value) -> Result<Vec<Value>, Str
 
     match item_type {
         "message" => responses_message_item_to_chat_message(item).map(|message| vec![message]),
-        "function_call_output" | "web_search_call" | "computer_call_output" | "tool_result" => {
+        item_type if is_codex_tool_call_output_item_type(item_type) => {
+            Ok(responses_tool_output_item_to_chat_message(item)
+                .into_iter()
+                .collect())
+        }
+        "web_search_call" | "computer_call_output" | "tool_result" => {
             Ok(responses_tool_output_item_to_chat_message(item)
                 .into_iter()
                 .collect())

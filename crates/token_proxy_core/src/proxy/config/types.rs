@@ -51,6 +51,10 @@ fn is_default_upstream_no_data_timeout_secs(value: &u64) -> bool {
     *value == default_upstream_no_data_timeout_secs()
 }
 
+fn is_zero(value: &u64) -> bool {
+    *value == 0
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InboundApiFormat {
@@ -241,6 +245,9 @@ pub struct ProxyConfigFile {
         skip_serializing_if = "is_default_upstream_no_data_timeout_secs"
     )]
     pub upstream_no_data_timeout_secs: u64,
+    /// OpenAI/Codex header wait cap. 0 disables this cap; body idle still uses upstream_no_data_timeout_secs.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub openai_response_header_timeout_secs: u64,
     #[serde(default)]
     pub tray_token_rate: TrayTokenRateConfig,
     #[serde(default)]
@@ -266,6 +273,7 @@ impl Default for ProxyConfigFile {
             retryable_failure_cooldown_secs: default_retryable_failure_cooldown_secs(),
             codex_session_scoped_cooldown_enabled: false,
             upstream_no_data_timeout_secs: default_upstream_no_data_timeout_secs(),
+            openai_response_header_timeout_secs: 0,
             tray_token_rate: TrayTokenRateConfig::default(),
             upstream_strategy: UpstreamStrategy::default(),
             hot_model_mappings: default_hot_model_mappings(),
@@ -314,6 +322,7 @@ pub struct ProxyConfig {
     pub retryable_failure_cooldown: std::time::Duration,
     pub codex_session_scoped_cooldown_enabled: bool,
     pub upstream_no_data_timeout: std::time::Duration,
+    pub openai_response_header_timeout: Option<std::time::Duration>,
     pub upstream_strategy: UpstreamStrategyRuntime,
     pub hot_model_mappings: HashMap<String, String>,
     pub upstreams: HashMap<String, ProviderUpstreams>,

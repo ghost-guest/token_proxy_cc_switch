@@ -38,6 +38,13 @@ describe("config/form", () => {
     expect(validate({ ...EMPTY_FORM, upstreamNoDataTimeoutSecs: "120" }).valid).toBe(true);
   });
 
+  it("validates OpenAI response header timeout as non-negative integer", () => {
+    expect(validate({ ...EMPTY_FORM, openaiResponseHeaderTimeoutSecs: "-1" }).valid).toBe(false);
+    expect(validate({ ...EMPTY_FORM, openaiResponseHeaderTimeoutSecs: "" }).valid).toBe(false);
+    expect(validate({ ...EMPTY_FORM, openaiResponseHeaderTimeoutSecs: "0" }).valid).toBe(true);
+    expect(validate({ ...EMPTY_FORM, openaiResponseHeaderTimeoutSecs: "45" }).valid).toBe(true);
+  });
+
   it("requires upstream id for enabled upstreams", () => {
     const upstream = createEmptyUpstream();
     const result = validate({ ...EMPTY_FORM, upstreams: [upstream] });
@@ -133,6 +140,7 @@ describe("config/form", () => {
     expect(payload.retryable_failure_cooldown_secs).toBe(15);
     expect(payload.codex_session_scoped_cooldown_enabled).toBe(false);
     expect(payload.upstream_no_data_timeout_secs).toBe(120);
+    expect(payload.openai_response_header_timeout_secs).toBe(0);
     expect("model_discovery_refresh_secs" in payload).toBe(false);
     expect(payload.upstreams[0]?.id).toBe("upstream-1");
     expect(payload.upstreams[0]?.providers).toEqual(["openai", "openai-response"]);
@@ -175,6 +183,7 @@ describe("config/form", () => {
 
   it("defaults upstream no data timeout seconds to 120 when config omits it", () => {
     expect(EMPTY_FORM.upstreamNoDataTimeoutSecs).toBe("120");
+    expect(EMPTY_FORM.openaiResponseHeaderTimeoutSecs).toBe("0");
 
     const form = toForm({
       host: "127.0.0.1",
@@ -206,6 +215,7 @@ describe("config/form", () => {
     });
 
     expect(form.upstreamNoDataTimeoutSecs).toBe("120");
+    expect(form.openaiResponseHeaderTimeoutSecs).toBe("0");
     expect(form.corsEnabled).toBe(false);
     expect(form.modelListPrefix).toBe(false);
     expect(form.codexSessionScopedCooldownEnabled).toBe(false);
@@ -332,6 +342,15 @@ describe("config/form", () => {
     });
 
     expect(payload.upstream_no_data_timeout_secs).toBe(45);
+  });
+
+  it("serializes OpenAI response header timeout seconds", () => {
+    const payload = toPayload({
+      ...EMPTY_FORM,
+      openaiResponseHeaderTimeoutSecs: "45",
+    });
+
+    expect(payload.openai_response_header_timeout_secs).toBe(45);
   });
 
   it("serializes structured upstream strategy", () => {

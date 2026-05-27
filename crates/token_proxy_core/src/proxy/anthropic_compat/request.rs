@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use super::super::{http_client::ProxyHttpClients, model};
 use super::media;
 use super::tools;
+use crate::proxy::codex_tool_types::is_codex_tool_call_output_item_type;
 
 pub(super) async fn responses_request_to_anthropic(
     body: &Bytes,
@@ -292,7 +293,7 @@ async fn responses_input_item_to_claude_messages(
             });
             push_tool_use_block(messages, block);
         }
-        "function_call_output" => {
+        item_type if is_codex_tool_call_output_item_type(item_type) => {
             let tool_use_id = object.get("call_id").and_then(Value::as_str).unwrap_or("");
             let content =
                 responses_function_call_output_to_claude_content(object, http_clients).await?;

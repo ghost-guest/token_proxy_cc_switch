@@ -90,6 +90,7 @@ const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "retryable_failure_cooldown_secs",
   "codex_session_scoped_cooldown_enabled",
   "upstream_no_data_timeout_secs",
+  "openai_response_header_timeout_secs",
   "tray_token_rate",
   "upstream_strategy",
   "hot_model_mappings",
@@ -108,6 +109,7 @@ export const EMPTY_FORM: ConfigForm = {
   retryableFailureCooldownSecs: "15",
   codexSessionScopedCooldownEnabled: false,
   upstreamNoDataTimeoutSecs: String(DEFAULT_UPSTREAM_NO_DATA_TIMEOUT_SECS),
+  openaiResponseHeaderTimeoutSecs: "0",
   trayTokenRate: { ...DEFAULT_TRAY_TOKEN_RATE },
   upstreamStrategy: {
     order: "fill_first",
@@ -195,6 +197,9 @@ export function toForm(config: ProxyConfigFile): ConfigForm {
     upstreamNoDataTimeoutSecs: String(
       config.upstream_no_data_timeout_secs ?? DEFAULT_UPSTREAM_NO_DATA_TIMEOUT_SECS,
     ),
+    openaiResponseHeaderTimeoutSecs: String(
+      config.openai_response_header_timeout_secs ?? 0,
+    ),
     trayTokenRate: normalizeTrayTokenRate(config.tray_token_rate),
     upstreamStrategy: toUpstreamStrategyForm(config.upstream_strategy),
     hotModelMappings: toModelMappingForm(config.hot_model_mappings ?? {}),
@@ -239,6 +244,9 @@ export function toPayload(form: ConfigForm): ProxyConfigFile {
     codex_session_scoped_cooldown_enabled: form.codexSessionScopedCooldownEnabled,
     upstream_no_data_timeout_secs: parseUpstreamNoDataTimeoutSecs(
       form.upstreamNoDataTimeoutSecs,
+    ),
+    openai_response_header_timeout_secs: parseOpenaiResponseHeaderTimeoutSecs(
+      form.openaiResponseHeaderTimeoutSecs,
     ),
     tray_token_rate: form.trayTokenRate,
     upstream_strategy: toUpstreamStrategyPayload(form.upstreamStrategy),
@@ -330,6 +338,12 @@ export function validate(form: ConfigForm) {
     return {
       valid: false,
       message: m.error_upstream_no_data_timeout_secs_integer(),
+    };
+  }
+  if (!isValidOpenaiResponseHeaderTimeoutSecs(form.openaiResponseHeaderTimeoutSecs)) {
+    return {
+      valid: false,
+      message: m.error_openai_response_header_timeout_secs_integer(),
     };
   }
   const upstreamStrategyError = validateUpstreamStrategy(form.upstreamStrategy);
@@ -733,6 +747,23 @@ function parseUpstreamNoDataTimeoutSecs(value: string) {
   }
   const number = Number.parseInt(trimmed, 10);
   return Number.isFinite(number) ? number : DEFAULT_UPSTREAM_NO_DATA_TIMEOUT_SECS;
+}
+
+function isValidOpenaiResponseHeaderTimeoutSecs(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return false;
+  }
+  return NON_NEGATIVE_INTEGER_PATTERN.test(trimmed);
+}
+
+function parseOpenaiResponseHeaderTimeoutSecs(value: string) {
+  const trimmed = value.trim();
+  if (!NON_NEGATIVE_INTEGER_PATTERN.test(trimmed)) {
+    return 0;
+  }
+  const number = Number.parseInt(trimmed, 10);
+  return Number.isFinite(number) ? number : 0;
 }
 
 function isPositiveInteger(value: string) {

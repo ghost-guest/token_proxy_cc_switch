@@ -137,6 +137,36 @@ fn build_runtime_config_maps_upstream_no_data_timeout_secs() {
 }
 
 #[test]
+fn build_runtime_config_maps_openai_response_header_timeout_secs() {
+    let mut config = ProxyConfigFile::default();
+    config.openai_response_header_timeout_secs = 30;
+
+    let runtime = build_runtime_config(config).expect("runtime config");
+
+    assert_eq!(
+        runtime.openai_response_header_timeout,
+        Some(Duration::from_secs(30))
+    );
+}
+
+#[test]
+fn build_runtime_config_disables_openai_response_header_timeout_by_default() {
+    let runtime = build_runtime_config(ProxyConfigFile::default()).expect("runtime config");
+
+    assert_eq!(runtime.openai_response_header_timeout, None);
+}
+
+#[test]
+fn build_runtime_config_rejects_openai_response_header_timeout_that_overflows_instant() {
+    let mut config = ProxyConfigFile::default();
+    config.openai_response_header_timeout_secs = u64::MAX;
+
+    let result = build_runtime_config(config);
+
+    assert!(result.is_err());
+}
+
+#[test]
 fn build_runtime_config_maps_codex_session_scoped_cooldown_switch() {
     let mut config = ProxyConfigFile::default();
     config.codex_session_scoped_cooldown_enabled = true;

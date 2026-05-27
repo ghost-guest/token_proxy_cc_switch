@@ -3,6 +3,9 @@ use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 
 use super::tool_names::ToolNameMap;
+use crate::proxy::codex_tool_types::{
+    is_codex_tool_call_context_item_type, is_codex_tool_call_output_item_type,
+};
 
 pub(crate) fn extract_tool_name_map(body: &Bytes) -> Option<HashMap<String, String>> {
     let value: Value = serde_json::from_slice(body).ok()?;
@@ -768,7 +771,8 @@ fn sanitize_responses_input_item_for_codex(item: &Value) -> Value {
         let role = object.get("role").and_then(Value::as_str).unwrap_or("user");
         return map_regular_message(item, role).unwrap_or_else(|| item.clone());
     }
-    if object.get("type").and_then(Value::as_str) != Some("function_call_output") {
+    let item_type = object.get("type").and_then(Value::as_str).unwrap_or("");
+    if !is_codex_tool_call_output_item_type(item_type) {
         return item.clone();
     }
     let mut sanitized = object.clone();
@@ -871,10 +875,7 @@ fn add_missing_tool_call_names(input: &mut Value) {
 }
 
 fn codex_input_item_requires_name(item_type: &str) -> bool {
-    matches!(
-        item_type.trim(),
-        "function_call" | "custom_tool_call" | "mcp_tool_call"
-    )
+    is_codex_tool_call_context_item_type(item_type)
 }
 
 fn rewrite_input_function_names(input: &mut Value, tool_map: &ToolNameMap) {
