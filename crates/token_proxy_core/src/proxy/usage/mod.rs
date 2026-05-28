@@ -58,20 +58,20 @@ pub(crate) fn extract_usage_from_response(bytes: &Bytes) -> UsageSnapshot {
 }
 
 fn extract_usage_from_event(value: &Value) -> Option<UsageSnapshot> {
-    if let Some(usage) = value.get("usage") {
+    let top_level_usage = value.get("usage").map(snapshot_from_usage_value);
+    if let Some(usage) = value
+        .get("response")
+        .and_then(|response| response.get("usage"))
+    {
         return Some(snapshot_from_usage_value(usage));
+    }
+    if top_level_usage.is_some() {
+        return top_level_usage;
     }
 
     if let Some(usage) = value
         .get("message")
         .and_then(|message| message.get("usage"))
-    {
-        return Some(snapshot_from_usage_value(usage));
-    }
-
-    if let Some(usage) = value
-        .get("response")
-        .and_then(|response| response.get("usage"))
     {
         return Some(snapshot_from_usage_value(usage));
     }

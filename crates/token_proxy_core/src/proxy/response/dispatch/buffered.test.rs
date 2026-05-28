@@ -270,6 +270,53 @@ async fn buffered_non_stream_responses_event_stream_chat_request_returns_json() 
     );
 }
 
+#[tokio::test]
+async fn buffered_json_response_with_responses_sse_body_returns_json() {
+    let sse = [
+        "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_json_sse\",\"object\":\"response\",\"created_at\":1770000000,\"status\":\"in_progress\",\"model\":\"gpt-5.5\"}}\n\n",
+        "data: {\"type\":\"response.output_text.done\",\"output_index\":0,\"text\":\"hello\"}\n\n",
+        "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_json_sse\",\"object\":\"response\",\"created_at\":1770000000,\"status\":\"completed\",\"model\":\"gpt-5.5\",\"usage\":{\"input_tokens\":10,\"output_tokens\":2,\"total_tokens\":12}}}\n\n",
+        "data: [DONE]\n\n",
+    ]
+    .concat();
+    let upstream_res = axum::http::Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "application/json")
+        .body(reqwest::Body::from(sse))
+        .expect("response")
+        .into();
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    headers.insert(CONTENT_LENGTH, HeaderValue::from_static("999"));
+    let tracker = TokenRateTracker::new().register(None, None).await;
+
+    let response = build_buffered_response(
+        StatusCode::OK,
+        upstream_res,
+        headers,
+        test_context(),
+        Arc::new(LogWriter::new(None)),
+        tracker,
+        FormatTransform::None,
+        None,
+        None,
+        None,
+        Duration::from_secs(1),
+    )
+    .await;
+    let (parts, body) = response.into_parts();
+    let body = to_bytes(body, usize::MAX).await.expect("body");
+    let value: serde_json::Value = serde_json::from_slice(&body).expect("json");
+
+    assert_eq!(parts.status, StatusCode::OK);
+    assert_eq!(parts.headers.get(CONTENT_TYPE).unwrap(), "application/json");
+    assert!(parts.headers.get(CONTENT_LENGTH).is_none());
+    assert_eq!(value["object"], json!("chat.completion"));
+    assert_eq!(value["choices"][0]["message"]["content"], json!("hello"));
+    assert_eq!(value["usage"]["prompt_tokens"], json!(10));
+    assert!(!String::from_utf8_lossy(&body).contains("data:"));
+}
+
 #[test]
 fn empty_chat_completion_retry_message_matches_null_stop_response() {
     let bytes = Bytes::from(

@@ -61,9 +61,9 @@ pub(super) async fn build_buffered_response(
         DEBUG_BODY_LOG_LIMIT_BYTES,
     )
     .await;
-    let bytes = if status.is_success() && is_event_stream_response(&response_headers) {
-        match buffer_event_stream_response_with_kind(&bytes) {
-            Ok(buffered) => {
+    let bytes = if status.is_success() {
+        match buffer_success_event_stream_response(&response_headers, &bytes, &context.path) {
+            Ok(Some(buffered)) => {
                 if buffered.kind == BufferedEventStreamKind::Responses
                     && response_transform == FormatTransform::None
                     && is_chat_completions_path(&context.path)
@@ -74,6 +74,7 @@ pub(super) async fn build_buffered_response(
                 headers.remove(CONTENT_LENGTH);
                 buffered.bytes
             }
+            Ok(None) => bytes,
             Err(message) => {
                 let usage = UsageSnapshot {
                     usage: None,
@@ -202,6 +203,37 @@ fn buffer_event_stream_response_with_kind(
     }
 
     Err("No supported event-stream payload found".to_string())
+}
+
+fn buffer_success_event_stream_response(
+    headers: &HeaderMap,
+    bytes: &Bytes,
+    path: &str,
+) -> Result<Option<BufferedEventStreamBody>, String> {
+    if is_event_stream_response(headers) {
+        return buffer_event_stream_response_with_kind(bytes).map(Some);
+    }
+    if !is_json_response(headers) || !body_looks_like_sse(bytes) {
+        return Ok(None);
+    }
+
+    // Some OpenAI-compatible upstreams return SSE bytes with an
+    // application/json header on non-stream requests. Only accept the fallback
+    // when the existing SSE buffer can prove this is a supported event shape.
+    match buffer_event_stream_response_with_kind(bytes) {
+        Ok(buffered) => {
+            tracing::warn!(path = %path, "buffered mislabeled event-stream response");
+            Ok(Some(buffered))
+        }
+        Err(message) => {
+            tracing::debug!(
+                path = %path,
+                error = %message,
+                "ignored unsupported mislabeled event-stream response"
+            );
+            Ok(None)
+        }
+    }
 }
 
 #[derive(Default)]
@@ -548,6 +580,26 @@ fn is_event_stream_response(headers: &HeaderMap) -> bool {
             })
         })
         .unwrap_or(false)
+}
+
+fn is_json_response(headers: &HeaderMap) -> bool {
+    headers
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| {
+            value.split(';').next().is_some_and(|content_type| {
+                let content_type = content_type.trim().to_ascii_lowercase();
+                content_type == "application/json" || content_type.ends_with("+json")
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn body_looks_like_sse(bytes: &Bytes) -> bool {
+    let text = String::from_utf8_lossy(bytes);
+    text.lines()
+        .take(16)
+        .any(|line| line.trim_start().starts_with("data:"))
 }
 
 struct ConvertedBody {

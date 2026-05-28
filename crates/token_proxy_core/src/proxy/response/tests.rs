@@ -322,7 +322,7 @@ fn stream_responses_to_chat_emits_role_delta_and_done_and_logs_usage() {
 
         let chunks = collect_responses_to_chat_chunks(upstream, context, log.clone()).await;
 
-        assert_eq!(chunks.len(), 5);
+        assert_eq!(chunks.len(), 6);
 
         let first = parse_sse_json(&chunks[0]).expect("json");
         let id = first["id"].as_str().expect("id");
@@ -343,7 +343,14 @@ fn stream_responses_to_chat_emits_role_delta_and_done_and_logs_usage() {
         assert_eq!(done["id"], json!(id));
         assert_eq!(done["choices"][0]["finish_reason"], json!("stop"));
 
-        assert_eq!(String::from_utf8_lossy(&chunks[4]), "data: [DONE]\n\n");
+        let usage = parse_sse_json(&chunks[4]).expect("json");
+        assert_eq!(usage["id"], json!(id));
+        assert_eq!(usage["choices"], json!([]));
+        assert_eq!(usage["usage"]["prompt_tokens"], json!(1));
+        assert_eq!(usage["usage"]["completion_tokens"], json!(2));
+        assert_eq!(usage["usage"]["total_tokens"], json!(3));
+
+        assert_eq!(String::from_utf8_lossy(&chunks[5]), "data: [DONE]\n\n");
 
         let (input_tokens, output_tokens, total_tokens) =
             read_first_usage_tokens(&sqlite_pool).await;

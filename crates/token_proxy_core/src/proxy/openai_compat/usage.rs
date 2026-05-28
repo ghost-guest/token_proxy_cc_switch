@@ -20,6 +20,19 @@ pub(crate) fn map_usage_responses_to_chat(usage: &Value) -> Option<Value> {
     mapped.insert("completion_tokens".to_string(), json!(output));
     mapped.insert("total_tokens".to_string(), json!(total));
 
+    if let Some(cached_tokens) = usage
+        .get("input_tokens_details")
+        .and_then(Value::as_object)
+        .and_then(|details| details.get("cached_tokens"))
+        .and_then(Value::as_u64)
+        .filter(|tokens| *tokens > 0)
+    {
+        mapped.insert(
+            "prompt_tokens_details".to_string(),
+            json!({ "cached_tokens": cached_tokens }),
+        );
+    }
+
     // Preserve reasoning token details when converting Responses -> Chat.
     let reasoning_tokens = usage
         .get("output_tokens_details")

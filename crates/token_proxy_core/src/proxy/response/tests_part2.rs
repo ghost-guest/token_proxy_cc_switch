@@ -675,6 +675,41 @@ fn stream_responses_to_chat_emits_reasoning_from_reasoning_summary_events() {
 }
 
 #[test]
+fn stream_responses_to_chat_emits_usage_chunk_from_terminal_event_usage() {
+    super::run_async(async {
+        let (log, context, _sqlite_pool) = super::setup_responses_stream().await;
+
+        let upstream = futures_util::stream::iter(vec![
+            Ok::<Bytes, reqwest::Error>(Bytes::from(
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n",
+            )),
+            Ok(Bytes::from(
+                "data: {\"type\":\"response.completed\",\"usage\":{\"input_tokens\":8,\"output_tokens\":3,\"total_tokens\":11,\"input_tokens_details\":{\"cached_tokens\":5}},\"response\":{\"id\":\"resp_1\",\"status\":\"completed\"}}\n\n",
+            )),
+            Ok(Bytes::from("data: [DONE]\n\n")),
+        ]);
+
+        let chunks = super::collect_responses_to_chat_chunks(upstream, context, log).await;
+        let payloads = chunks
+            .iter()
+            .filter_map(super::parse_sse_json)
+            .collect::<Vec<_>>();
+        let usage = payloads
+            .iter()
+            .find(|payload| payload["choices"] == json!([]))
+            .expect("usage chunk");
+
+        assert_eq!(usage["usage"]["prompt_tokens"], json!(8));
+        assert_eq!(usage["usage"]["completion_tokens"], json!(3));
+        assert_eq!(usage["usage"]["total_tokens"], json!(11));
+        assert_eq!(
+            usage["usage"]["prompt_tokens_details"]["cached_tokens"],
+            json!(5)
+        );
+    });
+}
+
+#[test]
 fn stream_responses_to_chat_emits_thinking_blocks_from_reasoning_summary_events() {
     super::run_async(async {
         let (log, context, _sqlite_pool) = super::setup_responses_stream().await;

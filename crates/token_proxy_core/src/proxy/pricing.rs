@@ -805,6 +805,23 @@ mod tests {
     }
 
     #[test]
+    fn prices_long_context_cached_tokens_with_long_cached_tier() {
+        let settings = normalize_model_pricing_settings(custom_settings_input()).expect("settings");
+        let cost = calculate_request_cost(
+            &settings,
+            Some("openai/custom-model"),
+            None,
+            Some(1_001),
+            Some(0),
+            Some(1),
+        )
+        .expect("cost");
+
+        assert_eq!(cost.cost_nano_usd, 300_030);
+        assert_eq!(cost.context_tier, PricingContextTier::Long);
+    }
+
+    #[test]
     fn leaves_unknown_or_missing_usage_unpriced() {
         let settings = default_model_pricing_settings();
         assert!(calculate_request_cost(

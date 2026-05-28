@@ -437,6 +437,7 @@ fn responses_response_to_chat_extracts_output_text_and_maps_usage() {
             "input_tokens": 1,
             "output_tokens": 2,
             "total_tokens": 3,
+            "input_tokens_details": { "cached_tokens": 4 },
             "output_tokens_details": { "reasoning_tokens": 7 }
         }
     }));
@@ -458,6 +459,10 @@ fn responses_response_to_chat_extracts_output_text_and_maps_usage() {
     assert_eq!(value["usage"]["prompt_tokens"], json!(1));
     assert_eq!(value["usage"]["completion_tokens"], json!(2));
     assert_eq!(value["usage"]["total_tokens"], json!(3));
+    assert_eq!(
+        value["usage"]["prompt_tokens_details"]["cached_tokens"],
+        json!(4)
+    );
     assert_eq!(
         value["usage"]["completion_tokens_details"]["reasoning_tokens"],
         json!(7)

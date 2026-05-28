@@ -9,6 +9,7 @@ use std::{
 use super::super::compat_content;
 use super::super::compat_reason;
 use super::super::log::{attach_response_body, build_log_entry, LogContext, LogWriter};
+use super::super::openai_compat::map_usage_responses_to_chat;
 use super::super::sse::SseEventParser;
 use super::super::token_rate::RequestTokenTracker;
 use super::super::usage::SseUsageCollector;
@@ -51,6 +52,7 @@ struct ResponsesToChatState<S> {
     saw_text_delta: bool,
     saw_reasoning_delta: bool,
     sent_redacted_thinking: bool,
+    final_usage: Option<Value>,
     response_body_buf: String,
 }
 
@@ -120,6 +122,7 @@ where
             saw_text_delta: false,
             saw_reasoning_delta: false,
             sent_redacted_thinking: false,
+            final_usage: None,
             response_body_buf: String::new(),
         }
     }
@@ -195,6 +198,9 @@ where
         let Some(event_type) = value.get("type").and_then(Value::as_str) else {
             return;
         };
+        if is_responses_terminal_event(event_type) {
+            self.capture_terminal_usage(&value);
+        }
         if event_type.ends_with("output_text.delta") {
             self.handle_output_text_delta(&value, token_texts);
             return;
@@ -227,6 +233,20 @@ where
         }
         if event_type.ends_with("response.incomplete") {
             self.handle_response_incomplete(&value);
+        }
+    }
+
+    fn capture_terminal_usage(&mut self, value: &Value) {
+        let mut usage = value.get("usage").and_then(map_usage_responses_to_chat);
+        if let Some(response_usage) = value
+            .get("response")
+            .and_then(|response| response.get("usage"))
+            .and_then(map_usage_responses_to_chat)
+        {
+            usage = Some(response_usage);
+        }
+        if let Some(usage) = usage {
+            self.final_usage = Some(usage);
         }
     }
 
@@ -657,6 +677,14 @@ where
             json!({}),
             Some(self.finish_reason()),
         ));
+        if let Some(usage) = self.final_usage.take() {
+            self.out.push_back(chat_usage_chunk_sse(
+                &self.chat_id,
+                self.created,
+                &self.model,
+                usage,
+            ));
+        }
         self.out.push_back(Bytes::from("data: [DONE]\n\n"));
     }
 
@@ -697,6 +725,30 @@ fn chat_chunk_sse(
         ]
     });
     Bytes::from(format!("data: {}\n\n", chunk.to_string()))
+}
+
+fn chat_usage_chunk_sse(id: &str, created: i64, model: &str, usage: Value) -> Bytes {
+    let chunk = json!({
+        "id": id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [],
+        "usage": usage
+    });
+    Bytes::from(format!("data: {}\n\n", chunk.to_string()))
+}
+
+fn is_responses_terminal_event(event_type: &str) -> bool {
+    matches!(
+        event_type,
+        "response.completed"
+            | "response.done"
+            | "response.incomplete"
+            | "response.failed"
+            | "response.cancelled"
+            | "response.canceled"
+    )
 }
 
 fn extract_reasoning_text(parts: &[Value]) -> String {
