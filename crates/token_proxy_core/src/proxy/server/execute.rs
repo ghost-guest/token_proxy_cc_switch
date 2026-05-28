@@ -35,6 +35,7 @@ pub(super) async fn forward_retry_fallback_request(
         &prepared.path,
         plan,
         &prepared.meta,
+        headers,
         prepared.source_body.clone(),
         request_start,
     )

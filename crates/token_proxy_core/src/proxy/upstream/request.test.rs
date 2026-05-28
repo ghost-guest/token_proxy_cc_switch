@@ -240,17 +240,34 @@ fn codex_headers_do_not_send_version_header() {
     );
 
     assert!(!built.contains_key("version"));
+    assert!(!built.contains_key("openai-beta"));
+    assert!(!built.contains_key("session_id"));
+    let user_agent = built
+        .get("user-agent")
+        .and_then(|value| value.to_str().ok())
+        .expect("codex user-agent");
+    assert!(user_agent.starts_with("codex_cli_rs/"));
     assert_eq!(
         built
-            .get("user-agent")
+            .get("originator")
             .and_then(|value| value.to_str().ok()),
-        Some("codex_cli_rs/0.125.0")
+        Some("codex_cli_rs")
     );
+    let session_id = built
+        .get("session-id")
+        .and_then(|value| value.to_str().ok())
+        .expect("session-id");
+    let thread_id = built
+        .get("thread-id")
+        .and_then(|value| value.to_str().ok())
+        .expect("thread-id");
+    assert!(!session_id.is_empty());
+    assert!(!thread_id.is_empty());
     assert_eq!(
         built
-            .get("openai-beta")
+            .get("x-client-request-id")
             .and_then(|value| value.to_str().ok()),
-        Some("responses=experimental")
+        Some(thread_id)
     );
 }
 
@@ -260,7 +277,76 @@ fn codex_headers_override_non_codex_client_identity() {
     headers.insert("user-agent", HeaderValue::from_static("curl/8.7.1"));
     headers.insert("originator", HeaderValue::from_static("unknown-client"));
     headers.insert("openai-beta", HeaderValue::from_static("assistants=v2"));
+    headers.insert("session-id", HeaderValue::from_static("session-inbound"));
+    headers.insert("thread-id", HeaderValue::from_static("thread-inbound"));
+    headers.insert(
+        "x-client-request-id",
+        HeaderValue::from_static("request-inbound"),
+    );
     headers.insert("accept", HeaderValue::from_static("application/json"));
+
+    let built = build_request_headers(
+        "codex",
+        "/v1/responses",
+        &headers,
+        http::UpstreamAuthHeader {
+            name: AUTHORIZATION,
+            value: HeaderValue::from_static("Bearer upstream"),
+        },
+        None,
+        None,
+    );
+
+    let user_agent = built
+        .get("user-agent")
+        .and_then(|value| value.to_str().ok())
+        .expect("codex user-agent");
+    assert!(user_agent.starts_with("codex_cli_rs/"));
+    assert_eq!(
+        built
+            .get("originator")
+            .and_then(|value| value.to_str().ok()),
+        Some("codex_cli_rs")
+    );
+    assert!(!built.contains_key("openai-beta"));
+    assert_eq!(
+        built
+            .get("session-id")
+            .and_then(|value| value.to_str().ok()),
+        Some("session-inbound")
+    );
+    assert_eq!(
+        built.get("thread-id").and_then(|value| value.to_str().ok()),
+        Some("thread-inbound")
+    );
+    assert_eq!(
+        built
+            .get("x-client-request-id")
+            .and_then(|value| value.to_str().ok()),
+        Some("request-inbound")
+    );
+    assert_eq!(
+        built.get("accept").and_then(|value| value.to_str().ok()),
+        Some("text/event-stream")
+    );
+    assert!(!built.contains_key("connection"));
+    assert!(!built.contains_key("version"));
+}
+
+#[test]
+fn codex_headers_preserve_native_codex_client_identity() {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "user-agent",
+        HeaderValue::from_static("codex_cli_rs/0.135.0 (Mac OS 15.5.0; arm64) codex-cli"),
+    );
+    headers.insert("originator", HeaderValue::from_static("codex_cli_rs"));
+    headers.insert("session-id", HeaderValue::from_static("native-session"));
+    headers.insert("thread-id", HeaderValue::from_static("native-thread"));
+    headers.insert(
+        "openai-beta",
+        HeaderValue::from_static("responses=experimental"),
+    );
 
     let built = build_request_headers(
         "codex",
@@ -278,7 +364,7 @@ fn codex_headers_override_non_codex_client_identity() {
         built
             .get("user-agent")
             .and_then(|value| value.to_str().ok()),
-        Some("codex_cli_rs/0.125.0")
+        Some("codex_cli_rs/0.135.0 (Mac OS 15.5.0; arm64) codex-cli")
     );
     assert_eq!(
         built
@@ -288,15 +374,22 @@ fn codex_headers_override_non_codex_client_identity() {
     );
     assert_eq!(
         built
-            .get("openai-beta")
+            .get("session-id")
             .and_then(|value| value.to_str().ok()),
-        Some("responses=experimental")
+        Some("native-session")
     );
     assert_eq!(
-        built.get("accept").and_then(|value| value.to_str().ok()),
-        Some("text/event-stream")
+        built.get("thread-id").and_then(|value| value.to_str().ok()),
+        Some("native-thread")
     );
-    assert!(!built.contains_key("version"));
+    assert_eq!(
+        built
+            .get("x-client-request-id")
+            .and_then(|value| value.to_str().ok()),
+        Some("native-thread")
+    );
+    assert!(!built.contains_key("openai-beta"));
+    assert!(!built.contains_key("connection"));
 }
 
 #[test]

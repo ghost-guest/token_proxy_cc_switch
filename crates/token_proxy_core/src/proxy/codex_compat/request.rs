@@ -23,9 +23,17 @@ pub(crate) fn chat_request_to_codex(
     body: &Bytes,
     model_hint: Option<&str>,
 ) -> Result<Bytes, String> {
+    chat_request_to_codex_with_prompt_cache_key(body, model_hint, None)
+}
+
+pub(crate) fn chat_request_to_codex_with_prompt_cache_key(
+    body: &Bytes,
+    model_hint: Option<&str>,
+    prompt_cache_key: Option<&str>,
+) -> Result<Bytes, String> {
     let object = parse_object(body)?;
     if is_responses_shaped_chat_request(&object) {
-        return transform_responses_request_to_codex(body, model_hint, false);
+        return transform_responses_request_to_codex(body, model_hint, false, prompt_cache_key);
     }
 
     let model = resolve_model(&object, model_hint);
@@ -68,6 +76,7 @@ pub(crate) fn chat_request_to_codex(
         &mut output,
     );
 
+    ensure_prompt_cache_key(&mut output, prompt_cache_key);
     output.insert("store".to_string(), Value::Bool(false));
     reject_codex_spark_non_text_features(&model, &output)?;
 
@@ -84,23 +93,45 @@ pub(crate) fn responses_request_to_codex(
     body: &Bytes,
     model_hint: Option<&str>,
 ) -> Result<Bytes, String> {
-    transform_responses_request_to_codex(body, model_hint, false)
+    responses_request_to_codex_with_prompt_cache_key(body, model_hint, None)
+}
+
+pub(crate) fn responses_request_to_codex_with_prompt_cache_key(
+    body: &Bytes,
+    model_hint: Option<&str>,
+    prompt_cache_key: Option<&str>,
+) -> Result<Bytes, String> {
+    transform_responses_request_to_codex(body, model_hint, false, prompt_cache_key)
 }
 
 pub(crate) fn responses_compact_request_to_codex(
     body: &Bytes,
     model_hint: Option<&str>,
 ) -> Result<Bytes, String> {
-    transform_responses_request_to_codex(body, model_hint, true)
+    responses_compact_request_to_codex_with_prompt_cache_key(body, model_hint, None)
+}
+
+pub(crate) fn responses_compact_request_to_codex_with_prompt_cache_key(
+    body: &Bytes,
+    model_hint: Option<&str>,
+    prompt_cache_key: Option<&str>,
+) -> Result<Bytes, String> {
+    transform_responses_request_to_codex(body, model_hint, true, prompt_cache_key)
 }
 
 fn transform_responses_request_to_codex(
     body: &Bytes,
     model_hint: Option<&str>,
     strip_reasoning_include: bool,
+    prompt_cache_key: Option<&str>,
 ) -> Result<Bytes, String> {
     let mut object = parse_object(body)?;
-    normalize_responses_payload(&mut object, model_hint, strip_reasoning_include);
+    normalize_responses_payload(
+        &mut object,
+        model_hint,
+        strip_reasoning_include,
+        prompt_cache_key,
+    );
     let model = object
         .get("model")
         .and_then(Value::as_str)
@@ -465,6 +496,7 @@ fn normalize_responses_payload(
     object: &mut Map<String, Value>,
     model_hint: Option<&str>,
     strip_reasoning_include: bool,
+    prompt_cache_key: Option<&str>,
 ) {
     let model = object
         .get("model")
@@ -517,7 +549,34 @@ fn normalize_responses_payload(
     let (input, extracted_instructions) = extract_system_messages_from_input(input);
     merge_extracted_instructions(object, extracted_instructions);
     ensure_default_instructions(object);
+    ensure_prompt_cache_key(object, prompt_cache_key);
     object.insert("input".to_string(), Value::Array(input));
+}
+
+fn ensure_prompt_cache_key(object: &mut Map<String, Value>, prompt_cache_key: Option<&str>) {
+    let existing = object
+        .get("prompt_cache_key")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if existing.is_some() {
+        return;
+    }
+    if let Some(prompt_cache_key) = prompt_cache_key
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        object.insert(
+            "prompt_cache_key".to_string(),
+            Value::String(prompt_cache_key.to_string()),
+        );
+        return;
+    }
+    // Codex upstream expects this field even when a non-Codex client did not send a thread id.
+    object.insert(
+        "prompt_cache_key".to_string(),
+        Value::String(crate::proxy::kiro::utils::random_uuid()),
+    );
 }
 
 fn normalize_codex_model(model: &str) -> String {

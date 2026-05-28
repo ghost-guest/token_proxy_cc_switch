@@ -13,7 +13,8 @@ use super::super::{
 use super::tool_names::shorten_name_if_needed;
 use super::{
     chat_request_to_codex, codex_response_to_chat, codex_response_to_responses,
-    responses_compact_request_to_codex, responses_request_to_codex, stream_codex_to_chat,
+    responses_compact_request_to_codex, responses_request_to_codex,
+    responses_request_to_codex_with_prompt_cache_key, stream_codex_to_chat,
     stream_codex_to_responses, stream_codex_to_responses_with_semantic_timeout,
 };
 
@@ -32,6 +33,12 @@ fn chat_request_to_codex_sets_model_and_stream() {
     assert_eq!(value["model"], "gpt-5-codex");
     assert_eq!(value["stream"], true);
     assert_eq!(value["input"][0]["type"], "message");
+    assert!(
+        value["prompt_cache_key"]
+            .as_str()
+            .is_some_and(|key| !key.is_empty()),
+        "prompt_cache_key should be present for Codex responses"
+    );
 }
 
 #[test]
@@ -131,9 +138,48 @@ fn responses_request_to_codex_normalizes_gpt_5_5_and_sanitizes_oauth_payload() {
     assert_eq!(value["instructions"], "system rules");
     assert_eq!(value["input"].as_array().expect("input").len(), 1);
     assert_eq!(value["input"][0]["role"], "user");
+    assert!(
+        value["prompt_cache_key"]
+            .as_str()
+            .is_some_and(|key| !key.is_empty()),
+        "prompt_cache_key should be present for Codex responses"
+    );
     assert!(value.get("frequency_penalty").is_none());
     assert!(value.get("presence_penalty").is_none());
     assert!(value.get("prompt_cache_retention").is_none());
+}
+
+#[test]
+fn responses_request_to_codex_preserves_prompt_cache_key() {
+    let input = json!({
+        "model": "gpt-5.5",
+        "prompt_cache_key": "thread-from-client",
+        "input": "hi"
+    });
+
+    let output = responses_request_to_codex(&Bytes::from(input.to_string()), None)
+        .expect("convert responses request");
+    let value: serde_json::Value = serde_json::from_slice(&output).expect("json");
+
+    assert_eq!(value["prompt_cache_key"], "thread-from-client");
+}
+
+#[test]
+fn responses_request_to_codex_uses_prompt_cache_key_hint_when_missing() {
+    let input = json!({
+        "model": "gpt-5.5",
+        "input": "hi"
+    });
+
+    let output = responses_request_to_codex_with_prompt_cache_key(
+        &Bytes::from(input.to_string()),
+        None,
+        Some("thread-from-header"),
+    )
+    .expect("convert responses request");
+    let value: serde_json::Value = serde_json::from_slice(&output).expect("json");
+
+    assert_eq!(value["prompt_cache_key"], "thread-from-header");
 }
 
 #[test]

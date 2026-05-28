@@ -20,6 +20,7 @@ use crate::paths::TokenProxyPaths;
 
 /// 默认优雅停机等待时间；超时后会强制 abort server task。
 const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+const CODEX_ACCOUNT_REFRESH_INTERVAL: Duration = Duration::from_secs(300);
 
 type ProxyStateHandle = Arc<RwLock<Arc<ProxyState>>>;
 type ProxyRouter = axum::Router;
@@ -338,6 +339,9 @@ impl ProxyServiceInner {
             shutdown_tx: Some(shutdown_tx),
             task: Some(task),
             model_discovery_task: Some(spawn_model_discovery_task(state_handle.clone())),
+            codex_account_refresh_task: Some(spawn_codex_account_refresh_task(
+                state_handle.clone(),
+            )),
             shutdown_timeout: DEFAULT_SHUTDOWN_TIMEOUT,
         });
         Ok(())
@@ -412,8 +416,14 @@ impl ProxyServiceInner {
         if let Some(task) = running.model_discovery_task.take() {
             task.abort();
         }
+        if let Some(task) = running.codex_account_refresh_task.take() {
+            task.abort();
+        }
         running.model_discovery_task =
             Some(spawn_model_discovery_task(running.state_handle.clone()));
+        running.codex_account_refresh_task = Some(spawn_codex_account_refresh_task(
+            running.state_handle.clone(),
+        ));
         tracing::debug!(
             elapsed_ms = start.elapsed().as_millis(),
             "proxy reload applied"
@@ -476,6 +486,9 @@ impl ProxyServiceInner {
         if let Some(task) = running.model_discovery_task.take() {
             task.abort();
         }
+        if let Some(task) = running.codex_account_refresh_task.take() {
+            task.abort();
+        }
         if let Some(tx) = running.shutdown_tx.take() {
             let _ = tx.send(());
         }
@@ -512,6 +525,7 @@ struct RunningProxy {
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
     task: Option<JoinHandle<Result<(), String>>>,
     model_discovery_task: Option<JoinHandle<()>>,
+    codex_account_refresh_task: Option<JoinHandle<()>>,
     shutdown_timeout: Duration,
 }
 
@@ -519,6 +533,30 @@ fn spawn_model_discovery_task(state_handle: ProxyStateHandle) -> JoinHandle<()> 
     tokio::spawn(async move {
         let state = state_handle.read().await.clone();
         server::refresh_model_discovery(state).await;
+    })
+}
+
+fn spawn_codex_account_refresh_task(state_handle: ProxyStateHandle) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            let store = {
+                let state = state_handle.read().await;
+                state.codex_accounts.clone()
+            };
+            match store.refresh_due_accounts().await {
+                Ok(refreshed) if !refreshed.is_empty() => {
+                    tracing::info!(
+                        refreshed = refreshed.len(),
+                        "codex due account refresh finished"
+                    );
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    tracing::warn!(error = %err, "codex due account refresh failed");
+                }
+            }
+            tokio::time::sleep(CODEX_ACCOUNT_REFRESH_INTERVAL).await;
+        }
     })
 }
 

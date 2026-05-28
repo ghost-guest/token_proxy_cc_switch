@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex as StdMutex;
 
 use serde_json::Value;
 use time::{Duration, OffsetDateTime};
@@ -22,6 +23,26 @@ pub struct CodexAccountStore {
     cache: RwLock<HashMap<String, CodexTokenRecord>>,
     app_proxy: AppProxyState,
     quota_refreshing: Mutex<HashSet<String>>,
+    token_refreshing: StdMutex<HashSet<String>>,
+    #[cfg(test)]
+    token_url_override: RwLock<Option<String>>,
+}
+
+const CODEX_TOKEN_REFRESH_WINDOW: Duration = Duration::minutes(15);
+const CODEX_TOKEN_REFRESH_WAIT_STEP: std::time::Duration = std::time::Duration::from_millis(50);
+const CODEX_TOKEN_REFRESH_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(35);
+
+struct TokenRefreshPermit<'a> {
+    refreshing: &'a StdMutex<HashSet<String>>,
+    account_id: String,
+}
+
+impl Drop for TokenRefreshPermit<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut refreshing) = self.refreshing.lock() {
+            refreshing.remove(&self.account_id);
+        }
+    }
 }
 
 impl CodexAccountStore {
@@ -31,6 +52,9 @@ impl CodexAccountStore {
             cache: RwLock::new(HashMap::new()),
             app_proxy,
             quota_refreshing: Mutex::new(HashSet::new()),
+            token_refreshing: StdMutex::new(HashSet::new()),
+            #[cfg(test)]
+            token_url_override: RwLock::new(None),
         })
     }
 
@@ -166,7 +190,7 @@ impl CodexAccountStore {
         if record.refresh_token.trim().is_empty() {
             return Err("Codex account has no refresh token. Please sign in again.".to_string());
         }
-        let refreshed = self.refresh_record(account_id, record).await?;
+        let refreshed = self.refresh_record_guarded(account_id, record).await?;
         let summary = self.save_record(account_id.to_string(), refreshed).await?;
         if matches!(summary.status, CodexAccountStatus::Expired) {
             return Err("Codex token refresh failed.".to_string());
@@ -358,6 +382,16 @@ impl CodexAccountStore {
         Ok(())
     }
 
+    pub async fn refresh_due_accounts(&self) -> Result<Vec<String>, String> {
+        self.refresh_due_accounts_with_token_url(None).await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn set_test_token_url(&self, token_url: &str) {
+        let mut guard = self.token_url_override.write().await;
+        *guard = Some(token_url.to_string());
+    }
+
     async fn refresh_if_needed(
         &self,
         account_id: &str,
@@ -374,7 +408,86 @@ impl CodexAccountStore {
         if record.refresh_token.trim().is_empty() {
             return Ok(record);
         }
+        self.refresh_record_guarded(account_id, record).await
+    }
+
+    async fn refresh_due_accounts_with_token_url(
+        &self,
+        token_url: Option<&str>,
+    ) -> Result<Vec<String>, String> {
+        self.refresh_cache().await?;
+        let candidates = {
+            let cache = self.cache.read().await;
+            sorted_account_ids(&cache)
+        };
+
+        let mut refreshed = Vec::new();
+        let mut last_error = None;
+        for account_id in candidates {
+            let record = self.load_account(&account_id).await?;
+            if !record_can_auto_refresh(&record) || !record_needs_refresh(&record) {
+                continue;
+            }
+            let result = match token_url {
+                Some(token_url) => {
+                    self.refresh_record_with_token_url(&account_id, record, token_url)
+                        .await
+                }
+                None => self.refresh_record_guarded(&account_id, record).await,
+            };
+            match result {
+                Ok(_) => refreshed.push(account_id),
+                Err(err) => {
+                    tracing::warn!(
+                        account_id,
+                        error = %err,
+                        "codex due account refresh failed"
+                    );
+                    last_error = Some(err);
+                }
+            }
+        }
+
+        if refreshed.is_empty() {
+            if let Some(err) = last_error {
+                return Err(err);
+            }
+        }
+        Ok(refreshed)
+    }
+
+    async fn refresh_record_guarded(
+        &self,
+        account_id: &str,
+        record: CodexTokenRecord,
+    ) -> Result<CodexTokenRecord, String> {
+        let Some(_permit) = self.start_token_refresh(account_id) else {
+            tracing::debug!(
+                account_id,
+                "codex account refresh already in progress; waiting for refreshed token"
+            );
+            return self.wait_for_token_refresh(account_id, &record).await;
+        };
         self.refresh_record(account_id, record).await
+    }
+
+    async fn refresh_record_with_token_url(
+        &self,
+        account_id: &str,
+        record: CodexTokenRecord,
+        token_url: &str,
+    ) -> Result<CodexTokenRecord, String> {
+        let Some(_permit) = self.start_token_refresh(account_id) else {
+            tracing::debug!(
+                account_id,
+                "codex account refresh already in progress; waiting for refreshed token"
+            );
+            return self.wait_for_token_refresh(account_id, &record).await;
+        };
+        let result = self
+            .refresh_record_inner(account_id, record, Some(token_url))
+            .await;
+        result
     }
 
     async fn refresh_record(
@@ -382,8 +495,17 @@ impl CodexAccountStore {
         account_id: &str,
         record: CodexTokenRecord,
     ) -> Result<CodexTokenRecord, String> {
+        self.refresh_record_inner(account_id, record, None).await
+    }
+
+    async fn refresh_record_inner(
+        &self,
+        account_id: &str,
+        record: CodexTokenRecord,
+        token_url: Option<&str>,
+    ) -> Result<CodexTokenRecord, String> {
         let proxy_url = self.effective_proxy_url(record.proxy_url.as_deref()).await;
-        let client = CodexOAuthClient::new(proxy_url.as_deref())?;
+        let client = self.oauth_client(proxy_url.as_deref(), token_url).await?;
         let refresh_client = refresh_token_client_for_record(&record)?;
         tracing::debug!(
             account_id,
@@ -588,6 +710,70 @@ impl CodexAccountStore {
     async fn finish_quota_refresh(&self, account_id: &str) {
         let mut refreshing = self.quota_refreshing.lock().await;
         refreshing.remove(account_id);
+    }
+
+    fn start_token_refresh(&self, account_id: &str) -> Option<TokenRefreshPermit<'_>> {
+        let mut refreshing = self
+            .token_refreshing
+            .lock()
+            .expect("codex token refresh lock poisoned");
+        if refreshing.contains(account_id) {
+            return None;
+        }
+        refreshing.insert(account_id.to_string());
+        Some(TokenRefreshPermit {
+            refreshing: &self.token_refreshing,
+            account_id: account_id.to_string(),
+        })
+    }
+
+    fn token_refresh_in_progress(&self, account_id: &str) -> bool {
+        self.token_refreshing
+            .lock()
+            .expect("codex token refresh lock poisoned")
+            .contains(account_id)
+    }
+
+    async fn wait_for_token_refresh(
+        &self,
+        account_id: &str,
+        previous: &CodexTokenRecord,
+    ) -> Result<CodexTokenRecord, String> {
+        let deadline = tokio::time::Instant::now() + CODEX_TOKEN_REFRESH_WAIT_TIMEOUT;
+        loop {
+            if !self.token_refresh_in_progress(account_id) {
+                let record = self.load_account(account_id).await?;
+                if token_record_was_refreshed(previous, &record) {
+                    return Ok(record);
+                }
+                return Err(format!(
+                    "Codex account refresh did not update credentials: {account_id}"
+                ));
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(format!(
+                    "Codex account refresh is still in progress: {account_id}"
+                ));
+            }
+            tokio::time::sleep(CODEX_TOKEN_REFRESH_WAIT_STEP).await;
+        }
+    }
+
+    async fn oauth_client(
+        &self,
+        proxy_url: Option<&str>,
+        token_url: Option<&str>,
+    ) -> Result<CodexOAuthClient, String> {
+        if let Some(token_url) = token_url {
+            return CodexOAuthClient::new_with_token_url(proxy_url, token_url);
+        }
+        #[cfg(test)]
+        {
+            if let Some(token_url) = self.token_url_override.read().await.as_deref() {
+                return CodexOAuthClient::new_with_token_url(proxy_url, token_url);
+            }
+        }
+        CodexOAuthClient::new(proxy_url)
     }
 
     async fn refresh_quota_if_stale_inner(&self, account_id: &str) -> Result<bool, String> {
@@ -803,7 +989,28 @@ fn fill_record_from_jwt(record: &mut CodexTokenRecord) {
 }
 
 fn record_needs_refresh(record: &CodexTokenRecord) -> bool {
-    record.is_expired() || paid_quota_disagrees_with_free_access_token_claim(record)
+    record_expires_within(record, CODEX_TOKEN_REFRESH_WINDOW)
+        || paid_quota_disagrees_with_free_access_token_claim(record)
+}
+
+fn record_can_auto_refresh(record: &CodexTokenRecord) -> bool {
+    matches!(record.status, CodexAccountStatus::Active)
+        && record.auto_refresh_enabled
+        && !record.refresh_token.trim().is_empty()
+}
+
+fn record_expires_within(record: &CodexTokenRecord, window: Duration) -> bool {
+    let Some(expires_at) = record.expires_at() else {
+        return true;
+    };
+    OffsetDateTime::now_utc() + window >= expires_at
+}
+
+fn token_record_was_refreshed(previous: &CodexTokenRecord, current: &CodexTokenRecord) -> bool {
+    current.access_token != previous.access_token
+        || current.refresh_token != previous.refresh_token
+        || current.last_refresh != previous.last_refresh
+        || current.expires_at != previous.expires_at
 }
 
 fn refresh_token_client_for_record(
@@ -1272,6 +1479,7 @@ mod tests {
     use crate::codex::CodexQuotaCache;
     use crate::paths::TokenProxyPaths;
     use crate::proxy::sqlite;
+    use axum::response::IntoResponse;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
     use rand::random;
@@ -1379,6 +1587,47 @@ mod tests {
         let encoded =
             URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).expect("serialize payload"));
         format!("header.{encoded}.signature")
+    }
+
+    async fn spawn_token_endpoint(
+        access_token: &'static str,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        async fn handler(
+            axum::extract::State(access_token): axum::extract::State<&'static str>,
+            body: axum::body::Bytes,
+        ) -> axum::response::Response {
+            let body = String::from_utf8_lossy(&body);
+            assert!(
+                body.contains("grant_type=refresh_token"),
+                "refresh grant missing: {body}"
+            );
+            (
+                axum::http::StatusCode::OK,
+                [(axum::http::header::CONTENT_TYPE, "application/json")],
+                json!({
+                    "access_token": access_token,
+                    "refresh_token": "refreshed-token",
+                    "id_token": build_id_token("refreshed@example.com", "acct-refreshed"),
+                    "expires_in": 7200,
+                })
+                .to_string(),
+            )
+                .into_response()
+        }
+
+        let app = axum::Router::new()
+            .route("/oauth/token", axum::routing::post(handler))
+            .with_state(access_token);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind token endpoint");
+        let addr = listener.local_addr().expect("token endpoint addr");
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("token endpoint should run");
+        });
+        (format!("http://{addr}/oauth/token"), task)
     }
 
     fn build_record_with_quota_and_access_claim(
@@ -2855,6 +3104,144 @@ INSERT INTO provider_accounts (
             assert!(record.auto_refresh_enabled);
 
             let _ = std::fs::remove_dir_all(data_dir);
+        });
+    }
+
+    #[test]
+    fn keepalive_refreshes_expired_auto_refresh_accounts_without_resolve() {
+        run_async(async {
+            let (store, data_dir) = create_test_store();
+            let expired_at = (OffsetDateTime::now_utc() - time::Duration::hours(1))
+                .format(&Rfc3339)
+                .expect("format expires_at");
+            let account_id = "codex-keepalive.json".to_string();
+            store
+                .save_record(
+                    account_id.clone(),
+                    CodexTokenRecord {
+                        access_token: "expired-access".to_string(),
+                        refresh_token: "refresh-token".to_string(),
+                        client_id: Some(CodexRefreshTokenClient::Codex.client_id().to_string()),
+                        id_token: build_id_token("old@example.com", "acct-old"),
+                        auto_refresh_enabled: true,
+                        status: CodexAccountStatus::Active,
+                        account_id: Some("acct-old".to_string()),
+                        user_id: None,
+                        email: Some("old@example.com".to_string()),
+                        expires_at: expired_at,
+                        last_refresh: None,
+                        proxy_url: None,
+                        priority: 0,
+                        quota: CodexQuotaCache::default(),
+                    },
+                )
+                .await
+                .expect("seed expired codex account");
+            let (token_url, task) = spawn_token_endpoint("refreshed-access").await;
+            store.set_test_token_url(&token_url).await;
+
+            let refreshed = store
+                .refresh_due_accounts()
+                .await
+                .expect("refresh due accounts");
+            let record = store
+                .load_account(&account_id)
+                .await
+                .expect("load refreshed record");
+
+            task.abort();
+            let _ = std::fs::remove_dir_all(data_dir);
+
+            assert_eq!(refreshed, vec![account_id]);
+            assert_eq!(record.access_token, "refreshed-access");
+            assert!(!record.is_expired());
+        });
+    }
+
+    #[test]
+    fn keepalive_skips_accounts_that_cannot_auto_refresh() {
+        run_async(async {
+            let (store, data_dir) = create_test_store();
+            let expired_at = (OffsetDateTime::now_utc() - time::Duration::hours(1))
+                .format(&Rfc3339)
+                .expect("format expires_at");
+            let records = [
+                (
+                    "codex-disabled.json",
+                    CodexTokenRecord {
+                        access_token: "disabled-access".to_string(),
+                        refresh_token: "refresh-token".to_string(),
+                        client_id: Some(CodexRefreshTokenClient::Codex.client_id().to_string()),
+                        id_token: build_id_token("disabled@example.com", "acct-disabled"),
+                        auto_refresh_enabled: true,
+                        status: CodexAccountStatus::Disabled,
+                        account_id: Some("acct-disabled".to_string()),
+                        user_id: None,
+                        email: Some("disabled@example.com".to_string()),
+                        expires_at: expired_at.clone(),
+                        last_refresh: None,
+                        proxy_url: None,
+                        priority: 0,
+                        quota: CodexQuotaCache::default(),
+                    },
+                ),
+                (
+                    "codex-manual.json",
+                    CodexTokenRecord {
+                        access_token: "manual-access".to_string(),
+                        refresh_token: "refresh-token".to_string(),
+                        client_id: Some(CodexRefreshTokenClient::Codex.client_id().to_string()),
+                        id_token: build_id_token("manual@example.com", "acct-manual"),
+                        auto_refresh_enabled: false,
+                        status: CodexAccountStatus::Active,
+                        account_id: Some("acct-manual".to_string()),
+                        user_id: None,
+                        email: Some("manual@example.com".to_string()),
+                        expires_at: expired_at.clone(),
+                        last_refresh: None,
+                        proxy_url: None,
+                        priority: 0,
+                        quota: CodexQuotaCache::default(),
+                    },
+                ),
+                (
+                    "codex-access-only.json",
+                    CodexTokenRecord {
+                        access_token: "access-only".to_string(),
+                        refresh_token: String::new(),
+                        client_id: Some(CodexRefreshTokenClient::Codex.client_id().to_string()),
+                        id_token: build_id_token("access-only@example.com", "acct-access-only"),
+                        auto_refresh_enabled: true,
+                        status: CodexAccountStatus::Active,
+                        account_id: Some("acct-access-only".to_string()),
+                        user_id: None,
+                        email: Some("access-only@example.com".to_string()),
+                        expires_at: expired_at.clone(),
+                        last_refresh: None,
+                        proxy_url: None,
+                        priority: 0,
+                        quota: CodexQuotaCache::default(),
+                    },
+                ),
+            ];
+            for (account_id, record) in records {
+                store
+                    .save_record(account_id.to_string(), record)
+                    .await
+                    .expect("seed account");
+            }
+            let (token_url, task) = spawn_token_endpoint("should-not-be-used").await;
+            store.set_test_token_url(&token_url).await;
+
+            let refreshed = store
+                .refresh_due_accounts()
+                .await
+                .expect("refresh due accounts");
+
+            task.abort();
+            let _ = std::fs::remove_dir_all(data_dir);
+
+            assert!(refreshed.is_empty());
         });
     }
 

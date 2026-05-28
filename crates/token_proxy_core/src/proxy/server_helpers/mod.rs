@@ -9,7 +9,10 @@ use super::openai_compat::{PROVIDER_RESPONSES, RESPONSES_PATH};
 use super::{
     gemini,
     http_client::ProxyHttpClients,
-    openai_compat::{transform_request_body, FormatTransform, CHAT_PATH, PROVIDER_CHAT},
+    openai_compat::{
+        transform_request_body_with_codex_prompt_cache_key, FormatTransform, CHAT_PATH,
+        PROVIDER_CHAT,
+    },
     request_body::ReplayableBody,
     request_token_estimate, RequestMeta,
 };
@@ -226,6 +229,7 @@ pub(crate) async fn maybe_transform_request_body(
     _path: &str,
     transform: FormatTransform,
     model_hint: Option<&str>,
+    headers: &HeaderMap,
     body: ReplayableBody,
 ) -> Result<ReplayableBody, RequestError> {
     if transform == FormatTransform::None {
@@ -256,9 +260,22 @@ pub(crate) async fn maybe_transform_request_body(
     )
     .await;
 
-    let outbound_bytes = transform_request_body(transform, &bytes, http_clients, model_hint)
-        .await
-        .map_err(|message| RequestError::new(StatusCode::BAD_REQUEST, message))?;
+    let codex_prompt_cache_key = codex_prompt_cache_key_for_transform(transform, headers);
+    if is_codex_request_transform(transform) {
+        tracing::debug!(
+            has_prompt_cache_key = codex_prompt_cache_key.is_some(),
+            "codex request transform context"
+        );
+    }
+    let outbound_bytes = transform_request_body_with_codex_prompt_cache_key(
+        transform,
+        &bytes,
+        http_clients,
+        model_hint,
+        codex_prompt_cache_key.as_deref(),
+    )
+    .await
+    .map_err(|message| RequestError::new(StatusCode::BAD_REQUEST, message))?;
     let outbound_body = ReplayableBody::from_bytes(outbound_bytes);
     log_debug_headers_body(
         "transform.output",
@@ -268,6 +285,37 @@ pub(crate) async fn maybe_transform_request_body(
     )
     .await;
     Ok(outbound_body)
+}
+
+fn codex_prompt_cache_key_for_transform(
+    transform: FormatTransform,
+    headers: &HeaderMap,
+) -> Option<String> {
+    if !is_codex_request_transform(transform) {
+        return None;
+    }
+    // Official Codex uses thread-id as Responses prompt_cache_key; session-id is a fallback for clients that only send session identity.
+    header_string(headers, "thread-id").or_else(|| header_string(headers, "session-id"))
+}
+
+fn is_codex_request_transform(transform: FormatTransform) -> bool {
+    matches!(
+        transform,
+        FormatTransform::AnthropicToCodex
+            | FormatTransform::ChatToCodex
+            | FormatTransform::ResponsesToCodex
+            | FormatTransform::ResponsesCompactToCodex
+            | FormatTransform::ImagesGenerationsToCodex
+    )
+}
+
+fn header_string(headers: &HeaderMap, name: &'static str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 pub(crate) async fn maybe_force_openai_stream_options_include_usage(

@@ -92,6 +92,7 @@ pub(super) async fn finalize_prepared_request(
         &inbound.path,
         &inbound.plan,
         &inbound.meta,
+        headers,
         inbound.body,
         request_start,
     )
@@ -125,6 +126,7 @@ pub(super) async fn build_outbound_body_or_respond(
     path: &str,
     plan: &DispatchPlan,
     meta: &RequestMeta,
+    headers: &HeaderMap,
     body: ReplayableBody,
     request_start: Instant,
 ) -> Result<ReplayableBody, Response> {
@@ -135,6 +137,7 @@ pub(super) async fn build_outbound_body_or_respond(
         path,
         plan,
         meta,
+        headers,
         body,
         request_start,
     )
@@ -158,6 +161,7 @@ async fn transform_body_or_respond(
     path: &str,
     plan: &DispatchPlan,
     meta: &RequestMeta,
+    headers: &HeaderMap,
     body: ReplayableBody,
     request_start: Instant,
 ) -> Result<ReplayableBody, Response> {
@@ -167,6 +171,7 @@ async fn transform_body_or_respond(
         path,
         plan.request_transform,
         meta.original_model.as_deref(),
+        headers,
         body,
     )
     .await

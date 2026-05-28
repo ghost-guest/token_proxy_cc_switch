@@ -73,6 +73,23 @@ pub(crate) async fn transform_request_body(
     http_clients: &ProxyHttpClients,
     model_hint: Option<&str>,
 ) -> Result<Bytes, String> {
+    transform_request_body_with_codex_prompt_cache_key(
+        transform,
+        body,
+        http_clients,
+        model_hint,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn transform_request_body_with_codex_prompt_cache_key(
+    transform: FormatTransform,
+    body: &Bytes,
+    http_clients: &ProxyHttpClients,
+    model_hint: Option<&str>,
+    codex_prompt_cache_key: Option<&str>,
+) -> Result<Bytes, String> {
     match transform {
         FormatTransform::None => Ok(body.clone()),
         FormatTransform::ChatToResponses => chat_request_to_responses(body),
@@ -86,7 +103,11 @@ pub(crate) async fn transform_request_body(
         FormatTransform::AnthropicToCodex => {
             let intermediate =
                 anthropic_compat::anthropic_request_to_responses(body, http_clients).await?;
-            codex_compat::responses_request_to_codex(&intermediate, model_hint)
+            codex_compat::responses_request_to_codex_with_prompt_cache_key(
+                &intermediate,
+                model_hint,
+                codex_prompt_cache_key,
+            )
         }
         FormatTransform::ChatToAnthropic => {
             let intermediate = chat_request_to_responses(body)?;
@@ -106,16 +127,32 @@ pub(crate) async fn transform_request_body(
         FormatTransform::ResponsesToGemini => responses_request_to_gemini(body),
         FormatTransform::GeminiToResponses => gemini_request_to_responses(body, model_hint),
         FormatTransform::KiroToAnthropic => Ok(body.clone()),
-        FormatTransform::ChatToCodex => codex_compat::chat_request_to_codex(body, model_hint),
+        FormatTransform::ChatToCodex => codex_compat::chat_request_to_codex_with_prompt_cache_key(
+            body,
+            model_hint,
+            codex_prompt_cache_key,
+        ),
         FormatTransform::ResponsesToCodex => {
-            codex_compat::responses_request_to_codex(body, model_hint)
+            codex_compat::responses_request_to_codex_with_prompt_cache_key(
+                body,
+                model_hint,
+                codex_prompt_cache_key,
+            )
         }
         FormatTransform::ResponsesCompactToCodex => {
-            codex_compat::responses_compact_request_to_codex(body, model_hint)
+            codex_compat::responses_compact_request_to_codex_with_prompt_cache_key(
+                body,
+                model_hint,
+                codex_prompt_cache_key,
+            )
         }
         FormatTransform::ImagesGenerationsToCodex => {
             let responses_body = images::images_generation_request_to_responses(body)?;
-            codex_compat::responses_request_to_codex(&responses_body, None)
+            codex_compat::responses_request_to_codex_with_prompt_cache_key(
+                &responses_body,
+                None,
+                codex_prompt_cache_key,
+            )
         }
         FormatTransform::CodexToChat
         | FormatTransform::CodexToResponses

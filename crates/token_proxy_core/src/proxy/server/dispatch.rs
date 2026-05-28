@@ -5,6 +5,7 @@ use crate::proxy::server_helpers::is_anthropic_path;
 
 use super::{
     super::{
+        codex_compat,
         config::{InboundApiFormat, ProxyConfig},
         gemini,
         inbound::detect_inbound_api_format,
@@ -214,11 +215,12 @@ fn resolve_openai_native_plan(
 fn resolve_responses_compact_plan(
     config: &ProxyConfig,
     path: &str,
+    headers: &HeaderMap,
 ) -> Option<Result<DispatchPlan, String>> {
     if !openai::is_openai_responses_compact_path(path) {
         return None;
     }
-    Some(resolve_responses_native_plan(config))
+    Some(resolve_responses_native_plan(config, headers))
 }
 
 fn resolve_anthropic_plan(
@@ -381,7 +383,7 @@ pub(super) fn resolve_dispatch_plan_with_request(
     if let Some(plan) = resolve_models_plan(config, path, headers, query) {
         return plan;
     }
-    if let Some(plan) = resolve_responses_compact_plan(config, path) {
+    if let Some(plan) = resolve_responses_compact_plan(config, path, headers) {
         return plan;
     }
     if let Some(plan) = resolve_openai_native_plan(config, path) {
@@ -405,16 +407,19 @@ pub(super) fn resolve_dispatch_plan_with_request(
         InboundApiFormat::OpenaiChat => resolve_chat_plan(config),
         InboundApiFormat::OpenaiResponses => {
             if openai::is_openai_responses_compact_path(path) {
-                resolve_responses_native_plan(config)
+                resolve_responses_native_plan(config, headers)
             } else {
-                resolve_responses_plan(config)
+                resolve_responses_plan(config, headers)
             }
         }
         _ => resolve_formatless_plan(config),
     }
 }
 
-fn resolve_responses_native_plan(config: &ProxyConfig) -> Result<DispatchPlan, String> {
+fn resolve_responses_native_plan(
+    config: &ProxyConfig,
+    headers: &HeaderMap,
+) -> Result<DispatchPlan, String> {
     let inbound_format = Some(InboundApiFormat::OpenaiResponses);
     if let Some(selected) = choose_provider_by_priority(
         config,
@@ -426,8 +431,14 @@ fn resolve_responses_native_plan(config: &ProxyConfig) -> Result<DispatchPlan, S
             PROVIDER_CODEX => DispatchPlan {
                 provider: PROVIDER_CODEX,
                 outbound_path: Some(CODEX_RESPONSES_PATH),
-                request_transform: FormatTransform::ResponsesCompactToCodex,
-                response_transform: FormatTransform::CodexToResponses,
+                request_transform: codex_request_transform(
+                    headers,
+                    FormatTransform::ResponsesCompactToCodex,
+                ),
+                response_transform: codex_response_transform(
+                    headers,
+                    FormatTransform::CodexToResponses,
+                ),
             },
             _ => base_plan(PROVIDER_RESPONSES),
         });
@@ -481,7 +492,10 @@ fn resolve_chat_plan(config: &ProxyConfig) -> Result<DispatchPlan, String> {
     })
 }
 
-fn resolve_responses_plan(config: &ProxyConfig) -> Result<DispatchPlan, String> {
+fn resolve_responses_plan(
+    config: &ProxyConfig,
+    headers: &HeaderMap,
+) -> Result<DispatchPlan, String> {
     let inbound_format = Some(InboundApiFormat::OpenaiResponses);
     if let Some(selected) = choose_provider_by_priority(
         config,
@@ -495,8 +509,14 @@ fn resolve_responses_plan(config: &ProxyConfig) -> Result<DispatchPlan, String> 
             return Ok(DispatchPlan {
                 provider: PROVIDER_CODEX,
                 outbound_path: Some(CODEX_RESPONSES_PATH),
-                request_transform: FormatTransform::ResponsesToCodex,
-                response_transform: FormatTransform::CodexToResponses,
+                request_transform: codex_request_transform(
+                    headers,
+                    FormatTransform::ResponsesToCodex,
+                ),
+                response_transform: codex_response_transform(
+                    headers,
+                    FormatTransform::CodexToResponses,
+                ),
             });
         }
     }
@@ -528,6 +548,20 @@ fn resolve_responses_plan(config: &ProxyConfig) -> Result<DispatchPlan, String> 
         },
         _ => base_plan(PROVIDER_CHAT),
     })
+}
+
+fn codex_request_transform(headers: &HeaderMap, transform: FormatTransform) -> FormatTransform {
+    if codex_compat::is_native_codex_request(headers) {
+        return FormatTransform::None;
+    }
+    transform
+}
+
+fn codex_response_transform(headers: &HeaderMap, transform: FormatTransform) -> FormatTransform {
+    if codex_compat::is_native_codex_request(headers) {
+        return FormatTransform::None;
+    }
+    transform
 }
 
 pub(super) fn resolve_outbound_path(path: &str, plan: &DispatchPlan, meta: &RequestMeta) -> String {

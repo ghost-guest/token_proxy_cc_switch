@@ -5,10 +5,11 @@ use crate::paths::TokenProxyPaths;
 use crate::proxy::config::UpstreamConfig;
 use crate::proxy::model_discovery::UpstreamModelProbeStatus;
 use axum::{
+    body::Bytes,
     extract::State,
     http::{StatusCode, Uri},
     response::IntoResponse,
-    routing::any,
+    routing::{any, post},
     Router,
 };
 use rand::random;
@@ -180,6 +181,47 @@ async fn spawn_model_catalog_probe_upstream(body: Value) -> ModelCatalogProbeUps
         requests,
         task,
     }
+}
+
+async fn spawn_codex_token_endpoint(
+    access_token: &'static str,
+) -> (String, tokio::task::JoinHandle<()>) {
+    async fn handler(
+        State(access_token): State<&'static str>,
+        body: Bytes,
+    ) -> axum::response::Response {
+        let body = String::from_utf8_lossy(&body);
+        assert!(
+            body.contains("grant_type=refresh_token"),
+            "refresh grant missing: {body}"
+        );
+        (
+            StatusCode::OK,
+            [(axum::http::header::CONTENT_TYPE, "application/json")],
+            json!({
+                "access_token": access_token,
+                "refresh_token": "service-refreshed-token",
+                "id_token": "header.eyJlbWFpbCI6InNlcnZpY2VAZXhhbXBsZS5jb20iLCJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjdC1zZXJ2aWNlIn19.signature",
+                "expires_in": 7200,
+            })
+            .to_string(),
+        )
+            .into_response()
+    }
+
+    let app = Router::new()
+        .route("/oauth/token", post(handler))
+        .with_state(access_token);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind codex token endpoint");
+    let addr = listener.local_addr().expect("token endpoint addr");
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("codex token endpoint should run");
+    });
+    (format!("http://{addr}/oauth/token"), task)
 }
 
 fn upstream_config(id: &str, provider: &str, base_url: &str) -> UpstreamConfig {
@@ -410,6 +452,70 @@ fn refresh_model_discovery_updates_cache_on_demand() {
 
         let _ = service.stop().await;
         upstream.abort();
+        let _ = std::fs::remove_dir_all(data_dir);
+    });
+}
+
+#[test]
+fn start_spawns_codex_keepalive_without_codex_upstream() {
+    run_async(async {
+        let (context, data_dir) = create_test_context();
+        let (token_url, token_task) = spawn_codex_token_endpoint("service-refreshed-access").await;
+        context.codex_accounts.set_test_token_url(&token_url).await;
+        let expires_at = (time::OffsetDateTime::now_utc() - time::Duration::hours(1))
+            .format(&time::format_description::well_known::Rfc3339)
+            .expect("format expires_at");
+        context
+            .codex_accounts
+            .save_record(
+                "codex-service.json".to_string(),
+                crate::codex::CodexTokenRecord {
+                    access_token: "service-expired-access".to_string(),
+                    refresh_token: "service-refresh-token".to_string(),
+                    client_id: Some(
+                        crate::codex::CodexRefreshTokenClient::Codex
+                            .client_id()
+                            .to_string(),
+                    ),
+                    id_token: "header.eyJlbWFpbCI6InNlcnZpY2VAZXhhbXBsZS5jb20iLCJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjdC1zZXJ2aWNlIn19.signature".to_string(),
+                    auto_refresh_enabled: true,
+                    status: crate::codex::CodexAccountStatus::Active,
+                    account_id: Some("acct-service".to_string()),
+                    user_id: None,
+                    email: Some("service@example.com".to_string()),
+                    expires_at,
+                    last_refresh: None,
+                    proxy_url: None,
+                    priority: 0,
+                    quota: crate::codex::CodexQuotaCache::default(),
+                },
+            )
+            .await
+            .expect("seed codex account");
+        crate::proxy::config::write_config(context.paths.as_ref(), test_config_file(0))
+            .await
+            .expect("write config");
+
+        let service = ProxyServiceHandle::new();
+        service.start(&context).await.expect("start proxy");
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let record = context
+                    .codex_accounts
+                    .load_account("codex-service.json")
+                    .await
+                    .expect("load codex account");
+                if record.access_token == "service-refreshed-access" {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("codex keepalive should refresh without codex upstream");
+
+        let _ = service.stop().await;
+        token_task.abort();
         let _ = std::fs::remove_dir_all(data_dir);
     });
 }

@@ -156,20 +156,40 @@ pub(super) async fn retry_with_next_codex_account(
     first: Result<UpstreamAttempt, UpstreamAttemptFailure>,
     cooldown_scope: &CooldownScope,
 ) -> CodexFailoverResult {
-    let Some(first_selected_account_id) =
-        codex_failover_selected_account_id(provider, upstream, &first)
-    else {
+    if provider != "codex" {
         return match first {
             Ok(attempt) => CodexFailoverResult::Pending(attempt),
             Err(failure) => CodexFailoverResult::Resolved(failure.outcome),
         };
-    };
+    }
 
-    let mut excluded_account_ids = vec![first_selected_account_id];
+    let has_pinned_account = upstream
+        .codex_account_id
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    let mut excluded_account_ids = Vec::new();
     let mut current_upstream = upstream.clone();
     let mut current_attempt = first;
 
     loop {
+        current_attempt = retry_after_codex_refresh(
+            state,
+            method.clone(),
+            provider,
+            &current_upstream,
+            inbound_path,
+            upstream_path_with_query,
+            headers,
+            body,
+            meta,
+            request_auth,
+            current_attempt,
+            request_detail.as_ref(),
+            cooldown_scope,
+        )
+        .await;
+        let selected_account_id = attempt_selected_account_id(&current_attempt);
         let outcome = finalize_codex_failover_attempt(
             state,
             provider,
@@ -182,8 +202,17 @@ pub(super) async fn retry_with_next_codex_account(
             cooldown_scope,
         )
         .await;
-        if !should_failover_codex_outcome(&outcome) {
+        if !should_failover_codex_outcome(&outcome) || has_pinned_account {
             return CodexFailoverResult::Resolved(outcome);
+        }
+        let Some(selected_account_id) = selected_account_id else {
+            return CodexFailoverResult::Resolved(outcome);
+        };
+        if !excluded_account_ids
+            .iter()
+            .any(|account_id| account_id == &selected_account_id)
+        {
+            excluded_account_ids.push(selected_account_id);
         }
 
         let ordered_account_ids = state
@@ -220,7 +249,6 @@ pub(super) async fn retry_with_next_codex_account(
             }
         };
 
-        excluded_account_ids.push(next_account_id.clone());
         current_upstream = upstream.clone();
         current_upstream.codex_account_id = Some(next_account_id);
         current_attempt = attempt::attempt_send(
@@ -239,6 +267,59 @@ pub(super) async fn retry_with_next_codex_account(
         )
         .await;
     }
+}
+
+async fn retry_after_codex_refresh(
+    state: &ProxyState,
+    method: Method,
+    provider: &str,
+    upstream: &UpstreamRuntime,
+    inbound_path: &str,
+    upstream_path_with_query: &str,
+    headers: &HeaderMap,
+    body: &ReplayableBody,
+    meta: &RequestMeta,
+    request_auth: &RequestAuth,
+    attempt: Result<UpstreamAttempt, UpstreamAttemptFailure>,
+    request_detail: Option<&RequestDetailSnapshot>,
+    cooldown_scope: &CooldownScope,
+) -> Result<UpstreamAttempt, UpstreamAttemptFailure> {
+    let Ok(first) = attempt else {
+        return attempt;
+    };
+    if !should_refresh_codex(provider, &first.response) {
+        return Ok(first);
+    }
+    let Some(account_id) = first.selected_account_id.clone() else {
+        return Ok(first);
+    };
+    if let Err(err) = state.codex_accounts.refresh_account(&account_id).await {
+        tracing::warn!(
+            account_id,
+            error = %err,
+            "codex account refresh after unauthorized failed"
+        );
+        return Ok(first);
+    }
+    tracing::info!(
+        account_id,
+        "codex account refreshed after unauthorized response"
+    );
+    attempt::attempt_send(
+        state,
+        method,
+        provider,
+        upstream,
+        inbound_path,
+        upstream_path_with_query,
+        headers,
+        body,
+        meta,
+        request_auth,
+        request_detail,
+        cooldown_scope,
+    )
+    .await
 }
 
 async fn finalize_codex_failover_attempt(
@@ -271,21 +352,9 @@ async fn finalize_codex_failover_attempt(
     }
 }
 
-fn codex_failover_selected_account_id(
-    provider: &str,
-    upstream: &UpstreamRuntime,
+fn attempt_selected_account_id(
     attempt: &Result<UpstreamAttempt, UpstreamAttemptFailure>,
 ) -> Option<String> {
-    if provider != "codex"
-        || upstream
-            .codex_account_id
-            .as_deref()
-            .map(str::trim)
-            .is_some_and(|value| !value.is_empty())
-    {
-        return None;
-    }
-
     match attempt {
         Ok(attempt) => attempt.selected_account_id.clone(),
         Err(failure) => failure.selected_account_id.clone(),
@@ -334,6 +403,10 @@ fn should_refresh_kiro(provider: &str, response: &reqwest::Response) -> bool {
     provider == "kiro"
         && (response.status() == StatusCode::UNAUTHORIZED
             || response.status() == StatusCode::FORBIDDEN)
+}
+
+fn should_refresh_codex(provider: &str, response: &reqwest::Response) -> bool {
+    provider == "codex" && response.status() == StatusCode::UNAUTHORIZED
 }
 
 async fn refresh_kiro_account(

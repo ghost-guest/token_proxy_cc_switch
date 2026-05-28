@@ -226,6 +226,11 @@ struct MockAuthSwitchState {
     primary_status: StatusCode,
 }
 
+#[derive(Clone)]
+struct MockCodexRefreshRetryState {
+    requests: Arc<Mutex<Vec<RecordedRequest>>>,
+}
+
 struct MockCodexEmptyChatSwitchState {
     requests: Arc<Mutex<Vec<RecordedRequest>>>,
 }
@@ -568,6 +573,135 @@ async fn auth_switch_upstream_handler(
         body.to_string(),
     )
         .into_response()
+}
+
+async fn codex_refresh_retry_upstream_handler(
+    State(state): State<Arc<MockCodexRefreshRetryState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    body: Body,
+) -> axum::response::Response {
+    let bytes = to_bytes(body, usize::MAX).await.expect("read mock body");
+    let json_body = serde_json::from_slice::<Value>(&bytes).expect("mock request json");
+    let authorization = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    let chatgpt_account_id = headers
+        .get("chatgpt-account-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+
+    state
+        .requests
+        .lock()
+        .expect("requests lock")
+        .push(RecordedRequest {
+            path: uri.path().to_string(),
+            body: json_body,
+            authorization: authorization.clone(),
+            chatgpt_account_id,
+        });
+
+    let (status, body) = match authorization.as_deref() {
+        Some("Bearer codex-access-old") => (
+            StatusCode::UNAUTHORIZED,
+            json!({
+                "error": {
+                    "message": "Your authentication token has been invalidated.",
+                    "type": "invalid_request_error",
+                    "code": "token_invalidated",
+                    "param": null
+                }
+            }),
+        ),
+        Some("Bearer codex-access-new") => (
+            StatusCode::OK,
+            json!({
+                "id": "resp_codex_refreshed",
+                "object": "response",
+                "created_at": 123,
+                "model": "gpt-5-codex",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "id": "msg_refreshed",
+                        "status": "completed",
+                        "role": "assistant",
+                        "content": [
+                            { "type": "output_text", "text": "from refreshed codex account" }
+                        ]
+                    }
+                ],
+                "usage": { "input_tokens": 1, "output_tokens": 2, "total_tokens": 3 }
+            }),
+        ),
+        Some("Bearer codex-access-b") => (
+            StatusCode::OK,
+            json!({
+                "id": "resp_unexpected_failover",
+                "object": "response",
+                "created_at": 123,
+                "model": "gpt-5-codex",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "id": "msg_failover",
+                        "status": "completed",
+                        "role": "assistant",
+                        "content": [
+                            { "type": "output_text", "text": "unexpected failover" }
+                        ]
+                    }
+                ],
+                "usage": { "input_tokens": 1, "output_tokens": 2, "total_tokens": 3 }
+            }),
+        ),
+        _ => (
+            StatusCode::UNAUTHORIZED,
+            json!({
+                "error": {
+                    "message": "unexpected account",
+                    "type": "invalid_request_error",
+                    "code": "token_invalidated",
+                    "param": null
+                }
+            }),
+        ),
+    };
+
+    (
+        status,
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        body.to_string(),
+    )
+        .into_response()
+}
+
+async fn spawn_codex_refresh_retry_mock_upstream() -> MockUpstream {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let state = Arc::new(MockCodexRefreshRetryState {
+        requests: requests.clone(),
+    });
+    let app = Router::new()
+        .route("/{*path}", any(codex_refresh_retry_upstream_handler))
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind codex refresh retry mock upstream");
+    let addr: SocketAddr = listener.local_addr().expect("mock local addr");
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("codex refresh retry mock upstream should run");
+    });
+    MockUpstream {
+        base_url: format!("http://{addr}"),
+        requests,
+        task,
+    }
 }
 
 async fn codex_empty_chat_switch_upstream_handler(
@@ -1120,6 +1254,25 @@ async fn seed_codex_account(
     chatgpt_account_id: &str,
     expires_at: &str,
 ) {
+    seed_codex_account_with_refresh_token(
+        state,
+        storage_account_id,
+        access_token,
+        "codex-refresh-token",
+        chatgpt_account_id,
+        expires_at,
+    )
+    .await;
+}
+
+async fn seed_codex_account_with_refresh_token(
+    state: &ProxyStateHandle,
+    storage_account_id: &str,
+    access_token: &str,
+    refresh_token: &str,
+    chatgpt_account_id: &str,
+    expires_at: &str,
+) {
     let state_guard = state.read().await;
     state_guard
         .codex_accounts
@@ -1127,7 +1280,7 @@ async fn seed_codex_account(
             storage_account_id.to_string(),
             crate::codex::CodexTokenRecord {
                 access_token: access_token.to_string(),
-                refresh_token: "codex-refresh-token".to_string(),
+                refresh_token: refresh_token.to_string(),
                 client_id: Some(
                     crate::codex::CodexRefreshTokenClient::Codex
                         .client_id()
@@ -1612,6 +1765,61 @@ async fn send_responses_request_with_headers(
         .expect("proxy response bytes");
     let json = serde_json::from_slice(&body).expect("proxy response json");
     (status, json)
+}
+
+async fn spawn_codex_token_endpoint(
+    access_token: &'static str,
+) -> (String, tokio::task::JoinHandle<()>) {
+    async fn handler(
+        State(access_token): State<&'static str>,
+        body: Bytes,
+    ) -> axum::response::Response {
+        let body = String::from_utf8_lossy(&body);
+        assert!(
+            body.contains("grant_type=refresh_token"),
+            "refresh grant missing: {body}"
+        );
+        (
+            StatusCode::OK,
+            [(axum::http::header::CONTENT_TYPE, "application/json")],
+            json!({
+                "access_token": access_token,
+                "refresh_token": "codex-refresh-token-new",
+                "id_token": build_codex_id_token("refreshed@example.com", "chatgpt-a"),
+                "expires_in": 7200,
+            })
+            .to_string(),
+        )
+            .into_response()
+    }
+
+    let app = Router::new()
+        .route("/oauth/token", axum::routing::post(handler))
+        .with_state(access_token);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind codex token endpoint");
+    let addr = listener.local_addr().expect("token endpoint addr");
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("codex token endpoint should run");
+    });
+    (format!("http://{addr}/oauth/token"), task)
+}
+
+fn build_codex_id_token(email: &str, account_id: &str) -> String {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine;
+
+    let payload = json!({
+        "email": email,
+        "https://api.openai.com/auth": {
+            "chatgpt_account_id": account_id,
+        },
+    });
+    let encoded = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).expect("serialize payload"));
+    format!("header.{encoded}.signature")
 }
 
 async fn send_chat_request(state: ProxyStateHandle) -> (StatusCode, Value) {
@@ -2180,6 +2388,147 @@ fn responses_request_auto_selects_first_available_codex_account_when_unbound() {
             Some("Bearer codex-access-a")
         );
         assert_eq!(requests[0].chatgpt_account_id.as_deref(), Some("chatgpt-a"));
+    });
+}
+
+#[test]
+fn responses_request_refreshes_codex_account_after_unauthorized_before_failover() {
+    run_async(async {
+        let codex = spawn_codex_refresh_retry_mock_upstream().await;
+        let mut config = config_with_runtime_upstreams(&[(
+            PROVIDER_CODEX,
+            0,
+            "codex-refresh-retry",
+            codex.base_url.as_str(),
+            FORMATS_RESPONSES,
+        )]);
+        let provider_upstreams = config
+            .upstreams
+            .get_mut(PROVIDER_CODEX)
+            .expect("codex upstreams");
+        provider_upstreams.groups[0].items[0].codex_account_id = None;
+
+        let data_dir = next_test_data_dir("responses_codex_refresh_retry");
+        let state = build_test_state_handle(config, data_dir.clone()).await;
+        let expires_at = (OffsetDateTime::now_utc() + TimeDuration::days(1))
+            .format(&time::format_description::well_known::Rfc3339)
+            .expect("format expires_at");
+        let (token_url, token_task) = spawn_codex_token_endpoint("codex-access-new").await;
+        {
+            let state_guard = state.read().await;
+            state_guard
+                .codex_accounts
+                .set_test_token_url(&token_url)
+                .await;
+        }
+        seed_codex_account_with_refresh_token(
+            &state,
+            "codex-a.json",
+            "codex-access-old",
+            "codex-refresh-token-old",
+            "chatgpt-a",
+            &expires_at,
+        )
+        .await;
+        seed_codex_account_with_refresh_token(
+            &state,
+            "codex-b.json",
+            "codex-access-b",
+            "codex-refresh-token-b",
+            "chatgpt-b",
+            &expires_at,
+        )
+        .await;
+
+        let (status, json) = send_responses_request(state).await;
+        let requests = codex.requests();
+
+        token_task.abort();
+        codex.abort();
+        let _ = std::fs::remove_dir_all(&data_dir);
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            json["output"][0]["content"][0]["text"].as_str(),
+            Some("from refreshed codex account")
+        );
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            requests[0].authorization.as_deref(),
+            Some("Bearer codex-access-old")
+        );
+        assert_eq!(
+            requests[1].authorization.as_deref(),
+            Some("Bearer codex-access-new")
+        );
+    });
+}
+
+#[test]
+fn responses_request_refreshes_pinned_codex_account_after_unauthorized() {
+    run_async(async {
+        let codex = spawn_codex_refresh_retry_mock_upstream().await;
+        let config = config_with_runtime_upstreams(&[(
+            PROVIDER_CODEX,
+            0,
+            "codex-refresh-pinned",
+            codex.base_url.as_str(),
+            FORMATS_RESPONSES,
+        )]);
+
+        let data_dir = next_test_data_dir("responses_codex_refresh_pinned");
+        let state = build_test_state_handle(config, data_dir.clone()).await;
+        let expires_at = (OffsetDateTime::now_utc() + TimeDuration::days(1))
+            .format(&time::format_description::well_known::Rfc3339)
+            .expect("format expires_at");
+        let (token_url, token_task) = spawn_codex_token_endpoint("codex-access-new").await;
+        {
+            let state_guard = state.read().await;
+            state_guard
+                .codex_accounts
+                .set_test_token_url(&token_url)
+                .await;
+        }
+        seed_codex_account_with_refresh_token(
+            &state,
+            "codex-codex-refresh-pinned.json",
+            "codex-access-old",
+            "codex-refresh-token-old",
+            "chatgpt-a",
+            &expires_at,
+        )
+        .await;
+        seed_codex_account_with_refresh_token(
+            &state,
+            "codex-b.json",
+            "codex-access-b",
+            "codex-refresh-token-b",
+            "chatgpt-b",
+            &expires_at,
+        )
+        .await;
+
+        let (status, json) = send_responses_request(state).await;
+        let requests = codex.requests();
+
+        token_task.abort();
+        codex.abort();
+        let _ = std::fs::remove_dir_all(&data_dir);
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            json["output"][0]["content"][0]["text"].as_str(),
+            Some("from refreshed codex account")
+        );
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            requests[0].authorization.as_deref(),
+            Some("Bearer codex-access-old")
+        );
+        assert_eq!(
+            requests[1].authorization.as_deref(),
+            Some("Bearer codex-access-new")
+        );
     });
 }
 
@@ -5282,13 +5631,32 @@ fn chat_to_codex_requires_format_conversion_enabled() {
 }
 
 #[test]
-fn responses_prefers_codex_without_conversion() {
+fn openai_compatible_responses_to_codex_uses_conversion() {
     let config = config_with_providers(&[(PROVIDER_CODEX, FORMATS_RESPONSES)]);
     let plan = resolve_dispatch_plan(&config, RESPONSES_PATH).expect("should dispatch");
     assert_eq!(plan.provider, PROVIDER_CODEX);
     assert_eq!(plan.outbound_path, Some(CODEX_RESPONSES_PATH));
     assert_eq!(plan.request_transform, FormatTransform::ResponsesToCodex);
     assert_eq!(plan.response_transform, FormatTransform::CodexToResponses);
+}
+
+#[test]
+fn native_codex_responses_request_passthroughs_without_conversion() {
+    let config = config_with_providers(&[(PROVIDER_CODEX, FORMATS_RESPONSES)]);
+    let mut headers = HeaderMap::new();
+    headers.insert("originator", HeaderValue::from_static("codex_cli_rs"));
+    headers.insert(
+        "user-agent",
+        HeaderValue::from_static("codex_cli_rs/0.135.0 (Mac OS 15.5.0; arm64) codex-cli"),
+    );
+
+    let plan = resolve_dispatch_plan_with_request(&config, RESPONSES_PATH, &headers, None)
+        .expect("should dispatch native codex request");
+
+    assert_eq!(plan.provider, PROVIDER_CODEX);
+    assert_eq!(plan.outbound_path, Some(CODEX_RESPONSES_PATH));
+    assert_eq!(plan.request_transform, FormatTransform::None);
+    assert_eq!(plan.response_transform, FormatTransform::None);
 }
 
 #[test]
