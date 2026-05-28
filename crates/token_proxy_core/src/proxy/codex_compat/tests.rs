@@ -843,7 +843,7 @@ fn responses_request_to_codex_strips_output_parts_from_new_tool_output_types() {
 }
 
 #[test]
-fn responses_request_to_codex_adds_missing_names_to_tool_call_context_items() {
+fn responses_request_to_codex_preserves_name_less_tool_call_context_items() {
     let input = json!({
         "model": "gpt-5",
         "input": [
@@ -857,9 +857,7 @@ fn responses_request_to_codex_adds_missing_names_to_tool_call_context_items() {
     let value: serde_json::Value = serde_json::from_slice(&output).expect("json");
     let input_items = value["input"].as_array().expect("input array");
 
-    assert_eq!(input_items[0]["name"], "tool");
-    assert_eq!(input_items[1]["name"], "shell");
-    assert_eq!(input_items[2]["name"], "search");
+    assert!(input_items.iter().all(|item| item.get("name").is_none()));
 }
 
 #[test]
