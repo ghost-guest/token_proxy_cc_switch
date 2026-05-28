@@ -19,6 +19,7 @@ pub(crate) fn extract_tool_name_map(body: &Bytes) -> Option<HashMap<String, Stri
     Some(map.original_by_short)
 }
 
+#[cfg(test)]
 pub(crate) fn chat_request_to_codex(
     body: &Bytes,
     model_hint: Option<&str>,
@@ -89,6 +90,7 @@ fn is_responses_shaped_chat_request(object: &Map<String, Value>) -> bool {
     !object.contains_key("messages") && object.contains_key("input")
 }
 
+#[cfg(test)]
 pub(crate) fn responses_request_to_codex(
     body: &Bytes,
     model_hint: Option<&str>,
@@ -104,6 +106,7 @@ pub(crate) fn responses_request_to_codex_with_prompt_cache_key(
     transform_responses_request_to_codex(body, model_hint, false, prompt_cache_key)
 }
 
+#[cfg(test)]
 pub(crate) fn responses_compact_request_to_codex(
     body: &Bytes,
     model_hint: Option<&str>,

@@ -67,6 +67,7 @@ fn strip_query(path: &str) -> &str {
     path.split_once('?').map(|(path, _)| path).unwrap_or(path)
 }
 
+#[cfg(test)]
 pub(crate) async fn transform_request_body(
     transform: FormatTransform,
     body: &Bytes,
