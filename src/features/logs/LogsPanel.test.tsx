@@ -634,6 +634,32 @@ describe("logs/LogsPanel", () => {
     expect(latencyLabel.closest("div")).toHaveClass("grid", "grid-cols-[11rem_minmax(0,1fr)]");
   });
 
+  it("shows local instead of the localhost IP in request detail", async () => {
+    const user = userEvent.setup();
+    readRequestLogDetailMock.mockResolvedValueOnce(
+      createRequestLogDetail({ clientIp: "127.0.0.1" })
+    );
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "alpha · openai · codex-a.json" })
+      ).toBeInTheDocument();
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: "alpha · openai · codex-a.json" })
+    );
+
+    await waitFor(() => {
+      expect(readRequestLogDetailMock).toHaveBeenCalledWith(1);
+    });
+
+    expect(await screen.findByText("local")).toBeInTheDocument();
+    expect(screen.queryByText("127.0.0.1")).not.toBeInTheDocument();
+  });
+
   it("shows logged cost and pricing metadata inside request detail", async () => {
     const user = userEvent.setup();
 

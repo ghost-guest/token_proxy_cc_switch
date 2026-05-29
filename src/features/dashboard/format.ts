@@ -10,6 +10,9 @@ const DASHBOARD_TIME_MINUTE_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
   timeStyle: "short",
 };
 
+const LOCALHOST_CLIENT_IP = "127.0.0.1";
+const LOCAL_CLIENT_IP_LABEL = "local";
+
 function normalizeProviderPart(value: string | null | undefined) {
   return value?.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() ?? "";
 }
@@ -88,6 +91,15 @@ export function formatDashboardProviderLabel(
   return [upstreamId.trim(), shouldHideProvider ? null : trimmedProvider, accountId?.trim()]
     .filter(Boolean)
     .join(" · ");
+}
+
+export function formatDashboardClientIp(clientIp: string | null | undefined) {
+  // 后端不落库本地 loopback；旧日志里残留的 127.0.0.1 也统一折叠展示。
+  const trimmed = clientIp?.trim();
+  if (!trimmed || trimmed === LOCALHOST_CLIENT_IP) {
+    return LOCAL_CLIENT_IP_LABEL;
+  }
+  return trimmed;
 }
 
 // 使用逗号作为千位分隔符，便于阅读

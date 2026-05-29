@@ -3616,7 +3616,7 @@ fn responses_request_logs_selected_codex_account_id() {
 }
 
 #[test]
-fn responses_request_logs_tcp_client_ip() {
+fn responses_request_skips_localhost_client_ip_in_request_logs() {
     run_async(async {
         let upstream = spawn_mock_upstream(
             StatusCode::OK,
@@ -3650,7 +3650,7 @@ fn responses_request_logs_tcp_client_ip() {
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(json["id"].as_str(), Some("resp_client_ip"));
-        assert_eq!(logged_client_ip.as_deref(), Some("127.0.0.1"));
+        assert_eq!(logged_client_ip.as_deref(), None);
     });
 }
 

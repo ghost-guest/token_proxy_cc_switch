@@ -120,7 +120,7 @@ describe("dashboard/RecentRequestsTable", () => {
     expect(await screen.findByRole("tooltip")).toHaveTextContent(fullTimestamp);
   });
 
-  it("shows IP column between time and path with placeholder for old logs", () => {
+  it("shows IP column between time and path with local label for local requests", () => {
     render(
       <I18nProvider>
         <RecentRequestsTable
@@ -190,9 +190,9 @@ describe("dashboard/RecentRequestsTable", () => {
     ]);
 
     const rows = table.querySelectorAll('[data-slot="recent-requests-table-row"]');
-    expect(rows[0]?.children.item(1)?.textContent).toBe("127.0.0.1");
+    expect(rows[0]?.children.item(1)?.textContent).toBe("local");
     expect(rows[0]?.children.item(2)?.textContent).toBe("/responses");
-    expect(rows[1]?.children.item(1)?.textContent).toBe("—");
+    expect(rows[1]?.children.item(1)?.textContent).toBe("local");
   });
 
   it("keeps status, tokens, and latency columns left-aligned", () => {
@@ -287,12 +287,12 @@ describe("dashboard/RecentRequestsTable", () => {
     const widthTrack = table.querySelector(
       '[data-slot="recent-requests-table-width-track"]',
     ) as HTMLElement | null;
-    expect(widthTrack?.style.minWidth).toBe("889px");
+    expect(widthTrack?.style.minWidth).toBe("850px");
     expect(widthTrack?.parentElement).toBe(scrollArea);
 
     const header = table.querySelector('[data-slot="recent-requests-table-header"]');
     expect(header).toHaveClass("sticky", "top-0", "z-10");
-    expect(header?.className).toContain("85px_118px_140px");
+    expect(header?.className).toContain("85px_79px_140px");
 
     const rowsLayer = table.querySelector(
       '[data-slot="recent-requests-table-rows-layer"]',

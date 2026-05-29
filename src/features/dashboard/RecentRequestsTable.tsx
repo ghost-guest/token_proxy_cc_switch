@@ -16,6 +16,7 @@ import { TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui
 import {
   createDashboardTimeFormatter,
   formatCompact,
+  formatDashboardClientIp,
   formatDashboardClockTime,
   formatDashboardProviderLabel,
   formatDashboardTimestamp,
@@ -32,8 +33,8 @@ const HEADER_HEIGHT_PX = 34;
 const OVERSCAN = 6;
 
 // 固定列宽避免虚拟列表行在状态、费用、延迟文本变化时抖动。
-const GRID_COLS = "grid-cols-[85px_118px_140px_132px_104px_64px_82px_60px_104px]";
-const TABLE_MIN_WIDTH_PX = 889;
+const GRID_COLS = "grid-cols-[85px_79px_140px_132px_104px_64px_82px_60px_104px]";
+const TABLE_MIN_WIDTH_PX = 850;
 const CELL_PLACEHOLDER = "—";
 const TOOLTIP_CONTENT_CLASS = "max-w-[560px] whitespace-pre-wrap break-words";
 type BadgeVariant = "default" | "secondary" | "destructive" | "outline";
@@ -109,7 +110,7 @@ function ipColumn(): ColumnDef<DashboardRequestItem> {
     id: "ip",
     header: m.dashboard_table_ip(),
     cell: ({ row }) => {
-      const clientIp = row.original.clientIp?.trim() || CELL_PLACEHOLDER;
+      const clientIp = formatDashboardClientIp(row.original.clientIp);
       return (
         <CellTooltip content={clientIp}>
           <span className="block truncate text-xs font-medium text-foreground">{clientIp}</span>

@@ -4,7 +4,11 @@ use axum::{
     http::{HeaderMap, Method, Uri},
     response::Response,
 };
-use std::{net::SocketAddr, sync::Arc, time::Instant};
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    sync::Arc,
+    time::Instant,
+};
 use tokio::sync::RwLock;
 
 use super::{
@@ -18,6 +22,7 @@ const PROVIDER_KIRO: &str = "kiro";
 const PROVIDER_CODEX: &str = "codex";
 const PROVIDER_PROXY: &str = "proxy";
 const LOCAL_UPSTREAM_ID: &str = "local";
+const LOCALHOST_CLIENT_IP: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 const CODEX_RESPONSES_PATH: &str = "/responses";
 const CODEX_RESPONSES_COMPACT_PATH: &str = "/responses/compact";
 
@@ -79,9 +84,18 @@ async fn proxy_request_with_connect_info(
         uri,
         headers,
         body,
-        Some(addr.ip().to_string()),
+        client_ip_for_request_log(addr),
     )
     .await
+}
+
+fn client_ip_for_request_log(addr: SocketAddr) -> Option<String> {
+    let ip = addr.ip();
+    if ip == LOCALHOST_CLIENT_IP {
+        tracing::debug!(client_ip = %ip, "skip localhost client ip storage");
+        return None;
+    }
+    Some(ip.to_string())
 }
 
 async fn proxy_request_inner(
