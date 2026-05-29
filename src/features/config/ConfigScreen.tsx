@@ -11,7 +11,7 @@ import {
 import { useConfigActions } from "@/features/config/config-screen-actions";
 import { createModelMapping, syncAccountBackedUpstreams } from "@/features/config/form";
 import { useConfigListActions } from "@/features/config/list-actions";
-import type { ConfigSectionId } from "@/features/config/sections";
+import type { ConfigEditorSectionId } from "@/features/config/sections";
 import type { ConfigForm } from "@/features/config/types";
 import { useCodexAccounts } from "@/features/codex/use-codex-accounts";
 import { useKiroAccounts } from "@/features/kiro/use-kiro-accounts";
@@ -19,7 +19,7 @@ import { useUpdater } from "@/features/update/updater";
 import { parseError } from "@/lib/error";
 
 type ConfigScreenProps = {
-  activeSectionId: ConfigSectionId;
+  activeSectionId: ConfigEditorSectionId;
 };
 
 type ConfigState = ReturnType<typeof useConfigState>;
@@ -31,7 +31,7 @@ type ProxyServiceActions = ReturnType<typeof useProxyServiceActions>;
 const CONFIG_AUTO_SAVE_DELAY_MS = 800;
 
 type AppViewArgs = {
-  activeSectionId: ConfigSectionId;
+  activeSectionId: ConfigEditorSectionId;
   state: ConfigState;
   derived: ConfigDerived;
   proxyService: ProxyServiceState;

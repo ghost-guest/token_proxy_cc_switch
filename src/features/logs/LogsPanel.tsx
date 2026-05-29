@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { AlertCircle, Check, Copy } from "lucide-react";
@@ -448,7 +448,7 @@ export function LogsPanel() {
   const [detailStatus, setDetailStatus] = useState<DetailStatus>("idle");
   const [detailMessage, setDetailMessage] = useState("");
   const [detail, setDetail] = useState<RequestLogDetail | null>(null);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const detailRequestSeq = useRef(0);
 
   const isLoading = status === "loading";
   const captureEnabled = isCaptureWindowActive(captureState, captureNowMs);
@@ -548,48 +548,46 @@ export function LogsPanel() {
     }
   }, [updateCaptureState]);
 
-  const handleSelectItem = useCallback((itemId: number) => {
-    setSelectedId(itemId);
+  const handleSelectItem = useCallback(async (itemId: number) => {
+    const requestId = detailRequestSeq.current + 1;
+    detailRequestSeq.current = requestId;
     setDetailOpen(true);
+    setDetail(null);
+    setDetailStatus("loading");
+    setDetailMessage("");
+
+    try {
+      const data = await readRequestLogDetail(itemId);
+      if (detailRequestSeq.current === requestId) {
+        setDetail(data);
+        setDetailStatus("idle");
+      }
+    } catch (error) {
+      if (detailRequestSeq.current === requestId) {
+        setDetailMessage(parseError(error));
+        setDetailStatus("error");
+      }
+    }
   }, []);
 
-  // 加载详情，使用 active 标志防止过期响应覆盖当前选择
+  const handleDetailOpenChange = useCallback((nextOpen: boolean) => {
+    if (nextOpen) {
+      setDetailOpen(true);
+      return;
+    }
+
+    detailRequestSeq.current += 1;
+    setDetailOpen(false);
+    setDetail(null);
+    setDetailStatus("idle");
+    setDetailMessage("");
+  }, []);
+
   useEffect(() => {
-    if (!detailOpen) {
-      setDetail(null);
-      setDetailStatus("idle");
-      setDetailMessage("");
-      return;
-    }
-    if (selectedId === null) {
-      return;
-    }
-
-    let active = true;
-
-    const load = async () => {
-      setDetailStatus("loading");
-      setDetailMessage("");
-      try {
-        const data = await readRequestLogDetail(selectedId);
-        if (active) {
-          setDetail(data);
-          setDetailStatus("idle");
-        }
-      } catch (error) {
-        if (active) {
-          setDetailMessage(parseError(error));
-          setDetailStatus("error");
-        }
-      }
-    };
-
-    void load();
-
     return () => {
-      active = false;
+      detailRequestSeq.current += 1;
     };
-  }, [detailOpen, selectedId]);
+  }, []);
 
   return (
     <div data-testid="logs-panel" className="flex min-h-0 flex-1 flex-col gap-4">
@@ -638,7 +636,7 @@ export function LogsPanel() {
 
       <RequestDetailSheet
         open={detailOpen}
-        onOpenChange={setDetailOpen}
+        onOpenChange={handleDetailOpenChange}
         status={detailStatus}
         statusMessage={detailMessage}
         detail={detail}

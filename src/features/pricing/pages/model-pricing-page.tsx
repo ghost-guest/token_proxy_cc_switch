@@ -223,7 +223,10 @@ export function ModelPricingPage() {
   }, [applyRows]);
 
   useEffect(() => {
-    void loadSettings();
+    const timerId = window.setTimeout(() => {
+      void loadSettings();
+    }, 0);
+    return () => window.clearTimeout(timerId);
   }, [loadSettings]);
 
   const updateRow = useCallback(

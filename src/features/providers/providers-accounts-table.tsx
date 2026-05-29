@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { AlertCircle, Eye } from "lucide-react";
 import type { CheckedState } from "@radix-ui/react-checkbox";
@@ -93,6 +93,11 @@ type ProviderAccountDialogProps = {
   onSavePriority: (row: ProviderAccountTableRow, priority: number) => Promise<void>;
   onToggleStatus: (row: ProviderAccountTableRow, status: "active" | "disabled") => Promise<void>;
   onToggleAutoRefresh: (row: ProviderAccountTableRow, enabled: boolean) => Promise<void>;
+};
+
+type AccountDialogDraft = {
+  rowId: string;
+  value: string;
 };
 
 function AccountSummaryBand({ row }: { row: ProviderAccountTableRow }) {
@@ -227,13 +232,12 @@ function ProviderAccountDialog({
   onToggleAutoRefresh,
 }: ProviderAccountDialogProps) {
   const [refreshConfirmOpen, setRefreshConfirmOpen] = useState(false);
-  const [proxyUrlDraft, setProxyUrlDraft] = useState<string | null>(null);
-  const [priorityDraft, setPriorityDraft] = useState<string | null>(null);
-
-  useLayoutEffect(() => {
-    setProxyUrlDraft(null);
-    setPriorityDraft(null);
-  }, [open, row]);
+  const [proxyUrlDraft, setProxyUrlDraft] = useState<AccountDialogDraft | null>(null);
+  const [priorityDraft, setPriorityDraft] = useState<AccountDialogDraft | null>(null);
+  const proxyUrlDraftValue =
+    proxyUrlDraft && proxyUrlDraft.rowId === row?.id ? proxyUrlDraft.value : null;
+  const priorityDraftValue =
+    priorityDraft && priorityDraft.rowId === row?.id ? priorityDraft.value : null;
 
   const handleRefresh = () => {
     if (!row) {
@@ -275,7 +279,7 @@ function ProviderAccountDialog({
     if (!row) {
       return;
     }
-    const nextProxyUrl = (proxyUrlDraft ?? row.proxyUrlValue).trim();
+    const nextProxyUrl = (proxyUrlDraftValue ?? row.proxyUrlValue).trim();
     void onSaveProxyUrl(row, nextProxyUrl);
   };
 
@@ -283,7 +287,7 @@ function ProviderAccountDialog({
     if (!row) {
       return;
     }
-    const rawValue = (priorityDraft ?? String(row.priority)).trim();
+    const rawValue = (priorityDraftValue ?? String(row.priority)).trim();
     if (!/^-?\d+$/.test(rawValue)) {
       toast.error(m.error_account_priority_integer({ id: row.accountId }));
       return;
@@ -291,8 +295,8 @@ function ProviderAccountDialog({
     void onSavePriority(row, Number.parseInt(rawValue, 10));
   };
 
-  const proxyUrlValue = proxyUrlDraft ?? row?.proxyUrlValue ?? "";
-  const priorityValue = priorityDraft ?? String(row?.priority ?? 0);
+  const proxyUrlValue = proxyUrlDraftValue ?? row?.proxyUrlValue ?? "";
+  const priorityValue = priorityDraftValue ?? String(row?.priority ?? 0);
   const detailFields = row?.detailFields.filter((field) => {
     const label = field.label.trim();
     const value = field.value.trim();
@@ -348,7 +352,11 @@ function ProviderAccountDialog({
                     step="1"
                     inputMode="numeric"
                     value={priorityValue}
-                    onChange={(event) => setPriorityDraft(event.target.value)}
+                    onChange={(event) => {
+                      if (row) {
+                        setPriorityDraft({ rowId: row.id, value: event.target.value });
+                      }
+                    }}
                     disabled={busy}
                     className="sm:max-w-[10rem]"
                   />
@@ -373,7 +381,11 @@ function ProviderAccountDialog({
                   <Input
                     id="provider-account-proxy-url"
                     value={proxyUrlValue}
-                    onChange={(event) => setProxyUrlDraft(event.target.value)}
+                    onChange={(event) => {
+                      if (row) {
+                        setProxyUrlDraft({ rowId: row.id, value: event.target.value });
+                      }
+                    }}
                     placeholder="http://127.0.0.1:7890"
                     disabled={busy}
                     className="flex-1"
@@ -580,28 +592,34 @@ export function ProvidersAccountsTableSection({
   const selectedCount = selectedRows.length;
 
   useEffect(() => {
-    setSelectedIds((prev) => {
-      let changed = false;
-      const next = new Set<string>();
-      for (const rowId of prev) {
-        if (visibleRowIds.has(rowId)) {
-          next.add(rowId);
-          continue;
+    const timerId = window.setTimeout(() => {
+      setSelectedIds((prev) => {
+        let changed = false;
+        const next = new Set<string>();
+        for (const rowId of prev) {
+          if (visibleRowIds.has(rowId)) {
+            next.add(rowId);
+            continue;
+          }
+          changed = true;
         }
-        changed = true;
-      }
-      return changed ? next : prev;
-    });
+        return changed ? next : prev;
+      });
+    }, 0);
+    return () => window.clearTimeout(timerId);
   }, [visibleRowIds]);
 
   useEffect(() => {
-    setSelectedRow((prev) => {
-      if (!prev) {
-        return prev;
-      }
-      const next = rows.find((row) => row.id === prev.id);
-      return next ?? null;
-    });
+    const timerId = window.setTimeout(() => {
+      setSelectedRow((prev) => {
+        if (!prev) {
+          return prev;
+        }
+        const next = rows.find((row) => row.id === prev.id);
+        return next ?? null;
+      });
+    }, 0);
+    return () => window.clearTimeout(timerId);
   }, [rows]);
 
   const toggleSelect = useCallback((rowId: string) => {

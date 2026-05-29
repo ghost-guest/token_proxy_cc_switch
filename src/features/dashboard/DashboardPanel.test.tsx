@@ -483,8 +483,8 @@ describe("dashboard/DashboardPanel", () => {
         "3"
       );
     });
-    const chart = screen.getByTestId("dashboard-chart-total");
-    const upstreamModelsTitle = screen.getByText(m.dashboard_upstream_models_title());
+    const chart = await screen.findByTestId("dashboard-chart-total");
+    const upstreamModelsTitle = await screen.findByText(m.dashboard_upstream_models_title());
     expect(chart).toHaveTextContent("42");
     expect(upstreamModelsTitle).toBeInTheDocument();
     expect(

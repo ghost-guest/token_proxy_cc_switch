@@ -1071,13 +1071,11 @@ function useProvidersPanelState() {
   const codexAccounts = useCodexAccounts({ autoLoad: false });
   const refreshKiroData = useCallback(async (accountId?: string) => {
     await kiroAccounts.refreshQuotaCache(accountId ? [accountId] : undefined);
-    await providerAccounts.refresh();
-    await kiroAccounts.refresh();
+    await Promise.all([providerAccounts.refresh(), kiroAccounts.refresh()]);
   }, [kiroAccounts, providerAccounts]);
   const refreshCodexData = useCallback(async (accountId?: string) => {
     await codexAccounts.refreshQuotaCache(accountId ? [accountId] : undefined);
-    await providerAccounts.refresh();
-    await codexAccounts.refresh();
+    await Promise.all([providerAccounts.refresh(), codexAccounts.refresh()]);
   }, [codexAccounts, providerAccounts]);
   const syncImportedKiroAccounts = useCallback(async (accountIds: string[]) => {
     try {
@@ -1118,8 +1116,11 @@ function useProvidersPanelState() {
   const [batchDeleting, setBatchDeleting] = useState(false);
   const [optimisticDeletedIds, setOptimisticDeletedIds] = useState<Set<string>>(new Set());
   const refreshAll = useCallback(async () => {
-    await Promise.all([kiroAccounts.refresh(), codexAccounts.refresh()]);
-    await providerAccounts.refresh();
+    await Promise.all([
+      kiroAccounts.refresh(),
+      codexAccounts.refresh(),
+      providerAccounts.refresh(),
+    ]);
   }, [kiroAccounts, codexAccounts, providerAccounts]);
   const loginKiro = useCallback(async (method: KiroLoginMethod) => {
     await kiroLogin.beginLogin(method);
@@ -1289,13 +1290,11 @@ function useProvidersPanelState() {
     async (row: ProviderAccountTableRow) => {
       if (row.provider === "kiro") {
         await kiroAccounts.logout(row.accountId);
-        await providerAccounts.refresh();
-        await kiroAccounts.refresh();
+        await Promise.all([providerAccounts.refresh(), kiroAccounts.refresh()]);
         return;
       }
       await codexAccounts.logout(row.accountId);
-      await providerAccounts.refresh();
-      await codexAccounts.refresh();
+      await Promise.all([providerAccounts.refresh(), codexAccounts.refresh()]);
     },
     [kiroAccounts, codexAccounts, providerAccounts]
   );
@@ -1307,8 +1306,7 @@ function useProvidersPanelState() {
       try {
         await codexAccounts.refreshAccount(row.accountId);
         await codexAccounts.refreshQuotaCache([row.accountId]);
-        await providerAccounts.refresh();
-        await codexAccounts.refresh();
+        await Promise.all([providerAccounts.refresh(), codexAccounts.refresh()]);
       } catch (error) {
         toast.error(parseError(error));
       }
@@ -1366,12 +1364,11 @@ function useProvidersPanelState() {
       try {
         if (row.provider === "kiro") {
           await kiroAccounts.setProxyUrl(row.accountId, proxyUrl || null);
-          await kiroAccounts.refresh();
+          await Promise.all([providerAccounts.refresh(), kiroAccounts.refresh()]);
         } else {
           await codexAccounts.setProxyUrl(row.accountId, proxyUrl || null);
-          await codexAccounts.refresh();
+          await Promise.all([providerAccounts.refresh(), codexAccounts.refresh()]);
         }
-        await providerAccounts.refresh();
       } catch (error) {
         toast.error(parseError(error));
       }
@@ -1383,12 +1380,11 @@ function useProvidersPanelState() {
       try {
         if (row.provider === "kiro") {
           await kiroAccounts.setPriority(row.accountId, priority);
-          await kiroAccounts.refresh();
+          await Promise.all([providerAccounts.refresh(), kiroAccounts.refresh()]);
         } else {
           await codexAccounts.setPriority(row.accountId, priority);
-          await codexAccounts.refresh();
+          await Promise.all([providerAccounts.refresh(), codexAccounts.refresh()]);
         }
-        await providerAccounts.refresh();
       } catch (error) {
         toast.error(parseError(error));
       }

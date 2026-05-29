@@ -22,6 +22,11 @@ export type ConfigSectionId =
   | "agents"
   | "settings";
 
+export type ConfigEditorSectionId = Extract<
+  ConfigSectionId,
+  "core" | "upstreams" | "agents" | "settings"
+>;
+
 export type ConfigSectionRoute = `/config/${ConfigSectionId}`;
 
 export type ConfigSection = {

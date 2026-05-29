@@ -508,6 +508,7 @@ function getAddProviderPanel(provider: "kiro" | "codex") {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.clearAllMocks();
   setLocale("en", { reload: false });
   providerMocks.kiroAccountsLoading = false;
@@ -598,8 +599,39 @@ describe("providers/ProvidersPanel", () => {
       "alice"
     );
 
+    await waitFor(() => {
+      expect(within(getAccountsTable()).queryByText("bob@example.com")).not.toBeInTheDocument();
+    });
     expect(within(getAccountsTable()).getByText("alice@example.com")).toBeInTheDocument();
-    expect(within(getAccountsTable()).queryByText("bob@example.com")).not.toBeInTheDocument();
+  });
+
+  it("debounces search requests while typing", async () => {
+    render(<ProvidersPanel />);
+
+    await waitFor(() => {
+      expect(providerMocks.listProviderAccountsPage).toHaveBeenCalledTimes(1);
+    });
+    providerMocks.listProviderAccountsPage.mockClear();
+    const searchInput = within(getToolbar()).getByRole("textbox", {
+      name: m.providers_toolbar_search_placeholder(),
+    });
+
+    fireEvent.change(searchInput, { target: { value: "a" } });
+    fireEvent.change(searchInput, { target: { value: "al" } });
+    fireEvent.change(searchInput, { target: { value: "alice" } });
+
+    expect(providerMocks.listProviderAccountsPage).not.toHaveBeenCalled();
+
+    await waitFor(() => {
+      expect(providerMocks.listProviderAccountsPage).toHaveBeenCalledTimes(1);
+    });
+    expect(providerMocks.listProviderAccountsPage).toHaveBeenLastCalledWith({
+      page: 1,
+      pageSize: 10,
+      providerKind: undefined,
+      status: undefined,
+      search: "alice",
+    });
   });
 
   it("filters rows by provider and status", async () => {

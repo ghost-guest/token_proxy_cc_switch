@@ -1,9 +1,10 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LogsPanel } from "@/features/logs/LogsPanel";
 import type { DashboardSnapshotQuery } from "@/features/dashboard/types";
+import type { RequestLogDetail } from "@/features/logs/types";
 import { I18nProvider } from "@/lib/i18n";
 import { m } from "@/paraglide/messages.js";
 
@@ -67,6 +68,38 @@ function renderPanel() {
   );
 }
 
+function createRequestLogDetail(patch: Partial<RequestLogDetail> = {}): RequestLogDetail {
+  return {
+    id: 1,
+    tsMs: 100,
+    clientIp: null,
+    path: "/v1/chat/completions",
+    provider: "codex",
+    upstreamId: "alpha",
+    accountId: "codex-a.json",
+    model: "gpt-5",
+    mappedModel: null,
+    stream: false,
+    status: 200,
+    inputTokens: 10,
+    outputTokens: 20,
+    totalTokens: 30,
+    cachedTokens: 5,
+    costNanoUsd: 1_210_000_000,
+    pricingVersion: "2026-05-02.openai-openrouter-v1",
+    pricingModel: "gpt-5.5",
+    pricingContextTier: "short",
+    latencyMs: 30,
+    upstreamRequestId: "req-1",
+    usageJson: null,
+    requestHeaders: null,
+    requestBody: null,
+    responseBody: null,
+    responseError: null,
+    ...patch,
+  };
+}
+
 describe("logs/LogsPanel", () => {
   afterEach(() => {
     cleanup();
@@ -88,34 +121,7 @@ describe("logs/LogsPanel", () => {
       enabled: false,
       expiresAtMs: null,
     });
-    readRequestLogDetailMock.mockResolvedValue({
-      id: 1,
-      tsMs: 100,
-      clientIp: null,
-      path: "/v1/chat/completions",
-      provider: "codex",
-      upstreamId: "alpha",
-      accountId: "codex-a.json",
-      model: "gpt-5",
-      mappedModel: null,
-      stream: false,
-      status: 200,
-      inputTokens: 10,
-      outputTokens: 20,
-      totalTokens: 30,
-      cachedTokens: 5,
-      costNanoUsd: 1_210_000_000,
-      pricingVersion: "2026-05-02.openai-openrouter-v1",
-      pricingModel: "gpt-5.5",
-      pricingContextTier: "short",
-      latencyMs: 30,
-      upstreamRequestId: "req-1",
-      usageJson: null,
-      requestHeaders: null,
-      requestBody: null,
-      responseBody: null,
-      responseError: null,
-    });
+    readRequestLogDetailMock.mockResolvedValue(createRequestLogDetail());
     readDashboardSnapshotMock.mockImplementation(
       async ({ upstreamId, accountId, publicOnly }: DashboardSnapshotQuery) => {
         const base = {
@@ -521,6 +527,82 @@ describe("logs/LogsPanel", () => {
 
     const providerValues = await screen.findAllByText("alpha · codex-a.json");
     expect(providerValues.length).toBeGreaterThan(0);
+  });
+
+  it("keeps the latest selected request detail when an older response resolves later", async () => {
+    const user = userEvent.setup();
+    let resolveFirst: ((value: RequestLogDetail) => void) | null = null;
+    let resolveThird: ((value: RequestLogDetail) => void) | null = null;
+    const firstDetailPromise = new Promise<RequestLogDetail>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const thirdDetailPromise = new Promise<RequestLogDetail>((resolve) => {
+      resolveThird = resolve;
+    });
+
+    readRequestLogDetailMock.mockImplementation((id: number) => {
+      if (id === 1) {
+        return firstDetailPromise;
+      }
+      if (id === 3) {
+        return thirdDetailPromise;
+      }
+      return Promise.reject(new Error(`unexpected request log id: ${id}`));
+    });
+
+    renderPanel();
+
+    const firstRow = await screen.findByRole("button", {
+      name: "alpha · openai · codex-a.json",
+    });
+    const thirdRow = await screen.findByRole("button", {
+      name: "alpha · openai-response",
+    });
+
+    await user.click(firstRow);
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+    await user.click(thirdRow);
+
+    await waitFor(() => {
+      expect(readRequestLogDetailMock).toHaveBeenNthCalledWith(1, 1);
+      expect(readRequestLogDetailMock).toHaveBeenNthCalledWith(2, 3);
+    });
+
+    await act(async () => {
+      resolveThird!(
+        createRequestLogDetail({
+          id: 3,
+          path: "/v1/responses",
+          provider: "openai-response",
+          accountId: null,
+          model: "latest-response-model",
+          status: 201,
+          totalTokens: 5,
+          cachedTokens: 1,
+          upstreamRequestId: "req-3",
+        })
+      );
+      await thirdDetailPromise;
+    });
+
+    expect(await screen.findByText("latest-response-model")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveFirst!(
+        createRequestLogDetail({
+          model: "stale-chat-model",
+          upstreamRequestId: "req-stale",
+        })
+      );
+      await firstDetailPromise;
+    });
+
+    expect(screen.getByText("latest-response-model")).toBeInTheDocument();
+    expect(screen.queryByText("stale-chat-model")).not.toBeInTheDocument();
+    expect(screen.queryByText("req-stale")).not.toBeInTheDocument();
   });
 
   it("renders detail fields in a left-aligned label-value layout", async () => {

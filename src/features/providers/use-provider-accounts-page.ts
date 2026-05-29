@@ -5,6 +5,7 @@ import type { ProviderAccountsPage } from "@/features/providers/types";
 import { parseError } from "@/lib/error";
 
 export const PROVIDER_ACCOUNTS_PAGE_SIZE = 10;
+const PROVIDER_ACCOUNTS_SEARCH_DEBOUNCE_MS = 250;
 
 export type ProviderAccountsPageFilters = {
   searchKeyword: string;
@@ -22,22 +23,31 @@ function toStatus(value: ProviderAccountsPageFilters["statusFilter"]) {
   return value === "all" ? undefined : value;
 }
 
+function useDebouncedValue<T>(value: T, delayMs: number) {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+
+  useEffect(() => {
+    const timerId = window.setTimeout(() => {
+      setDebouncedValue(value);
+    }, delayMs);
+    return () => window.clearTimeout(timerId);
+  }, [delayMs, value]);
+
+  return debouncedValue;
+}
+
 export function useProviderAccountsPage(filters: ProviderAccountsPageFilters) {
   const [page, setPage] = useState(1);
   const [snapshot, setSnapshot] = useState<ProviderAccountsPage | null>(null);
   const [status, setStatus] = useState<ProviderAccountsPageStatus>("loading");
   const [error, setError] = useState("");
   const requestSeq = useRef(0);
-  const filterKey = `${filters.searchKeyword}|${filters.providerFilter}|${filters.statusFilter}`;
+  const debouncedSearchKeyword = useDebouncedValue(
+    filters.searchKeyword,
+    PROVIDER_ACCOUNTS_SEARCH_DEBOUNCE_MS
+  );
+  const filterKey = `${debouncedSearchKeyword}|${filters.providerFilter}|${filters.statusFilter}`;
   const lastFilterKey = useRef(filterKey);
-
-  useEffect(() => {
-    if (lastFilterKey.current === filterKey) {
-      return;
-    }
-    lastFilterKey.current = filterKey;
-    setPage(1);
-  }, [filterKey]);
 
   const loadPage = useCallback(
     async (targetPage: number) => {
@@ -51,7 +61,7 @@ export function useProviderAccountsPage(filters: ProviderAccountsPageFilters) {
           pageSize: PROVIDER_ACCOUNTS_PAGE_SIZE,
           providerKind: toProviderKind(filters.providerFilter),
           status: toStatus(filters.statusFilter),
-          search: filters.searchKeyword,
+          search: debouncedSearchKeyword,
         });
         if (requestSeq.current !== requestId) {
           return;
@@ -67,15 +77,25 @@ export function useProviderAccountsPage(filters: ProviderAccountsPageFilters) {
         setError(parseError(cause));
       }
     },
-    [filters.providerFilter, filters.searchKeyword, filters.statusFilter]
+    [debouncedSearchKeyword, filters.providerFilter, filters.statusFilter]
   );
 
   useEffect(() => {
+    if (lastFilterKey.current !== filterKey) {
+      lastFilterKey.current = filterKey;
+      if (page !== 1) {
+        const resetTimerId = window.setTimeout(() => {
+          setPage(1);
+        }, 0);
+        return () => window.clearTimeout(resetTimerId);
+      }
+    }
+
     const timerId = window.setTimeout(() => {
       void loadPage(page);
     }, 0);
     return () => window.clearTimeout(timerId);
-  }, [loadPage, page]);
+  }, [filterKey, loadPage, page]);
 
   const total = snapshot?.total ?? 0;
   const totalPages = useMemo(

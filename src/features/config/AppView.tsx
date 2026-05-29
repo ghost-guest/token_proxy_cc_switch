@@ -28,8 +28,8 @@ import {
 } from "@/features/config/cards";
 import type { ProxyServiceViewProps } from "@/features/config/cards/proxy-service-card";
 import type {
+  ConfigEditorSectionId,
   ConfigSection,
-  ConfigSectionId,
 } from "@/features/config/sections";
 import { findSection } from "@/features/config/sections";
 import type {
@@ -37,13 +37,10 @@ import type {
   ProxyServiceRequestState,
   ProxyServiceStatus,
 } from "@/features/config/types";
-import { DashboardPanel } from "@/features/dashboard/DashboardPanel";
-import { LogsPanel } from "@/features/logs/LogsPanel";
-import { ProvidersPanel } from "@/features/providers/ProvidersPanel";
 import { m } from "@/paraglide/messages.js";
 
 type AppViewProps = {
-  activeSectionId: ConfigSectionId;
+  activeSectionId: ConfigEditorSectionId;
   form: ConfigForm;
   statusBadge: StatusBadge;
   showLocalKey: boolean;
@@ -224,7 +221,7 @@ function StatusAlert({
 }
 
 type ConfigSectionContentProps = Omit<AppViewProps, "activeSectionId"> & {
-  activeSectionId: ConfigSectionId;
+  activeSectionId: ConfigEditorSectionId;
   proxyService: ProxyServiceViewProps;
 };
 
@@ -302,16 +299,6 @@ function ConfigSectionContent({
   proxyService,
   ...props
 }: ConfigSectionContentProps) {
-  if (activeSectionId === "dashboard") {
-    return <DashboardPanel />;
-  }
-  if (activeSectionId === "logs") {
-    return <LogsPanel />;
-  }
-  if (activeSectionId === "providers") {
-    return <ProvidersPanel />;
-  }
-
   return (
     <div className="flex flex-col gap-4 px-4 lg:px-6">
       <ConfigToolbar

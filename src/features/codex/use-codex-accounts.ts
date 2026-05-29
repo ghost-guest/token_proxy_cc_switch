@@ -52,8 +52,6 @@ export function useCodexAccounts(options?: UseCodexAccountsOptions) {
       const next = await listCodexAccounts();
       setAccounts(next);
       setError("");
-    } catch (err) {
-      throw err;
     } finally {
       setLoading(false);
     }

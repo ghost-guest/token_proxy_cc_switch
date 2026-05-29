@@ -1,14 +1,33 @@
+import { lazy, Suspense } from "react"
 import { AlertCircle } from "lucide-react"
 
-import { ChartAreaInteractive } from "@/features/dashboard/components/chart-area-interactive"
 import { SectionCards } from "@/features/dashboard/components/section-cards"
-import { UpstreamModelProbes } from "@/features/dashboard/components/upstream-model-probes"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   DashboardFilters,
   useDashboardSnapshot,
 } from "@/features/dashboard/snapshot"
 import { m } from "@/paraglide/messages.js"
+
+const ChartAreaInteractive = lazy(() =>
+  import("@/features/dashboard/components/chart-area-interactive").then((module) => ({
+    default: module.ChartAreaInteractive,
+  }))
+)
+const UpstreamModelProbes = lazy(() =>
+  import("@/features/dashboard/components/upstream-model-probes").then((module) => ({
+    default: module.UpstreamModelProbes,
+  }))
+)
+
+function ChartAreaFallback() {
+  return (
+    <div
+      aria-hidden="true"
+      className="h-[334px] rounded-lg border border-border/60 bg-muted/20"
+    />
+  )
+}
 
 export function DashboardPanel() {
   const {
@@ -59,13 +78,17 @@ export function DashboardPanel() {
       <SectionCards summary={snapshot?.summary ?? null} />
 
       <div className="px-4 lg:px-6">
-        <ChartAreaInteractive
-          series={snapshot?.series ?? []}
-          range={activeRange}
-        />
+        <Suspense fallback={<ChartAreaFallback />}>
+          <ChartAreaInteractive
+            series={snapshot?.series ?? []}
+            range={activeRange}
+          />
+        </Suspense>
       </div>
 
-      <UpstreamModelProbes probes={snapshot?.modelProbes ?? []} />
+      <Suspense fallback={null}>
+        <UpstreamModelProbes probes={snapshot?.modelProbes ?? []} />
+      </Suspense>
     </div>
   )
 }
