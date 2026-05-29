@@ -73,6 +73,7 @@ pub struct DashboardSeriesPoint {
 pub struct DashboardRequestItem {
     pub id: u64,
     pub ts_ms: u64,
+    pub client_ip: Option<String>,
     pub path: String,
     pub provider: String,
     pub upstream_id: String,
@@ -640,6 +641,7 @@ async fn query_recent(
 SELECT
   id,
   ts_ms,
+  client_ip,
   path,
   provider,
   upstream_id,
@@ -690,6 +692,7 @@ LIMIT ?3 OFFSET ?4;
     .filter_map(|row| {
         let id: i64 = row.try_get("id").ok()?;
         let ts_ms: i64 = row.try_get("ts_ms").ok()?;
+        let client_ip: Option<String> = row.try_get("client_ip").ok()?;
         let path: String = row.try_get("path").ok()?;
         let provider: String = row.try_get("provider").ok()?;
         let upstream_id: String = row.try_get("upstream_id").ok()?;
@@ -717,6 +720,7 @@ LIMIT ?3 OFFSET ?4;
         Some(DashboardRequestItem {
             id: i64_to_u64(id),
             ts_ms: i64_to_u64(ts_ms),
+            client_ip,
             path,
             provider,
             upstream_id,

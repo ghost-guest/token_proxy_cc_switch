@@ -8,9 +8,11 @@ use reqwest::{Client, Proxy};
 
 use crate::oauth_util::build_reqwest_client;
 
-use super::error::format_usage_status_error;
+use super::error::{format_usage_status_error, usage_status_requires_relogin};
 use super::store::CodexAccountStore;
-use super::types::{CodexAccountSummary, CodexQuotaCache, CodexQuotaItem, CodexQuotaSummary};
+use super::types::{
+    CodexAccountSummary, CodexQuotaCache, CodexQuotaItem, CodexQuotaSummary, CodexTokenRecord,
+};
 
 const CODEX_USAGE_ENDPOINT: &str = "https://chatgpt.com/backend-api/wham/usage";
 // Match current Codex CLI UA to avoid edge filtering on some proxies.
@@ -22,7 +24,7 @@ pub async fn fetch_quotas(store: &CodexAccountStore) -> Result<Vec<CodexQuotaSum
     for account in accounts {
         match store.get_account_record(&account.account_id).await {
             Ok(record) => match fetch_account_quota(store, &account, &record).await {
-                Ok(summary) => results.push(summary),
+                Ok(result) => results.push(result.summary),
                 Err(err) => results.push(CodexQuotaSummary {
                     account_id: account.account_id.clone(),
                     plan_type: None,
@@ -52,6 +54,23 @@ pub(crate) async fn refresh_quota_cache(
     store: &CodexAccountStore,
     account_id: &str,
 ) -> Result<CodexQuotaCache, String> {
+    refresh_quota_cache_with_endpoint(store, account_id, CODEX_USAGE_ENDPOINT).await
+}
+
+#[cfg(test)]
+pub(crate) async fn refresh_quota_cache_with_usage_endpoint(
+    store: &CodexAccountStore,
+    account_id: &str,
+    usage_endpoint: &str,
+) -> Result<CodexQuotaCache, String> {
+    refresh_quota_cache_with_endpoint(store, account_id, usage_endpoint).await
+}
+
+async fn refresh_quota_cache_with_endpoint(
+    store: &CodexAccountStore,
+    account_id: &str,
+    usage_endpoint: &str,
+) -> Result<CodexQuotaCache, String> {
     let record = store.load_account(account_id).await?;
     let checked_at = crate::oauth_util::now_rfc3339();
     let account = CodexAccountSummary {
@@ -79,12 +98,12 @@ pub(crate) async fn refresh_quota_cache(
                 .map(|summary| summary.quota);
         }
     };
-    match fetch_account_quota(store, &account, &resolved).await {
-        Ok(summary) => {
-            let mut next_record = resolved;
+    match fetch_account_quota_with_endpoint(store, &account, &resolved, usage_endpoint).await {
+        Ok(result) => {
+            let mut next_record = result.record;
             next_record.quota = CodexQuotaCache {
-                plan_type: summary.plan_type,
-                quotas: summary.quotas,
+                plan_type: result.summary.plan_type,
+                quotas: result.summary.quotas,
                 error: None,
                 checked_at: Some(checked_at),
             };
@@ -108,37 +127,84 @@ pub(crate) async fn refresh_quota_cache(
 async fn fetch_account_quota(
     store: &CodexAccountStore,
     account: &CodexAccountSummary,
-    record: &super::types::CodexTokenRecord,
-) -> Result<CodexQuotaSummary, String> {
+    record: &CodexTokenRecord,
+) -> Result<CodexQuotaFetchResult, String> {
+    fetch_account_quota_with_endpoint(store, account, record, CODEX_USAGE_ENDPOINT).await
+}
+
+async fn fetch_account_quota_with_endpoint(
+    store: &CodexAccountStore,
+    account: &CodexAccountSummary,
+    record: &CodexTokenRecord,
+    usage_endpoint: &str,
+) -> Result<CodexQuotaFetchResult, String> {
+    let mut effective_record = record.clone();
     let proxy_url = store.effective_proxy_url(record.proxy_url.as_deref()).await;
-    let response = request_usage(
+    let response = match request_usage(
+        usage_endpoint,
         &record.access_token,
         record.account_id.as_deref(),
         proxy_url.as_deref(),
     )
-    .await?;
-    Ok(map_usage_response(account, response))
+    .await
+    {
+        Ok(response) => response,
+        Err(err) if err.relogin_required => {
+            tracing::warn!(
+                account_id = account.account_id.as_str(),
+                error = %err.message,
+                "codex usage request requires account refresh"
+            );
+            store
+                .refresh_account(&account.account_id)
+                .await
+                .map_err(|refresh_err| {
+                    format!("Codex usage request failed after token refresh failed: {refresh_err}")
+                })?;
+            let refreshed = store.load_account(&account.account_id).await?;
+            let proxy_url = store
+                .effective_proxy_url(refreshed.proxy_url.as_deref())
+                .await;
+            let response = request_usage(
+                usage_endpoint,
+                &refreshed.access_token,
+                refreshed.account_id.as_deref(),
+                proxy_url.as_deref(),
+            )
+            .await
+            .map_err(|retry_err| retry_err.message)?;
+            effective_record = refreshed;
+            response
+        }
+        Err(err) => return Err(err.message),
+    };
+    Ok(CodexQuotaFetchResult {
+        summary: map_usage_response(account, response),
+        record: effective_record,
+    })
 }
 
 async fn request_usage(
+    usage_endpoint: &str,
     access_token: &str,
     chatgpt_account_id: Option<&str>,
     proxy_url: Option<&str>,
-) -> Result<CodexUsageResponse, String> {
+) -> Result<CodexUsageResponse, CodexUsageError> {
     let attempts = build_usage_attempts(proxy_url);
     let mut send_errors = Vec::new();
 
     for attempt in attempts {
-        match request_usage_once(access_token, chatgpt_account_id, &attempt).await {
+        match request_usage_once(usage_endpoint, access_token, chatgpt_account_id, &attempt).await {
             Ok(response) => return Ok(response),
             Err(UsageRequestError::Send(err)) => {
                 send_errors.push(format!("{}: {}", attempt.label, format_reqwest_error(&err)));
             }
             Err(err) => {
-                return Err(format!(
-                    "Codex usage request failed: {}",
-                    format_usage_error(err)
-                ));
+                let formatted = format_usage_error(err);
+                return Err(CodexUsageError {
+                    message: format!("Codex usage request failed: {}", formatted.message),
+                    relogin_required: formatted.relogin_required,
+                });
             }
         }
     }
@@ -148,7 +214,10 @@ async fn request_usage(
     } else {
         send_errors.join(" | ")
     };
-    Err(format!("Codex usage request failed: {detail}"))
+    Err(CodexUsageError {
+        message: format!("Codex usage request failed: {detail}"),
+        relogin_required: false,
+    })
 }
 
 fn map_usage_response(
@@ -196,6 +265,7 @@ fn reset_at_from_seconds(seconds: i64) -> Option<String> {
 }
 
 async fn request_usage_once(
+    usage_endpoint: &str,
     access_token: &str,
     chatgpt_account_id: Option<&str>,
     attempt: &UsageAttempt,
@@ -203,7 +273,7 @@ async fn request_usage_once(
     let http = build_usage_client(attempt.proxy_url.as_deref(), attempt.http1_only)
         .map_err(UsageRequestError::Build)?;
     let mut request = http
-        .get(CODEX_USAGE_ENDPOINT)
+        .get(usage_endpoint)
         .header("Authorization", format!("Bearer {access_token}"))
         .header("Accept", "application/json")
         .header("User-Agent", CODEX_USER_AGENT);
@@ -280,12 +350,24 @@ fn upgrade_socks5(proxy_url: &str) -> Option<String> {
     None
 }
 
-fn format_usage_error(err: UsageRequestError) -> String {
+fn format_usage_error(err: UsageRequestError) -> FormattedUsageError {
     match err {
-        UsageRequestError::Build(message) => message,
-        UsageRequestError::Send(err) => format_reqwest_error(&err),
-        UsageRequestError::Status(status, body) => format_usage_status_error(status, &body),
-        UsageRequestError::Decode(message) => message,
+        UsageRequestError::Build(message) => FormattedUsageError {
+            message,
+            relogin_required: false,
+        },
+        UsageRequestError::Send(err) => FormattedUsageError {
+            message: format_reqwest_error(&err),
+            relogin_required: false,
+        },
+        UsageRequestError::Status(status, body) => FormattedUsageError {
+            message: format_usage_status_error(status, &body),
+            relogin_required: usage_status_requires_relogin(&body),
+        },
+        UsageRequestError::Decode(message) => FormattedUsageError {
+            message,
+            relogin_required: false,
+        },
     }
 }
 
@@ -325,6 +407,21 @@ struct UsageAttempt {
     label: &'static str,
     proxy_url: Option<String>,
     http1_only: bool,
+}
+
+struct CodexUsageError {
+    message: String,
+    relogin_required: bool,
+}
+
+struct FormattedUsageError {
+    message: String,
+    relogin_required: bool,
+}
+
+struct CodexQuotaFetchResult {
+    summary: CodexQuotaSummary,
+    record: CodexTokenRecord,
 }
 
 enum UsageRequestError {

@@ -37,6 +37,7 @@ pub(crate) struct UsageSnapshot {
 #[derive(Serialize, Deserialize)]
 pub(crate) struct LogEntry {
     pub(crate) ts_ms: u128,
+    pub(crate) client_ip: Option<String>,
     pub(crate) path: String,
     pub(crate) provider: String,
     pub(crate) upstream_id: String,
@@ -122,6 +123,7 @@ impl RequestTimings {
 
 #[derive(Clone)]
 pub(crate) struct LogContext {
+    pub(crate) client_ip: Option<String>,
     pub(crate) path: String,
     pub(crate) provider: String,
     pub(crate) upstream_id: String,
@@ -221,6 +223,7 @@ pub(crate) fn build_log_entry(
     );
     LogEntry {
         ts_ms: now_ms(),
+        client_ip: context.client_ip.clone(),
         path: context.path.clone(),
         provider: context.provider.clone(),
         upstream_id: context.upstream_id.clone(),
@@ -306,6 +309,7 @@ async fn insert_log_entry(pool: &SqlitePool, entry: &LogEntry) -> Result<(), sql
         r#"
 INSERT INTO request_logs (
   ts_ms,
+  client_ip,
   path,
   provider,
   upstream_id,
@@ -334,10 +338,11 @@ INSERT INTO request_logs (
   pricing_version,
   pricing_model,
   pricing_context_tier
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 "#,
     )
     .bind(to_i64_u128(entry.ts_ms))
+    .bind(entry.client_ip.as_deref())
     .bind(entry.path.as_str())
     .bind(entry.provider.as_str())
     .bind(entry.upstream_id.as_str())
@@ -394,6 +399,7 @@ mod tests {
         request_body: Option<String>,
     ) -> LogContext {
         LogContext {
+            client_ip: Some("203.0.113.9".to_string()),
             path: "/v1/responses".to_string(),
             provider: "openai-response".to_string(),
             upstream_id: "airouter".to_string(),
@@ -422,6 +428,7 @@ mod tests {
         );
 
         assert_eq!(entry.response_error.as_deref(), Some("upstream secret"));
+        assert_eq!(entry.client_ip.as_deref(), Some("203.0.113.9"));
     }
 
     #[test]
@@ -446,6 +453,7 @@ mod tests {
         timings.mark_first_output(220);
 
         let context = LogContext {
+            client_ip: None,
             path: "/v1/responses".to_string(),
             provider: "openai-response".to_string(),
             upstream_id: "airouter".to_string(),
@@ -474,6 +482,7 @@ mod tests {
     #[test]
     fn build_log_entry_calculates_request_cost() {
         let context = LogContext {
+            client_ip: None,
             path: "/v1/responses".to_string(),
             provider: "openai-response".to_string(),
             upstream_id: "airouter".to_string(),
@@ -542,6 +551,7 @@ mod tests {
         .await
         .expect("save pricing");
         let context = LogContext {
+            client_ip: Some("198.51.100.10".to_string()),
             path: "/v1/chat/completions".to_string(),
             provider: "openai".to_string(),
             upstream_id: "test".to_string(),
@@ -574,11 +584,15 @@ mod tests {
         LogWriter::new(Some(pool.clone())).write(&entry).await;
 
         let row = sqlx::query(
-            "SELECT cost_nano_usd, pricing_version, pricing_model FROM request_logs LIMIT 1;",
+            "SELECT client_ip, cost_nano_usd, pricing_version, pricing_model FROM request_logs LIMIT 1;",
         )
         .fetch_one(&pool)
         .await
         .expect("request log");
+        assert_eq!(
+            row.try_get::<String, _>("client_ip").ok().as_deref(),
+            Some("198.51.100.10")
+        );
         assert_eq!(row.try_get::<i64, _>("cost_nano_usd").ok(), Some(10_200));
         assert_eq!(
             row.try_get::<String, _>("pricing_version").ok().as_deref(),

@@ -32,6 +32,7 @@ pub(super) async fn forward_retry_fallback_request(
         &state.http_clients,
         &state.log,
         prepared.request_detail.clone(),
+        prepared.client_ip.clone(),
         &prepared.path,
         plan,
         &prepared.meta,

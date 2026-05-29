@@ -58,6 +58,7 @@ struct ProxyState {
 }
 
 struct RequestMeta {
+    client_ip: Option<String>,
     stream: bool,
     original_model: Option<String>,
     mapped_model: Option<String>,

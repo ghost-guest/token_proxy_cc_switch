@@ -177,6 +177,7 @@ describe("dashboard/useDashboardSnapshot", () => {
             {
               id: 1,
               tsMs: 100,
+              clientIp: null,
               path: "/v1/chat/completions",
               provider: "openai",
               upstreamId: "alpha",

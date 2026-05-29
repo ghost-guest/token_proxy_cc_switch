@@ -2271,6 +2271,53 @@ async fn wait_for_logged_account_id(pool: &sqlx::SqlitePool) -> Option<String> {
     None
 }
 
+async fn wait_for_logged_client_ip(pool: &sqlx::SqlitePool) -> Option<String> {
+    for _ in 0..50 {
+        let row = sqlx::query("SELECT client_ip FROM request_logs ORDER BY id DESC LIMIT 1;")
+            .fetch_optional(pool)
+            .await
+            .expect("query request logs");
+        if let Some(row) = row {
+            return row.try_get::<Option<String>, _>("client_ip").ok().flatten();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    None
+}
+
+async fn send_responses_request_through_router(
+    state: ProxyStateHandle,
+) -> (StatusCode, Value, JoinHandle<()>) {
+    let app = build_router(state.clone(), 20 * 1024 * 1024).with_state::<()>(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind proxy router");
+    let addr = listener.local_addr().expect("proxy router addr");
+    let task = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .expect("proxy router should run");
+    });
+    let response = reqwest::Client::new()
+        .post(format!("http://{addr}{RESPONSES_PATH}"))
+        .json(&json!({
+            "model": "gpt-5",
+            "input": "hi"
+        }))
+        .send()
+        .await
+        .expect("send proxy router request");
+    let status = response.status();
+    let json = response
+        .json::<Value>()
+        .await
+        .expect("proxy router response json");
+    (status, json, task)
+}
+
 async fn wait_for_request_log_count(pool: &sqlx::SqlitePool, expected_min: i64) -> i64 {
     for _ in 0..50 {
         let row = sqlx::query("SELECT COUNT(*) AS count FROM request_logs;")
@@ -3565,6 +3612,45 @@ fn responses_request_logs_selected_codex_account_id() {
             Some("from codex logged account")
         );
         assert_eq!(logged_account_id.as_deref(), Some("codex-a.json"));
+    });
+}
+
+#[test]
+fn responses_request_logs_tcp_client_ip() {
+    run_async(async {
+        let upstream = spawn_mock_upstream(
+            StatusCode::OK,
+            json!({
+                "id": "resp_client_ip",
+                "object": "response",
+                "created_at": 123,
+                "model": "gpt-5",
+                "status": "completed",
+                "output": [],
+                "usage": { "input_tokens": 1, "output_tokens": 2, "total_tokens": 3 }
+            }),
+        )
+        .await;
+        let config = config_with_runtime_upstreams(&[(
+            PROVIDER_RESPONSES,
+            0,
+            "responses-client-ip",
+            upstream.base_url.as_str(),
+            FORMATS_RESPONSES,
+        )]);
+        let data_dir = next_test_data_dir("responses_client_ip");
+        let (state, pool) = build_test_state_handle_with_sqlite_log(config, data_dir.clone()).await;
+
+        let (status, json, proxy_task) = send_responses_request_through_router(state).await;
+        let logged_client_ip = wait_for_logged_client_ip(&pool).await;
+
+        proxy_task.abort();
+        upstream.abort();
+        let _ = std::fs::remove_dir_all(&data_dir);
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["id"].as_str(), Some("resp_client_ip"));
+        assert_eq!(logged_client_ip.as_deref(), Some("127.0.0.1"));
     });
 }
 
@@ -5567,6 +5653,7 @@ fn responses_compact_prefers_responses_provider_and_preserves_path() {
         RESPONSES_COMPACT_PATH,
         &plan,
         &RequestMeta {
+            client_ip: None,
             stream: false,
             original_model: Some("gpt-5.4".to_string()),
             mapped_model: None,
@@ -5594,6 +5681,7 @@ fn responses_compact_can_route_to_codex_and_preserve_compact_suffix() {
         RESPONSES_COMPACT_PATH,
         &plan,
         &RequestMeta {
+            client_ip: None,
             stream: false,
             original_model: Some("gpt-5.4".to_string()),
             mapped_model: None,
@@ -5837,6 +5925,7 @@ fn anthropic_beta_query_is_not_forwarded_to_responses_fallback() {
         "/v1/messages",
         &plan,
         &RequestMeta {
+            client_ip: None,
             stream: false,
             original_model: None,
             mapped_model: None,
@@ -5858,6 +5947,7 @@ fn anthropic_beta_query_is_preserved_for_native_anthropic() {
         "/v1/messages",
         &plan,
         &RequestMeta {
+            client_ip: None,
             stream: false,
             original_model: None,
             mapped_model: None,
@@ -6164,6 +6254,7 @@ fn openai_models_route_with_gemini_query_dispatches_to_gemini_and_rewrites_path(
         "/v1/models",
         &plan,
         &RequestMeta {
+            client_ip: None,
             stream: false,
             original_model: None,
             mapped_model: None,
@@ -6191,6 +6282,7 @@ fn openai_model_detail_route_with_gemini_header_rewrites_to_gemini_model_detail(
         "/v1/models/gemini-1.5-flash",
         &plan,
         &RequestMeta {
+            client_ip: None,
             stream: false,
             original_model: None,
             mapped_model: None,
@@ -6216,6 +6308,7 @@ fn openai_compatible_models_index_route_prefers_openai_provider_and_rewrites_pat
         "/v1beta/openai/models",
         &plan,
         &RequestMeta {
+            client_ip: None,
             stream: false,
             original_model: None,
             mapped_model: None,
@@ -6242,6 +6335,7 @@ fn openai_compatible_model_detail_route_rewrites_to_openai_models_detail() {
         "/v1beta/openai/models/gpt-5",
         &plan,
         &RequestMeta {
+            client_ip: None,
             stream: false,
             original_model: None,
             mapped_model: None,

@@ -1487,6 +1487,7 @@ mod tests {
     use sqlx::Row;
     use std::future::Future;
     use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
     use time::format_description::well_known::Rfc3339;
 
     fn run_async(test: impl Future<Output = ()>) {
@@ -1628,6 +1629,118 @@ mod tests {
                 .expect("token endpoint should run");
         });
         (format!("http://{addr}/oauth/token"), task)
+    }
+
+    async fn spawn_relogin_required_token_endpoint() -> (String, tokio::task::JoinHandle<()>) {
+        async fn handler() -> axum::response::Response {
+            (
+                axum::http::StatusCode::UNAUTHORIZED,
+                [(axum::http::header::CONTENT_TYPE, "application/json")],
+                json!({
+                    "error": {
+                        "message": "Refresh token is invalid.",
+                        "type": "invalid_request_error",
+                        "code": "invalid_grant",
+                        "param": null
+                    }
+                })
+                .to_string(),
+            )
+                .into_response()
+        }
+
+        let app = axum::Router::new().route("/oauth/token", axum::routing::post(handler));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind token endpoint");
+        let addr = listener.local_addr().expect("token endpoint addr");
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("token endpoint should run");
+        });
+        (format!("http://{addr}/oauth/token"), task)
+    }
+
+    async fn spawn_usage_relogin_then_ok_endpoint(
+    ) -> (String, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>) {
+        async fn handler(
+            axum::extract::State(authorizations): axum::extract::State<Arc<Mutex<Vec<String>>>>,
+            headers: axum::http::HeaderMap,
+        ) -> axum::response::Response {
+            let authorization = headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
+            authorizations
+                .lock()
+                .expect("usage authorizations lock")
+                .push(authorization.clone());
+
+            let (status, body) = match authorization.as_str() {
+                "Bearer access-old" => (
+                    axum::http::StatusCode::UNAUTHORIZED,
+                    json!({
+                        "error": {
+                            "message": "Encountered invalidated oauth token for user.",
+                            "type": "invalid_request_error",
+                            "code": "token_revoked",
+                            "param": null
+                        }
+                    }),
+                ),
+                "Bearer access-new" => (
+                    axum::http::StatusCode::OK,
+                    json!({
+                        "plan_type": "pro",
+                        "rate_limit": {
+                            "primary_window": {
+                                "used_percent": 25.0,
+                                "reset_at": 1780477059
+                            }
+                        }
+                    }),
+                ),
+                _ => (
+                    axum::http::StatusCode::UNAUTHORIZED,
+                    json!({
+                        "error": {
+                            "message": "unexpected usage token",
+                            "type": "invalid_request_error",
+                            "code": "token_invalidated",
+                            "param": null
+                        }
+                    }),
+                ),
+            };
+
+            (
+                status,
+                [(axum::http::header::CONTENT_TYPE, "application/json")],
+                body.to_string(),
+            )
+                .into_response()
+        }
+
+        let authorizations = Arc::new(Mutex::new(Vec::new()));
+        let app = axum::Router::new()
+            .route("/backend-api/wham/usage", axum::routing::get(handler))
+            .with_state(authorizations.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind usage endpoint");
+        let addr = listener.local_addr().expect("usage endpoint addr");
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("usage endpoint should run");
+        });
+        (
+            format!("http://{addr}/backend-api/wham/usage"),
+            authorizations,
+            task,
+        )
     }
 
     fn build_record_with_quota_and_access_claim(
@@ -3155,6 +3268,126 @@ INSERT INTO provider_accounts (
             assert_eq!(refreshed, vec![account_id]);
             assert_eq!(record.access_token, "refreshed-access");
             assert!(!record.is_expired());
+        });
+    }
+
+    #[test]
+    fn quota_refresh_retries_usage_after_relogin_error() {
+        run_async(async {
+            let (store, data_dir) = create_test_store();
+            let account_id = "codex-quota-retry.json".to_string();
+            store
+                .save_record(
+                    account_id.clone(),
+                    CodexTokenRecord {
+                        access_token: "access-old".to_string(),
+                        refresh_token: "refresh-token".to_string(),
+                        client_id: Some(CodexRefreshTokenClient::Codex.client_id().to_string()),
+                        id_token: build_id_token("quota@example.com", "acct-quota"),
+                        auto_refresh_enabled: true,
+                        status: CodexAccountStatus::Active,
+                        account_id: Some("acct-quota".to_string()),
+                        user_id: None,
+                        email: Some("quota@example.com".to_string()),
+                        expires_at: future_rfc3339(24),
+                        last_refresh: None,
+                        proxy_url: None,
+                        priority: 0,
+                        quota: CodexQuotaCache::default(),
+                    },
+                )
+                .await
+                .expect("seed codex account");
+            let (usage_url, authorizations, usage_task) =
+                spawn_usage_relogin_then_ok_endpoint().await;
+            let (token_url, token_task) = spawn_token_endpoint("access-new").await;
+            store.set_test_token_url(&token_url).await;
+
+            let quota = crate::codex::quota::refresh_quota_cache_with_usage_endpoint(
+                &store,
+                &account_id,
+                &usage_url,
+            )
+            .await
+            .expect("quota refresh should retry after token refresh");
+            let record = store
+                .load_account(&account_id)
+                .await
+                .expect("load refreshed record");
+
+            usage_task.abort();
+            token_task.abort();
+            let _ = std::fs::remove_dir_all(data_dir);
+
+            assert_eq!(quota.plan_type.as_deref(), Some("pro"));
+            assert!(quota.error.is_none());
+            assert_eq!(record.access_token, "access-new");
+            assert_eq!(
+                *authorizations.lock().expect("usage authorizations lock"),
+                vec![
+                    "Bearer access-old".to_string(),
+                    "Bearer access-new".to_string()
+                ]
+            );
+        });
+    }
+
+    #[test]
+    fn quota_refresh_persists_token_refresh_failure_after_relogin_error() {
+        run_async(async {
+            let (store, data_dir) = create_test_store();
+            let account_id = "codex-quota-refresh-fails.json".to_string();
+            store
+                .save_record(
+                    account_id.clone(),
+                    CodexTokenRecord {
+                        access_token: "access-old".to_string(),
+                        refresh_token: "refresh-token".to_string(),
+                        client_id: Some(CodexRefreshTokenClient::Codex.client_id().to_string()),
+                        id_token: build_id_token("quota-fails@example.com", "acct-quota-fails"),
+                        auto_refresh_enabled: true,
+                        status: CodexAccountStatus::Active,
+                        account_id: Some("acct-quota-fails".to_string()),
+                        user_id: None,
+                        email: Some("quota-fails@example.com".to_string()),
+                        expires_at: future_rfc3339(24),
+                        last_refresh: None,
+                        proxy_url: None,
+                        priority: 0,
+                        quota: CodexQuotaCache::default(),
+                    },
+                )
+                .await
+                .expect("seed codex account");
+            let (usage_url, authorizations, usage_task) =
+                spawn_usage_relogin_then_ok_endpoint().await;
+            let (token_url, token_task) = spawn_relogin_required_token_endpoint().await;
+            store.set_test_token_url(&token_url).await;
+
+            let quota = crate::codex::quota::refresh_quota_cache_with_usage_endpoint(
+                &store,
+                &account_id,
+                &usage_url,
+            )
+            .await
+            .expect("quota failure should be persisted");
+            let record = store
+                .load_account(&account_id)
+                .await
+                .expect("load persisted record");
+
+            usage_task.abort();
+            token_task.abort();
+            let _ = std::fs::remove_dir_all(data_dir);
+
+            let error = quota.error.as_deref().expect("quota error");
+            assert!(error.contains("Codex usage request failed after token refresh failed"));
+            assert!(error.contains("Codex 登录已失效"));
+            assert_eq!(record.quota.error.as_deref(), Some(error));
+            assert_eq!(
+                *authorizations.lock().expect("usage authorizations lock"),
+                vec!["Bearer access-old".to_string()]
+            );
         });
     }
 

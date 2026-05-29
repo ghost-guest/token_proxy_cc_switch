@@ -8,6 +8,7 @@ fn force_openai_chat_stream_usage_inserts_stream_options_include_usage() {
     rt.block_on(async {
         let input = Bytes::from_static(br#"{"stream":true,"messages":[]}"#);
         let meta = RequestMeta {
+            client_ip: None,
             stream: true,
             original_model: None,
             mapped_model: None,
@@ -96,6 +97,7 @@ fn apply_reasoning_suffix_for_chat_sets_reasoning_effort_and_model() {
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let meta = RequestMeta {
+            client_ip: None,
             stream: false,
             original_model: Some("gpt-4.1".to_string()),
             mapped_model: None,
@@ -131,6 +133,7 @@ fn apply_reasoning_suffix_for_responses_sets_reasoning_object_and_model() {
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let meta = RequestMeta {
+            client_ip: None,
             stream: false,
             original_model: Some("gpt-4.1".to_string()),
             mapped_model: None,
@@ -169,6 +172,7 @@ fn apply_reasoning_suffix_prefers_mapped_model_as_upstream_model() {
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let meta = RequestMeta {
+            client_ip: None,
             stream: false,
             original_model: Some("gpt-4.1".to_string()),
             mapped_model: Some("o3-mini".to_string()),

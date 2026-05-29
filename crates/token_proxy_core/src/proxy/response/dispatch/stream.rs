@@ -1061,6 +1061,7 @@ mod tests {
 
     fn test_context() -> LogContext {
         LogContext {
+            client_ip: None,
             path: "/v1/responses".to_string(),
             provider: PROVIDER_CODEX.to_string(),
             upstream_id: "codex-test".to_string(),

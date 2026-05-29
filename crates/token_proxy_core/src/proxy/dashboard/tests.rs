@@ -79,6 +79,7 @@ async fn setup_test_db() -> SqlitePool {
         CREATE TABLE request_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ts_ms INTEGER NOT NULL,
+            client_ip TEXT,
             path TEXT NOT NULL,
             provider TEXT NOT NULL,
             upstream_id TEXT NOT NULL,
@@ -219,6 +220,29 @@ async fn insert_priced_request(
     .execute(pool)
     .await
     .expect("Failed to insert priced request");
+}
+
+async fn insert_request_with_client_ip(pool: &SqlitePool, ts_ms: i64, client_ip: &str) {
+    sqlx::query(
+        r#"
+        INSERT INTO request_logs (
+            ts_ms,
+            client_ip,
+            path,
+            provider,
+            upstream_id,
+            stream,
+            status,
+            latency_ms
+        )
+        VALUES (?, ?, '/test', 'openai', 'alpha', 0, 200, 30)
+        "#,
+    )
+    .bind(ts_ms)
+    .bind(client_ip)
+    .execute(pool)
+    .await
+    .expect("Failed to insert request with client IP");
 }
 
 #[tokio::test]
@@ -500,6 +524,29 @@ async fn read_snapshot_sums_logged_costs_and_returns_recent_pricing_fields() {
     );
     assert_eq!(snapshot.recent[1].cost_nano_usd, Some(1_210_000_000));
     assert_eq!(snapshot.recent[1].pricing_model.as_deref(), Some("gpt-5.5"));
+}
+
+#[tokio::test]
+async fn read_snapshot_returns_recent_client_ip() {
+    let pool = setup_test_db().await;
+    insert_request_with_client_ip(&pool, 100, "203.0.113.5").await;
+
+    let snapshot = read_snapshot(
+        &pool,
+        DashboardRange {
+            from_ts_ms: None,
+            to_ts_ms: None,
+        },
+        Some(0),
+        None,
+        None,
+        false,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(snapshot.recent.len(), 1);
+    assert_eq!(snapshot.recent[0].client_ip.as_deref(), Some("203.0.113.5"));
 }
 
 #[tokio::test]

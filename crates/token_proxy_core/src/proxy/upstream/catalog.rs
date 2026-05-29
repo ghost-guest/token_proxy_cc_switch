@@ -46,6 +46,7 @@ pub(super) async fn aggregate_model_catalog_request(
     let mut sources: Vec<(String, Vec<String>)> = Vec::new();
     let mut successful = 0usize;
     let meta = RequestMeta {
+        client_ip: None,
         stream: false,
         original_model: None,
         mapped_model: None,
@@ -214,6 +215,7 @@ async fn refresh_model_discovery_job(
     };
 
     let meta = RequestMeta {
+        client_ip: None,
         stream: false,
         original_model: None,
         mapped_model: None,

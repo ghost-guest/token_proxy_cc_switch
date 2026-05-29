@@ -68,6 +68,7 @@ pub(crate) async fn parse_request_meta_best_effort(
     let stream_from_path = gemini::is_gemini_stream_request(path);
     let model_from_path = gemini::parse_gemini_model_from_path(path);
     let fallback_meta = RequestMeta {
+        client_ip: None,
         stream: stream_from_path,
         original_model: model_from_path.clone(),
         mapped_model: None,
@@ -118,6 +119,7 @@ pub(crate) async fn parse_request_meta_best_effort(
         .filter(|value| !value.is_empty())
         .map(str::to_ascii_lowercase);
     RequestMeta {
+        client_ip: None,
         stream,
         original_model,
         mapped_model: None,

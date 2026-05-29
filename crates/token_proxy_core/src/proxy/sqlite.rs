@@ -82,6 +82,7 @@ pub async fn init_schema(pool: &SqlitePool) -> Result<(), String> {
 CREATE TABLE IF NOT EXISTS request_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts_ms INTEGER NOT NULL,
+  client_ip TEXT,
   path TEXT NOT NULL,
   provider TEXT NOT NULL,
   upstream_id TEXT NOT NULL,
@@ -208,6 +209,13 @@ async fn ensure_request_logs_columns(pool: &SqlitePool) -> Result<(), String> {
             .execute(pool)
             .await
             .map_err(|err| format!("Failed to add cached_tokens column: {err}"))?;
+    }
+
+    if !columns.contains("client_ip") {
+        sqlx::query("ALTER TABLE request_logs ADD COLUMN client_ip TEXT;")
+            .execute(pool)
+            .await
+            .map_err(|err| format!("Failed to add client_ip column: {err}"))?;
     }
 
     if !columns.contains("mapped_model") {
@@ -442,7 +450,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn request_logs_schema_includes_timing_and_cost_columns() {
+    async fn request_logs_schema_includes_timing_cost_and_client_ip_columns() {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -460,6 +468,7 @@ mod tests {
             .collect::<std::collections::HashSet<_>>();
 
         assert!(columns.contains("upstream_first_byte_ms"));
+        assert!(columns.contains("client_ip"));
         assert!(columns.contains("upstream_response_headers_ms"));
         assert!(columns.contains("upstream_first_body_chunk_ms"));
         assert!(columns.contains("first_client_flush_ms"));

@@ -2,6 +2,7 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
 use std::future::IntoFuture;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock};
@@ -324,13 +325,16 @@ impl ProxyServiceInner {
         tracing::info!(addr = %addr, "proxy listening");
 
         let task = tokio::spawn(async move {
-            axum::serve(listener, router)
-                .with_graceful_shutdown(async move {
-                    let _ = shutdown_rx.await;
-                })
-                .into_future()
-                .await
-                .map_err(|err| format!("Proxy server failed: {err}"))
+            axum::serve(
+                listener,
+                router.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(async move {
+                let _ = shutdown_rx.await;
+            })
+            .into_future()
+            .await
+            .map_err(|err| format!("Proxy server failed: {err}"))
         });
 
         self.running = Some(RunningProxy {

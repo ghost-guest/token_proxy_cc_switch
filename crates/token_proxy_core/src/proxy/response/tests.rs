@@ -71,6 +71,7 @@ async fn setup_responses_stream() -> (Arc<LogWriter>, LogContext, SqlitePool) {
     let sqlite_pool = create_test_sqlite_pool().await;
     let log = Arc::new(LogWriter::new(Some(sqlite_pool.clone())));
     let context = LogContext {
+        client_ip: None,
         path: "/v1/responses".to_string(),
         provider: "openai-response".to_string(),
         upstream_id: "unit-test".to_string(),
@@ -209,6 +210,7 @@ fn stream_with_logging_does_not_record_response_body_when_detail_capture_is_off(
         let sqlite_pool = create_test_sqlite_pool().await;
         let log = Arc::new(LogWriter::new(Some(sqlite_pool.clone())));
         let context = LogContext {
+            client_ip: None,
             path: "/v1/responses".to_string(),
             provider: "openai-response".to_string(),
             upstream_id: "unit-test".to_string(),
@@ -251,6 +253,7 @@ fn stream_with_logging_persists_log_when_client_drops_stream_early() {
         let sqlite_pool = create_test_sqlite_pool().await;
         let log = Arc::new(LogWriter::new(Some(sqlite_pool.clone())));
         let context = LogContext {
+            client_ip: None,
             path: "/v1/responses".to_string(),
             provider: "openai-response".to_string(),
             upstream_id: "unit-test".to_string(),
@@ -466,6 +469,7 @@ fn stream_chat_to_responses_handles_chunk_boundaries_and_emits_created_delta_don
         let sqlite_pool = create_test_sqlite_pool().await;
         let log = Arc::new(LogWriter::new(Some(sqlite_pool.clone())));
         let context = LogContext {
+            client_ip: None,
             path: "/v1/chat/completions".to_string(),
             provider: "openai".to_string(),
             upstream_id: "unit-test".to_string(),
@@ -601,6 +605,7 @@ fn stream_chat_to_responses_preserves_reasoning_and_audio_in_completed_response(
         let sqlite_pool = create_test_sqlite_pool().await;
         let log = Arc::new(LogWriter::new(Some(sqlite_pool.clone())));
         let context = LogContext {
+            client_ip: None,
             path: "/v1/chat/completions".to_string(),
             provider: "openai".to_string(),
             upstream_id: "unit-test".to_string(),
@@ -683,6 +688,7 @@ fn stream_chat_to_responses_preserves_thinking_blocks_with_encrypted_content() {
         let sqlite_pool = create_test_sqlite_pool().await;
         let log = Arc::new(LogWriter::new(Some(sqlite_pool.clone())));
         let context = LogContext {
+            client_ip: None,
             path: "/v1/chat/completions".to_string(),
             provider: "openai".to_string(),
             upstream_id: "unit-test".to_string(),
@@ -750,6 +756,7 @@ fn stream_chat_to_responses_emits_function_call_events_and_includes_them_in_comp
         let sqlite_pool = create_test_sqlite_pool().await;
         let log = Arc::new(LogWriter::new(Some(sqlite_pool.clone())));
         let context = LogContext {
+            client_ip: None,
             path: "/v1/chat/completions".to_string(),
             provider: "openai".to_string(),
             upstream_id: "unit-test".to_string(),

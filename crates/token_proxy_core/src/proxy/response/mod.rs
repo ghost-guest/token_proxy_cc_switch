@@ -61,6 +61,7 @@ pub(super) async fn build_proxy_response(
         .map(|detail| (detail.request_headers, detail.request_body))
         .unwrap_or((None, None));
     let context = LogContext {
+        client_ip: meta.client_ip.clone(),
         path: inbound_path.to_string(),
         provider: provider.to_string(),
         upstream_id: upstream_id.to_string(),
@@ -152,6 +153,7 @@ pub(super) async fn build_proxy_response_buffered(
         .map(|detail| (detail.request_headers, detail.request_body))
         .unwrap_or((None, None));
     let context = LogContext {
+        client_ip: meta.client_ip.clone(),
         path: inbound_path.to_string(),
         provider: provider.to_string(),
         upstream_id: upstream_id.to_string(),

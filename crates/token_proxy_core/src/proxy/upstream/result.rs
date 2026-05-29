@@ -356,6 +356,7 @@ pub(super) fn log_upstream_error_if_needed(
         .map(|detail| (detail.request_headers.clone(), detail.request_body.clone()))
         .unwrap_or((None, None));
     let context = LogContext {
+        client_ip: meta.client_ip.clone(),
         path: inbound_path.to_string(),
         provider: provider.to_string(),
         upstream_id: upstream_id.to_string(),

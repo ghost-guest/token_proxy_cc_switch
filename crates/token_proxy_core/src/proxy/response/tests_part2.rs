@@ -333,6 +333,7 @@ fn stream_with_model_override_semantic_timeout_emits_response_failed_and_done() 
 fn stream_gemini_to_anthropic_emits_single_input_json_delta_for_tool_calls() {
     super::run_async(async {
         let context = LogContext {
+            client_ip: None,
             path: "/v1/messages".to_string(),
             provider: "gemini".to_string(),
             upstream_id: "unit-test".to_string(),
@@ -456,6 +457,7 @@ fn stream_responses_to_chat_persists_log_when_client_drops_stream_early() {
         let sqlite_pool = super::create_test_sqlite_pool().await;
         let log = Arc::new(LogWriter::new(Some(sqlite_pool.clone())));
         let context = LogContext {
+            client_ip: None,
             path: "/v1/responses".to_string(),
             provider: "openai-response".to_string(),
             upstream_id: "unit-test".to_string(),
@@ -510,6 +512,7 @@ fn stream_responses_to_chat_persists_log_when_client_drops_stream_early() {
 fn stream_responses_to_anthropic_emits_thinking_from_reasoning_summary_events() {
     super::run_async(async {
         let context = LogContext {
+            client_ip: None,
             path: "/v1/messages".to_string(),
             provider: "openai-response".to_string(),
             upstream_id: "unit-test".to_string(),
@@ -585,6 +588,7 @@ fn stream_responses_to_anthropic_emits_thinking_from_reasoning_summary_events() 
 fn stream_responses_to_anthropic_emits_redacted_thinking_from_encrypted_reasoning() {
     super::run_async(async {
         let context = LogContext {
+            client_ip: None,
             path: "/v1/messages".to_string(),
             provider: "openai-response".to_string(),
             upstream_id: "unit-test".to_string(),
@@ -844,6 +848,7 @@ fn stream_anthropic_to_responses_emits_reasoning_summary_events_and_snapshot() {
         let sqlite_pool = super::create_test_sqlite_pool().await;
         let log = Arc::new(LogWriter::new(Some(sqlite_pool.clone())));
         let context = LogContext {
+            client_ip: None,
             path: "/v1/responses".to_string(),
             provider: "anthropic".to_string(),
             upstream_id: "unit-test".to_string(),
@@ -948,6 +953,7 @@ fn stream_anthropic_to_responses_maps_redacted_thinking_to_encrypted_reasoning()
         let sqlite_pool = super::create_test_sqlite_pool().await;
         let log = Arc::new(LogWriter::new(Some(sqlite_pool.clone())));
         let context = LogContext {
+            client_ip: None,
             path: "/v1/responses".to_string(),
             provider: "anthropic".to_string(),
             upstream_id: "unit-test".to_string(),
@@ -1020,6 +1026,7 @@ fn stream_anthropic_to_responses_maps_max_tokens_to_incomplete_event() {
         let sqlite_pool = super::create_test_sqlite_pool().await;
         let log = Arc::new(LogWriter::new(Some(sqlite_pool.clone())));
         let context = LogContext {
+            client_ip: None,
             path: "/v1/responses".to_string(),
             provider: "anthropic".to_string(),
             upstream_id: "unit-test".to_string(),
@@ -1102,6 +1109,7 @@ fn stream_anthropic_to_responses_maps_max_tokens_to_incomplete_event() {
 fn stream_chat_to_gemini_waits_for_complete_tool_call_arguments() {
     super::run_async(async {
         let context = LogContext {
+            client_ip: None,
             path: "/v1/messages".to_string(),
             provider: "openai".to_string(),
             upstream_id: "unit-test".to_string(),

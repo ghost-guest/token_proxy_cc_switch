@@ -134,6 +134,7 @@ describe("dashboard/DashboardPanel", () => {
               {
                 id: 1,
                 tsMs: 100,
+                clientIp: null,
                 path: "/v1/chat/completions",
                 provider: "openai",
                 upstreamId: "alpha",
@@ -227,6 +228,7 @@ describe("dashboard/DashboardPanel", () => {
               {
                 id: 1,
                 tsMs: 100,
+                clientIp: null,
                 path: "/v1/chat/completions",
                 provider: "openai-response",
                 upstreamId: "alpha",
@@ -326,6 +328,7 @@ describe("dashboard/DashboardPanel", () => {
               {
                 id: 2,
                 tsMs: 110,
+                clientIp: null,
                 path: "/v1/responses",
                 provider: "openai-response",
                 upstreamId: "alpha",
@@ -342,6 +345,7 @@ describe("dashboard/DashboardPanel", () => {
               {
                 id: 1,
                 tsMs: 100,
+                clientIp: null,
                 path: "/v1/chat/completions",
                 provider: "openai",
                 upstreamId: "alpha",

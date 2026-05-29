@@ -117,6 +117,7 @@ async fn filters_safety_identifier_for_openai_responses_upstream() {
 async fn strips_sampling_params_for_openai_responses_reasoning_model() {
     let upstream = test_upstream(false, false, false);
     let meta = RequestMeta {
+        client_ip: None,
         stream: false,
         original_model: Some("openai/gpt-5.5".to_string()),
         mapped_model: Some("gpt-5.5".to_string()),
@@ -157,6 +158,7 @@ async fn strips_sampling_params_for_openai_responses_reasoning_model() {
 async fn strips_sampling_params_for_openai_responses_reasoning_model_from_prefixed_original() {
     let upstream = test_upstream(false, false, false);
     let meta = RequestMeta {
+        client_ip: None,
         stream: false,
         original_model: Some("openai/gpt-5.5".to_string()),
         mapped_model: None,
@@ -200,6 +202,7 @@ async fn strips_sampling_params_for_openai_responses_reasoning_model_from_prefix
 async fn rejects_large_openai_responses_reasoning_body_when_sampling_params_cannot_be_checked() {
     let upstream = test_upstream(false, false, false);
     let meta = RequestMeta {
+        client_ip: None,
         stream: false,
         original_model: Some("gpt-5.5".to_string()),
         mapped_model: None,
@@ -369,6 +372,7 @@ async fn developer_role_rewrite_is_noop_for_bigmodel_responses_when_disabled() {
 async fn json_transform_pipeline_applies_reasoning_filters_and_role_rewrite_together() {
     let upstream = test_upstream(true, true, true);
     let meta = RequestMeta {
+        client_ip: None,
         stream: true,
         original_model: Some("gpt-5".to_string()),
         mapped_model: None,

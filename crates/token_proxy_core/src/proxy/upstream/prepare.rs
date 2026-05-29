@@ -268,6 +268,7 @@ pub(super) fn build_mapped_meta(meta: &RequestMeta, upstream: &UpstreamRuntime) 
     let (mapped_model, reasoning_effort) =
         normalize_mapped_model_reasoning_suffix(mapped_model, meta.reasoning_effort.clone());
     RequestMeta {
+        client_ip: meta.client_ip.clone(),
         stream: meta.stream,
         original_model: meta.original_model.clone(),
         mapped_model,

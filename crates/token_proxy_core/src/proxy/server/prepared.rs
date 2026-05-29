@@ -24,6 +24,7 @@ use super::{
 
 pub(crate) struct PreparedRequest {
     pub(crate) path: String,
+    pub(crate) client_ip: Option<String>,
     pub(crate) outbound_path_with_query: String,
     pub(crate) plan: DispatchPlan,
     pub(crate) meta: RequestMeta,
@@ -50,6 +51,7 @@ pub(super) fn resolve_request_auth_or_respond(
     headers: &HeaderMap,
     log: &Arc<LogWriter>,
     request_detail: Option<RequestDetailSnapshot>,
+    client_ip: Option<String>,
     path: &str,
     provider: &str,
     request_start: Instant,
@@ -60,6 +62,7 @@ pub(super) fn resolve_request_auth_or_respond(
             log_request_error(
                 log,
                 request_detail,
+                client_ip,
                 path,
                 provider,
                 LOCAL_UPSTREAM_ID,
@@ -89,6 +92,7 @@ pub(super) async fn finalize_prepared_request(
         &state.http_clients,
         &state.log,
         inbound.request_detail.clone(),
+        inbound.client_ip.clone(),
         &inbound.path,
         &inbound.plan,
         &inbound.meta,
@@ -102,12 +106,14 @@ pub(super) async fn finalize_prepared_request(
         headers,
         &state.log,
         inbound.request_detail.clone(),
+        inbound.client_ip.clone(),
         &inbound.path,
         inbound.plan.provider,
         request_start,
     )?;
     Ok(PreparedRequest {
         path: inbound.path,
+        client_ip: inbound.client_ip,
         outbound_path_with_query,
         plan: inbound.plan,
         meta: inbound.meta,
@@ -123,6 +129,7 @@ pub(super) async fn build_outbound_body_or_respond(
     http_clients: &super::super::http_client::ProxyHttpClients,
     log: &Arc<LogWriter>,
     request_detail: Option<RequestDetailSnapshot>,
+    client_ip: Option<String>,
     path: &str,
     plan: &DispatchPlan,
     meta: &RequestMeta,
@@ -134,6 +141,7 @@ pub(super) async fn build_outbound_body_or_respond(
         http_clients,
         log,
         request_detail.clone(),
+        client_ip.clone(),
         path,
         plan,
         meta,
@@ -145,6 +153,7 @@ pub(super) async fn build_outbound_body_or_respond(
     apply_openai_stream_options_or_respond(
         log,
         request_detail,
+        client_ip,
         path,
         plan,
         meta,
@@ -158,6 +167,7 @@ async fn transform_body_or_respond(
     http_clients: &super::super::http_client::ProxyHttpClients,
     log: &Arc<LogWriter>,
     request_detail: Option<RequestDetailSnapshot>,
+    client_ip: Option<String>,
     path: &str,
     plan: &DispatchPlan,
     meta: &RequestMeta,
@@ -181,6 +191,7 @@ async fn transform_body_or_respond(
             log_request_error(
                 log,
                 request_detail,
+                client_ip,
                 path,
                 plan.provider,
                 LOCAL_UPSTREAM_ID,
@@ -196,6 +207,7 @@ async fn transform_body_or_respond(
 async fn apply_openai_stream_options_or_respond(
     log: &Arc<LogWriter>,
     request_detail: Option<RequestDetailSnapshot>,
+    client_ip: Option<String>,
     path: &str,
     plan: &DispatchPlan,
     meta: &RequestMeta,
@@ -215,6 +227,7 @@ async fn apply_openai_stream_options_or_respond(
             log_request_error(
                 log,
                 request_detail,
+                client_ip,
                 path,
                 plan.provider,
                 LOCAL_UPSTREAM_ID,

@@ -395,6 +395,7 @@
   "dashboard_next_page": "下一页",
   "dashboard_page_indicator": "第 {page} / {totalPages} 页",
   "dashboard_table_time": "时间",
+  "dashboard_table_ip": "IP",
   "dashboard_table_path": "路径",
   "dashboard_table_provider": "Provider",
   "dashboard_provider_local_proxy": "本地代理",

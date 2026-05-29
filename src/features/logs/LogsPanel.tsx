@@ -133,6 +133,7 @@ function BasicInfoSection({ detail, formatter }: BasicInfoSectionProps) {
       <div className="rounded-lg border border-border/60 bg-muted/20 p-3 space-y-1">
         <DetailField label="ID" value={String(detail.id)} />
         <DetailField label={m.dashboard_table_time()} value={timestamp} />
+        <DetailField label={m.dashboard_table_ip()} value={detail.clientIp} />
         <DetailField label={m.dashboard_table_path()} value={detail.path} />
         <DetailField label={m.dashboard_table_provider()} value={providerText} />
         {/* Model 展示逻辑与表格一致：主模型在上，映射模型在下 */}
@@ -234,6 +235,7 @@ function formatDetailAsText(detail: RequestLogDetail, formatter: Intl.DateTimeFo
 
   lines.push(`ID: ${detail.id}`);
   lines.push(`${m.dashboard_table_time()}: ${formatDashboardTimestamp(detail.tsMs, formatter)}`);
+  lines.push(`${m.dashboard_table_ip()}: ${detail.clientIp?.trim() || DETAIL_PLACEHOLDER}`);
   lines.push(`${m.dashboard_table_path()}: ${detail.path}`);
   lines.push(`${m.dashboard_table_provider()}: ${providerText}`);
   lines.push(`${m.dashboard_table_model()}: ${detail.model?.trim() || DETAIL_PLACEHOLDER}`);

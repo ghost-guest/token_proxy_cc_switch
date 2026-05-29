@@ -1,7 +1,7 @@
 use axum::{extract::DefaultBodyLimit, routing::any, Router};
 use std::{collections::HashMap, sync::atomic::AtomicUsize};
 
-use super::{proxy_request, ProxyStateHandle};
+use super::{proxy_request_with_connect_info, ProxyStateHandle};
 use crate::proxy::config::ProxyConfig;
 
 pub(crate) fn build_upstream_cursors(config: &ProxyConfig) -> HashMap<String, Vec<AtomicUsize>> {
@@ -22,7 +22,7 @@ pub(crate) fn build_router(
     max_request_body_bytes: usize,
 ) -> Router<ProxyStateHandle> {
     Router::new()
-        .route("/{*path}", any(proxy_request))
+        .route("/{*path}", any(proxy_request_with_connect_info))
         // 限制入站请求体，避免超大请求占用内存/临时盘并拖慢首字节。
         .layer(DefaultBodyLimit::max(max_request_body_bytes))
         .with_state(state)

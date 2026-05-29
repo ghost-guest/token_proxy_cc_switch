@@ -47,6 +47,7 @@ describe("dashboard/RecentRequestsTable", () => {
             {
               id: 1,
               tsMs: 100,
+              clientIp: null,
               path: "/responses",
               provider: "codex",
               upstreamId: "alpha",
@@ -88,6 +89,7 @@ describe("dashboard/RecentRequestsTable", () => {
             {
               id: 1,
               tsMs,
+              clientIp: null,
               path: "/responses",
               provider: "codex",
               upstreamId: "alpha",
@@ -118,6 +120,81 @@ describe("dashboard/RecentRequestsTable", () => {
     expect(await screen.findByRole("tooltip")).toHaveTextContent(fullTimestamp);
   });
 
+  it("shows IP column between time and path with placeholder for old logs", () => {
+    render(
+      <I18nProvider>
+        <RecentRequestsTable
+          scrollKey="test"
+          items={[
+            {
+              id: 1,
+              tsMs: 100,
+              clientIp: "127.0.0.1",
+              path: "/responses",
+              provider: "codex",
+              upstreamId: "alpha",
+              accountId: "codex-a.json",
+              model: "gpt-5",
+              mappedModel: null,
+              stream: false,
+              status: 200,
+              totalTokens: 30,
+              outputTokens: 20,
+              cachedTokens: 5,
+              costNanoUsd: null,
+              pricingVersion: null,
+              pricingModel: null,
+              pricingContextTier: null,
+              latencyMs: 30,
+              upstreamRequestId: null,
+            },
+            {
+              id: 2,
+              tsMs: 90,
+              clientIp: null,
+              path: "/v1/chat/completions",
+              provider: "openai",
+              upstreamId: "beta",
+              accountId: null,
+              model: "gpt-5",
+              mappedModel: null,
+              stream: false,
+              status: 200,
+              totalTokens: 10,
+              outputTokens: 5,
+              cachedTokens: null,
+              costNanoUsd: null,
+              pricingVersion: null,
+              pricingModel: null,
+              pricingContextTier: null,
+              latencyMs: 20,
+              upstreamRequestId: null,
+            },
+          ]}
+        />
+      </I18nProvider>,
+    );
+
+    const table = screen.getByTestId("recent-requests-table");
+    const header = table.querySelector('[data-slot="recent-requests-table-header"]');
+    expect(Array.from(header?.children ?? []).map((cell) => cell.textContent)).toEqual([
+      "Time",
+      "IP",
+      "Path",
+      "Provider",
+      "Model",
+      "Status",
+      "Tokens",
+      "Cost",
+      "Upstream response headers (ms)",
+    ]);
+
+    const rows = table.querySelectorAll('[data-slot="recent-requests-table-row"]');
+    expect(rows[0]?.children.item(1)?.textContent).toBe("127.0.0.1");
+    expect(rows[0]?.children.item(2)?.textContent).toBe("/responses");
+    expect(rows[1]?.children.item(1)?.textContent).toBe("—");
+  });
+
   it("keeps status, tokens, and latency columns left-aligned", () => {
     render(
       <I18nProvider>
@@ -127,6 +204,7 @@ describe("dashboard/RecentRequestsTable", () => {
             {
               id: 1,
               tsMs: 100,
+              clientIp: null,
               path: "/responses",
               provider: "codex",
               upstreamId: "alpha",
@@ -174,6 +252,7 @@ describe("dashboard/RecentRequestsTable", () => {
             {
               id: 1,
               tsMs: 100,
+              clientIp: null,
               path: "/v1/chat/completions/with/a/very/long/path",
               provider: "openai-response",
               upstreamId: "alpha",
@@ -208,12 +287,12 @@ describe("dashboard/RecentRequestsTable", () => {
     const widthTrack = table.querySelector(
       '[data-slot="recent-requests-table-width-track"]',
     ) as HTMLElement | null;
-    expect(widthTrack?.style.minWidth).toBe("771px");
+    expect(widthTrack?.style.minWidth).toBe("889px");
     expect(widthTrack?.parentElement).toBe(scrollArea);
 
     const header = table.querySelector('[data-slot="recent-requests-table-header"]');
     expect(header).toHaveClass("sticky", "top-0", "z-10");
-    expect(header?.className).toContain("85px_140px");
+    expect(header?.className).toContain("85px_118px_140px");
 
     const rowsLayer = table.querySelector(
       '[data-slot="recent-requests-table-rows-layer"]',
@@ -241,6 +320,7 @@ describe("dashboard/RecentRequestsTable", () => {
             {
               id: 1,
               tsMs: 100,
+              clientIp: null,
               path: "/responses",
               provider: "codex",
               upstreamId: "alpha",
@@ -291,6 +371,7 @@ describe("dashboard/RecentRequestsTable", () => {
             {
               id: 1,
               tsMs: 100,
+              clientIp: null,
               path: "/responses",
               provider: "codex",
               upstreamId: "alpha",
@@ -334,6 +415,7 @@ describe("dashboard/RecentRequestsTable", () => {
             {
               id: 1,
               tsMs: 100,
+              clientIp: null,
               path: "/responses",
               provider: "openai-response",
               upstreamId: "alpha",
@@ -385,6 +467,7 @@ describe("dashboard/RecentRequestsTable", () => {
             {
               id: 1,
               tsMs: 100,
+              clientIp: null,
               path: "/v1/responses",
               provider: "proxy",
               upstreamId: "local",

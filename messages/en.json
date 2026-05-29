@@ -394,6 +394,7 @@
   "dashboard_next_page": "Next",
   "dashboard_page_indicator": "Page {page} / {totalPages}",
   "dashboard_table_time": "Time",
+  "dashboard_table_ip": "IP",
   "dashboard_table_path": "Path",
   "dashboard_table_provider": "Provider",
   "dashboard_provider_local_proxy": "Local proxy",

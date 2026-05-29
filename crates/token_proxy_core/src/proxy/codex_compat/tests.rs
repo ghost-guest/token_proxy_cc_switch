@@ -629,6 +629,7 @@ async fn stream_codex_to_chat_emits_image_generation_call_result() {
 
 fn test_log_context() -> LogContext {
     LogContext {
+        client_ip: None,
         path: "/v1/responses".to_string(),
         provider: "codex".to_string(),
         upstream_id: "test".to_string(),

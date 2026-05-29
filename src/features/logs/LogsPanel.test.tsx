@@ -91,6 +91,7 @@ describe("logs/LogsPanel", () => {
     readRequestLogDetailMock.mockResolvedValue({
       id: 1,
       tsMs: 100,
+      clientIp: null,
       path: "/v1/chat/completions",
       provider: "codex",
       upstreamId: "alpha",
@@ -199,6 +200,7 @@ describe("logs/LogsPanel", () => {
               {
                 id: 1,
                 tsMs: 100,
+                clientIp: null,
                 path: "/v1/chat/completions",
                 provider: "openai",
                 upstreamId: "alpha",
@@ -235,6 +237,7 @@ describe("logs/LogsPanel", () => {
               {
                 id: 3,
                 tsMs: 110,
+                clientIp: null,
                 path: "/v1/responses",
                 provider: "openai-response",
                 upstreamId: "alpha",
@@ -271,6 +274,7 @@ describe("logs/LogsPanel", () => {
               {
                 id: 1,
                 tsMs: 100,
+                clientIp: null,
                 path: "/v1/chat/completions",
                 provider: "openai",
                 upstreamId: "alpha",
@@ -287,6 +291,7 @@ describe("logs/LogsPanel", () => {
               {
                 id: 3,
                 tsMs: 110,
+                clientIp: null,
                 path: "/v1/responses",
                 provider: "openai-response",
                 upstreamId: "alpha",
@@ -322,6 +327,7 @@ describe("logs/LogsPanel", () => {
             {
               id: 1,
               tsMs: 100,
+                clientIp: null,
                 path: "/v1/chat/completions",
                 provider: "openai",
               upstreamId: "alpha",
@@ -338,6 +344,7 @@ describe("logs/LogsPanel", () => {
             {
               id: 3,
               tsMs: 110,
+                clientIp: null,
                 path: "/v1/responses",
                 provider: "openai-response",
                 upstreamId: "alpha",
@@ -354,6 +361,7 @@ describe("logs/LogsPanel", () => {
             {
               id: 2,
               tsMs: 120,
+                clientIp: null,
                 path: "/v1/messages",
                 provider: "anthropic",
                 upstreamId: "beta",
@@ -577,6 +585,7 @@ describe("logs/LogsPanel", () => {
     readRequestLogDetailMock.mockResolvedValueOnce({
       id: 1,
       tsMs: 100,
+      clientIp: null,
       path: "/v1/chat/completions",
       provider: "codex",
       upstreamId: "alpha",
@@ -624,6 +633,7 @@ describe("logs/LogsPanel", () => {
     readRequestLogDetailMock.mockResolvedValueOnce({
       id: 1,
       tsMs: 100,
+      clientIp: null,
       path: "/v1/chat/completions",
       provider: "codex",
       upstreamId: "alpha",

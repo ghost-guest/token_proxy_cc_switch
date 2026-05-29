@@ -21,6 +21,7 @@ use super::{
 
 pub(crate) struct InboundRequest {
     pub(crate) path: String,
+    pub(crate) client_ip: Option<String>,
     pub(crate) plan: DispatchPlan,
     pub(crate) body: ReplayableBody,
     pub(crate) meta: RequestMeta,
@@ -35,6 +36,7 @@ pub(super) async fn prepare_inbound_request(
     query: Option<String>,
     body: Body,
     capture_request_detail_enabled: bool,
+    client_ip: Option<String>,
     request_start: Instant,
     is_debug_log: bool,
 ) -> Result<InboundRequest, Response> {
@@ -45,6 +47,7 @@ pub(super) async fn prepare_inbound_request(
         method,
         body,
         capture_request_detail_enabled,
+        client_ip.clone(),
         &path,
         query.as_deref(),
         request_start,
@@ -57,6 +60,7 @@ pub(super) async fn prepare_inbound_request(
         headers,
         body,
         capture_request_detail_enabled,
+        client_ip.clone(),
         &path,
         query.as_deref(),
         request_start,
@@ -68,6 +72,7 @@ pub(super) async fn prepare_inbound_request(
         headers,
         body,
         capture_request_detail_enabled,
+        client_ip.clone(),
         &path,
         request_start,
     )
@@ -79,7 +84,8 @@ pub(super) async fn prepare_inbound_request(
         .as_deref()
         .map(|query| format!("{path}?{query}"))
         .unwrap_or_else(|| path.clone());
-    let meta = parse_request_meta_best_effort(&path_with_query, &body).await;
+    let mut meta = parse_request_meta_best_effort(&path_with_query, &body).await;
+    meta.client_ip = client_ip.clone();
     let request_detail = if capture_request_detail_enabled {
         Some(capture_request_detail(headers, &body, state.config.max_request_body_bytes).await)
     } else {
@@ -87,6 +93,7 @@ pub(super) async fn prepare_inbound_request(
     };
     Ok(InboundRequest {
         path,
+        client_ip,
         plan,
         meta,
         request_detail,
@@ -101,6 +108,7 @@ pub(super) async fn ensure_local_auth_or_respond(
     method: &Method,
     body: Body,
     capture_request_detail_enabled: bool,
+    client_ip: Option<String>,
     path: &str,
     query: Option<&str>,
     request_start: Instant,
@@ -116,6 +124,7 @@ pub(super) async fn ensure_local_auth_or_respond(
         log_request_error(
             log,
             detail,
+            client_ip,
             path,
             PROVIDER_PROXY,
             LOCAL_UPSTREAM_ID,
@@ -134,6 +143,7 @@ pub(super) async fn resolve_plan_or_respond(
     headers: &HeaderMap,
     body: Body,
     capture_request_detail_enabled: bool,
+    client_ip: Option<String>,
     path: &str,
     query: Option<&str>,
     request_start: Instant,
@@ -154,6 +164,7 @@ pub(super) async fn resolve_plan_or_respond(
             log_request_error(
                 log,
                 detail,
+                client_ip,
                 path,
                 PROVIDER_PROXY,
                 LOCAL_UPSTREAM_ID,
@@ -183,6 +194,7 @@ async fn capture_detail_from_body(
 pub(super) fn log_request_error(
     log: &Arc<LogWriter>,
     detail: Option<RequestDetailSnapshot>,
+    client_ip: Option<String>,
     path: &str,
     provider: &str,
     upstream_id: &str,
@@ -194,6 +206,7 @@ pub(super) fn log_request_error(
         .map(|detail| (detail.request_headers, detail.request_body))
         .unwrap_or((None, None));
     let context = LogContext {
+        client_ip,
         path: path.to_string(),
         provider: provider.to_string(),
         upstream_id: upstream_id.to_string(),
@@ -223,6 +236,7 @@ async fn read_body_or_respond(
     headers: &HeaderMap,
     body: Body,
     capture_request_detail_enabled: bool,
+    client_ip: Option<String>,
     path: &str,
     request_start: Instant,
 ) -> Result<ReplayableBody, Response> {
@@ -241,6 +255,7 @@ async fn read_body_or_respond(
             log_request_error(
                 log,
                 detail,
+                client_ip,
                 path,
                 PROVIDER_PROXY,
                 LOCAL_UPSTREAM_ID,

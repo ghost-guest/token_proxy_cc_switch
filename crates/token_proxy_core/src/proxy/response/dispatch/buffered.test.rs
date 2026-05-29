@@ -22,6 +22,7 @@ use std::{
 
 fn test_context() -> LogContext {
     LogContext {
+        client_ip: None,
         path: "/v1/chat/completions".to_string(),
         provider: "openai".to_string(),
         upstream_id: "airouter".to_string(),

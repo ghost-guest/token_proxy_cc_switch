@@ -8,6 +8,7 @@ pub struct RequestLogDetail {
     pub id: u64,
     // 基础字段（与表格一致）
     pub ts_ms: i64,
+    pub client_ip: Option<String>,
     pub path: String,
     pub provider: String,
     pub upstream_id: String,
@@ -48,6 +49,7 @@ pub async fn read_request_log_detail(
 SELECT
   id,
   ts_ms,
+  client_ip,
   path,
   provider,
   upstream_id,
@@ -93,6 +95,7 @@ LIMIT 1;
     Ok(RequestLogDetail {
         id: row.try_get::<i64, _>("id").unwrap_or_default().max(0) as u64,
         ts_ms: row.try_get::<i64, _>("ts_ms").unwrap_or_default(),
+        client_ip: row.try_get::<Option<String>, _>("client_ip").ok().flatten(),
         path: row.try_get::<String, _>("path").unwrap_or_default(),
         provider: row.try_get::<String, _>("provider").unwrap_or_default(),
         upstream_id: row.try_get::<String, _>("upstream_id").unwrap_or_default(),
@@ -202,6 +205,7 @@ mod tests {
             r#"
             INSERT INTO request_logs (
               ts_ms,
+              client_ip,
               path,
               provider,
               upstream_id,
@@ -215,6 +219,7 @@ mod tests {
               latency_ms
             ) VALUES (
               123,
+              '198.51.100.8',
               '/responses',
               'codex',
               'codex-default',
@@ -237,6 +242,7 @@ mod tests {
             .await
             .expect("read request log detail");
 
+        assert_eq!(detail.client_ip.as_deref(), Some("198.51.100.8"));
         assert_eq!(detail.account_id.as_deref(), Some("codex-a.json"));
         assert_eq!(detail.cost_nano_usd, Some(1_210_000_000));
         assert_eq!(

@@ -14,6 +14,10 @@ pub(super) fn format_usage_status_error(status: u16, body: &str) -> String {
         .unwrap_or_else(|| format!("status {status}: {body}"))
 }
 
+pub(super) fn usage_status_requires_relogin(body: &str) -> bool {
+    relogin_required_message(body).is_some()
+}
+
 fn relogin_required_message(body: &str) -> Option<&'static str> {
     let error = serde_json::from_str::<Value>(body).ok()?;
     let code = [

@@ -1,10 +1,10 @@
 use axum::{
     body::Body,
-    extract::State,
+    extract::{connect_info::ConnectInfo, State},
     http::{HeaderMap, Method, Uri},
     response::Response,
 };
-use std::{sync::Arc, time::Instant};
+use std::{net::SocketAddr, sync::Arc, time::Instant};
 use tokio::sync::RwLock;
 
 use super::{
@@ -62,6 +62,36 @@ async fn proxy_request(
     headers: HeaderMap,
     body: Body,
 ) -> Response {
+    proxy_request_inner(state, method, uri, headers, body, None).await
+}
+
+async fn proxy_request_with_connect_info(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    State(state): State<ProxyStateHandle>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    body: Body,
+) -> Response {
+    proxy_request_inner(
+        state,
+        method,
+        uri,
+        headers,
+        body,
+        Some(addr.ip().to_string()),
+    )
+    .await
+}
+
+async fn proxy_request_inner(
+    state: ProxyStateHandle,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    body: Body,
+    client_ip: Option<String>,
+) -> Response {
     // 只在此处短暂持有读锁，避免影响并发请求性能。
     let state = { state.read().await.clone() };
     let request_start = Instant::now();
@@ -69,7 +99,12 @@ async fn proxy_request(
     let is_debug_log = is_debug_log_enabled(&state);
     let (path, _) = extract_request_path(&uri);
     let query = uri.query().map(|value| value.to_string());
-    tracing::info!(method = %method, path = %path, "incoming request");
+    tracing::info!(
+        method = %method,
+        path = %path,
+        client_ip = client_ip.as_deref().unwrap_or(""),
+        "incoming request"
+    );
     tracing::debug!(headers = ?headers.keys().collect::<Vec<_>>(), "request headers");
 
     if let Some(response) = http::cors_preflight_response(&state.config, &headers, &method) {
@@ -86,6 +121,7 @@ async fn proxy_request(
             &method,
             body,
             capture_request_detail_enabled,
+            client_ip.clone(),
             &path,
             query.as_deref(),
             request_start,
@@ -102,6 +138,7 @@ async fn proxy_request(
             &headers,
             body,
             capture_request_detail_enabled,
+            client_ip.clone(),
             &path,
             query.as_deref(),
             request_start,
@@ -117,6 +154,7 @@ async fn proxy_request(
             &headers,
             &state.log,
             None,
+            client_ip.clone(),
             &path,
             plan.provider,
             request_start,
@@ -125,6 +163,7 @@ async fn proxy_request(
             Err(response) => return http::with_cors_headers(&state.config, &headers, response),
         };
         let meta = RequestMeta {
+            client_ip: client_ip.clone(),
             stream: false,
             original_model: None,
             mapped_model: None,
@@ -154,6 +193,7 @@ async fn proxy_request(
         query,
         body,
         capture_request_detail_enabled,
+        client_ip,
         request_start,
         is_debug_log,
     )

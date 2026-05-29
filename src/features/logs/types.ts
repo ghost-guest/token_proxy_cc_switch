@@ -8,6 +8,7 @@ export type RequestLogDetail = {
   id: number;
   // 基础字段（与表格一致）
   tsMs: number;
+  clientIp: string | null;
   path: string;
   provider: string;
   upstreamId: string;

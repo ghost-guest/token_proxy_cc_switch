@@ -67,6 +67,7 @@ export type DashboardSeriesPoint = {
 export type DashboardRequestItem = {
   id: number;
   tsMs: number;
+  clientIp: string | null;
   path: string;
   provider: string;
   upstreamId: string;
