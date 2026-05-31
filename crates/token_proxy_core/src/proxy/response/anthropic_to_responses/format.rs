@@ -1,6 +1,11 @@
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 use super::super::super::log::TokenUsage;
+
+pub(super) struct AnthropicCacheUsage {
+    pub(super) read_tokens: u64,
+    pub(super) creation_tokens: u64,
+}
 
 pub(super) enum OutputItemSnapshot {
     Reasoning {
@@ -23,22 +28,32 @@ pub(super) enum OutputItemSnapshot {
     },
 }
 
-pub(super) fn usage_to_value(usage: TokenUsage, cached_tokens: Option<u64>) -> Value {
+pub(super) fn usage_to_value(usage: TokenUsage, cache_usage: Option<AnthropicCacheUsage>) -> Value {
     let input_tokens = usage.input_tokens.unwrap_or(0);
     let output_tokens = usage.output_tokens.unwrap_or(0);
-    let total_tokens = usage
-        .total_tokens
-        .or_else(|| input_tokens.checked_add(output_tokens))
-        .unwrap_or(0);
-    let cached_tokens = cached_tokens.unwrap_or(0);
+    let (cache_read_tokens, cache_creation_tokens) = cache_usage
+        .map(|usage| (usage.read_tokens, usage.creation_tokens))
+        .unwrap_or((0, 0));
+    let total_input_tokens = input_tokens
+        .saturating_add(cache_read_tokens)
+        .saturating_add(cache_creation_tokens);
+    let total_tokens = total_input_tokens.saturating_add(output_tokens);
 
-    json!({
-        "input_tokens": input_tokens,
-        "input_tokens_details": { "cached_tokens": cached_tokens },
+    let mut value = json!({
+        "input_tokens": total_input_tokens,
         "output_tokens": output_tokens,
         "output_tokens_details": { "reasoning_tokens": 0 },
         "total_tokens": total_tokens
-    })
+    });
+    if cache_read_tokens > 0 {
+        let mut details = Map::new();
+        details.insert("cached_tokens".to_string(), json!(cache_read_tokens));
+        value
+            .as_object_mut()
+            .expect("usage value is object")
+            .insert("input_tokens_details".to_string(), Value::Object(details));
+    }
+    value
 }
 
 pub(super) fn snapshot_to_output_item(

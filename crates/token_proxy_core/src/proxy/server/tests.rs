@@ -3898,25 +3898,35 @@ async fn send_anthropic_count_tokens_request(
     state: ProxyStateHandle,
     headers: HeaderMap,
 ) -> (StatusCode, Value) {
+    send_anthropic_count_tokens_request_with_body(
+        state,
+        headers,
+        json!({
+            "model": "claude-sonnet-4-5",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "text", "text": "hi from claude" }
+                    ]
+                }
+            ]
+        }),
+    )
+    .await
+}
+
+async fn send_anthropic_count_tokens_request_with_body(
+    state: ProxyStateHandle,
+    headers: HeaderMap,
+    body: Value,
+) -> (StatusCode, Value) {
     let response = proxy_request(
         State(state),
         Method::POST,
         Uri::from_static("/v1/messages/count_tokens"),
         headers,
-        Body::from(
-            json!({
-                "model": "claude-sonnet-4-5",
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            { "type": "text", "text": "hi from claude" }
-                        ]
-                    }
-                ]
-            })
-            .to_string(),
-        ),
+        Body::from(body.to_string()),
     )
     .await;
 
@@ -6121,6 +6131,130 @@ fn anthropic_count_tokens_preserves_authorization_header_name_for_upstream() {
 }
 
 #[test]
+fn anthropic_count_tokens_filters_generation_only_fields_for_upstream() {
+    run_async(async {
+        let upstream = spawn_mock_upstream(StatusCode::OK, json!({ "input_tokens": 12 })).await;
+        let config = config_with_runtime_upstreams(&[(
+            PROVIDER_ANTHROPIC,
+            0,
+            "anthropic-count-tokens-filter",
+            upstream.base_url.as_str(),
+            FORMATS_MESSAGES,
+        )]);
+        let data_dir = next_test_data_dir("anthropic_count_tokens_filters_generation_fields");
+        let state = build_test_state_handle(config, data_dir.clone()).await;
+        let mut headers = HeaderMap::new();
+        headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
+
+        let (status, _body) = send_anthropic_count_tokens_request_with_body(
+            state,
+            headers,
+            json!({
+                "model": "claude-sonnet-4-5",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [{ "type": "text", "text": "hi from claude" }]
+                    }
+                ],
+                "temperature": 0.7,
+                "top_p": 0.9,
+                "top_k": 40,
+                "stream": true,
+                "stop_sequences": ["END"],
+                "stop": ["legacy"],
+                "metadata": { "trace": "debug" }
+            }),
+        )
+        .await;
+        let requests = upstream.requests();
+
+        upstream.abort();
+        let _ = std::fs::remove_dir_all(&data_dir);
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(requests.len(), 1);
+        let body = &requests[0].body;
+        assert_eq!(body["model"], json!("claude-sonnet-4-5"));
+        assert!(body.get("messages").is_some());
+        assert!(body.get("temperature").is_none());
+        assert!(body.get("top_p").is_none());
+        assert!(body.get("top_k").is_none());
+        assert!(body.get("stream").is_none());
+        assert!(body.get("stop_sequences").is_none());
+        assert!(body.get("stop").is_none());
+        assert!(body.get("metadata").is_none());
+    });
+}
+
+#[test]
+fn anthropic_messages_preserves_generation_fields_for_upstream() {
+    run_async(async {
+        let upstream = spawn_mock_upstream(
+            StatusCode::OK,
+            json!({
+                "id": "msg_1",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-sonnet-4-5",
+                "content": [{ "type": "text", "text": "ok" }],
+                "usage": { "input_tokens": 1, "output_tokens": 1 }
+            }),
+        )
+        .await;
+        let config = config_with_runtime_upstreams(&[(
+            PROVIDER_ANTHROPIC,
+            0,
+            "anthropic-messages-preserve",
+            upstream.base_url.as_str(),
+            FORMATS_MESSAGES,
+        )]);
+        let data_dir = next_test_data_dir("anthropic_messages_preserves_generation_fields");
+        let state = build_test_state_handle(config, data_dir.clone()).await;
+        let request_body = json!({
+            "model": "claude-sonnet-4-5",
+            "max_tokens": 64,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{ "type": "text", "text": "hi from claude" }]
+                }
+            ],
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "top_k": 40,
+            "stream": false,
+            "stop_sequences": ["END"],
+            "metadata": { "trace": "debug" }
+        });
+
+        let response = proxy_request(
+            State(state),
+            Method::POST,
+            Uri::from_static("/v1/messages"),
+            HeaderMap::new(),
+            Body::from(request_body.to_string()),
+        )
+        .await;
+        let status = response.status();
+        let requests = upstream.requests();
+
+        upstream.abort();
+        let _ = std::fs::remove_dir_all(&data_dir);
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].path, "/v1/messages");
+        assert_eq!(requests[0].body["temperature"], json!(0.7));
+        assert_eq!(requests[0].body["top_p"], json!(0.9));
+        assert_eq!(requests[0].body["top_k"], json!(40));
+        assert_eq!(requests[0].body["stream"], json!(false));
+        assert_eq!(requests[0].body["stop_sequences"], json!(["END"]));
+        assert_eq!(requests[0].body["metadata"], json!({ "trace": "debug" }));
+    });
+}
+
+#[test]
 fn gemini_embed_route_dispatches_to_gemini() {
     let config = config_with_providers(&[(PROVIDER_GEMINI, FORMATS_GEMINI)]);
     let plan = resolve_dispatch_plan(&config, "/v1beta/models/text-embedding-004:embedContent")
@@ -6508,6 +6642,80 @@ fn openai_embeddings_route_prefers_openai_provider_over_anthropic_priority() {
     ]);
     let plan = resolve_dispatch_plan(&config, "/v1/embeddings").expect("should dispatch");
     assert_eq!(plan.provider, PROVIDER_CHAT);
+}
+
+#[test]
+fn openai_embeddings_request_passthroughs_to_openai_provider() {
+    run_async(async {
+        let upstream = spawn_mock_upstream(
+            StatusCode::OK,
+            json!({
+                "object": "list",
+                "data": [
+                    {
+                        "object": "embedding",
+                        "embedding": [0.1, 0.2],
+                        "index": 0
+                    }
+                ],
+                "model": "text-embedding-3-small",
+                "usage": { "prompt_tokens": 2, "total_tokens": 2 }
+            }),
+        )
+        .await;
+        let config = config_with_runtime_upstreams(&[
+            (
+                PROVIDER_ANTHROPIC,
+                10,
+                "anthropic-high-priority",
+                "https://api.anthropic.com",
+                FORMATS_MESSAGES,
+            ),
+            (
+                PROVIDER_CHAT,
+                0,
+                "openai-embeddings",
+                upstream.base_url.as_str(),
+                FORMATS_CHAT,
+            ),
+        ]);
+        let data_dir = next_test_data_dir("openai_embeddings_passthrough");
+        let state = build_test_state_handle(config, data_dir.clone()).await;
+        let request_body = json!({
+            "model": "text-embedding-3-small",
+            "input": ["hello", "world"],
+            "encoding_format": "float"
+        });
+
+        let response = proxy_request(
+            State(state),
+            Method::POST,
+            Uri::from_static("/v1/embeddings"),
+            HeaderMap::new(),
+            Body::from(request_body.to_string()),
+        )
+        .await;
+        let response_status = response.status();
+        let response_bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("proxy response bytes");
+        let response_json: Value =
+            serde_json::from_slice(&response_bytes).expect("proxy response json");
+        let requests = upstream.requests();
+
+        upstream.abort();
+        let _ = std::fs::remove_dir_all(&data_dir);
+
+        assert_eq!(response_status, StatusCode::OK);
+        assert_eq!(response_json["model"], json!("text-embedding-3-small"));
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].path, "/v1/embeddings");
+        assert_eq!(requests[0].body, request_body);
+        assert_eq!(
+            requests[0].authorization.as_deref(),
+            Some("Bearer test-key")
+        );
+    });
 }
 
 #[test]

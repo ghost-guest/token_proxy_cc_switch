@@ -437,8 +437,13 @@ fn responses_response_to_chat_extracts_output_text_and_maps_usage() {
             "input_tokens": 1,
             "output_tokens": 2,
             "total_tokens": 3,
-            "input_tokens_details": { "cached_tokens": 4 },
-            "output_tokens_details": { "reasoning_tokens": 7 }
+            "input_tokens_details": { "cached_tokens": 4, "audio_tokens": 5 },
+            "output_tokens_details": {
+                "reasoning_tokens": 7,
+                "audio_tokens": 8,
+                "accepted_prediction_tokens": 9,
+                "rejected_prediction_tokens": 10
+            }
         }
     }));
 
@@ -464,9 +469,62 @@ fn responses_response_to_chat_extracts_output_text_and_maps_usage() {
         json!(4)
     );
     assert_eq!(
+        value["usage"]["prompt_tokens_details"]["audio_tokens"],
+        json!(5)
+    );
+    assert_eq!(
         value["usage"]["completion_tokens_details"]["reasoning_tokens"],
         json!(7)
     );
+    assert_eq!(
+        value["usage"]["completion_tokens_details"]["audio_tokens"],
+        json!(8)
+    );
+    assert_eq!(
+        value["usage"]["completion_tokens_details"]["accepted_prediction_tokens"],
+        json!(9)
+    );
+    assert_eq!(
+        value["usage"]["completion_tokens_details"]["rejected_prediction_tokens"],
+        json!(10)
+    );
+}
+
+#[test]
+fn responses_response_to_chat_omits_empty_usage_details() {
+    let input = bytes_from_json(json!({
+        "id": "resp_zero_usage_details",
+        "created_at": 1700000001,
+        "model": "gpt-4.1",
+        "output": [
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    { "type": "output_text", "text": "ok", "annotations": [] }
+                ]
+            }
+        ],
+        "usage": {
+            "input_tokens": 1,
+            "output_tokens": 2,
+            "total_tokens": 3,
+            "input_tokens_details": { "cached_tokens": 0, "audio_tokens": 0 },
+            "output_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 0,
+                "rejected_prediction_tokens": 0
+            }
+        }
+    }));
+
+    let output =
+        transform_response_body(FormatTransform::ResponsesToChat, &input, None).expect("transform");
+    let value = json_from_bytes(output);
+
+    assert!(value["usage"].get("prompt_tokens_details").is_none());
+    assert!(value["usage"].get("completion_tokens_details").is_none());
 }
 
 #[test]

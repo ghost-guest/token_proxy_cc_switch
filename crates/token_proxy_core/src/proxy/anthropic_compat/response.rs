@@ -369,11 +369,15 @@ fn map_anthropic_usage_to_openai_usage(usage: &Map<String, Value>) -> Value {
     let cache_creation = usage
         .get("cache_creation_input_tokens")
         .and_then(Value::as_u64);
+    let cache_read_tokens = cache_read.unwrap_or(0);
+    let cache_creation_tokens = cache_creation.unwrap_or(0);
+    let total_input_tokens = input_tokens
+        .saturating_add(cache_read_tokens)
+        .saturating_add(cache_creation_tokens);
     json!({
-        "input_tokens": input_tokens,
+        "input_tokens": total_input_tokens,
         "output_tokens": output_tokens,
-        "total_tokens": input_tokens + output_tokens,
-        "cache_read_input_tokens": cache_read,
-        "cache_creation_input_tokens": cache_creation
+        "total_tokens": total_input_tokens + output_tokens,
+        "input_tokens_details": { "cached_tokens": cache_read_tokens }
     })
 }

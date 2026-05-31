@@ -688,7 +688,7 @@ fn stream_responses_to_chat_emits_usage_chunk_from_terminal_event_usage() {
                 "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n",
             )),
             Ok(Bytes::from(
-                "data: {\"type\":\"response.completed\",\"usage\":{\"input_tokens\":8,\"output_tokens\":3,\"total_tokens\":11,\"input_tokens_details\":{\"cached_tokens\":5}},\"response\":{\"id\":\"resp_1\",\"status\":\"completed\"}}\n\n",
+                "data: {\"type\":\"response.completed\",\"usage\":{\"input_tokens\":8,\"output_tokens\":3,\"total_tokens\":11,\"input_tokens_details\":{\"cached_tokens\":5,\"audio_tokens\":2},\"output_tokens_details\":{\"reasoning_tokens\":4,\"audio_tokens\":6,\"accepted_prediction_tokens\":7,\"rejected_prediction_tokens\":8}},\"response\":{\"id\":\"resp_1\",\"status\":\"completed\"}}\n\n",
             )),
             Ok(Bytes::from("data: [DONE]\n\n")),
         ]);
@@ -709,6 +709,26 @@ fn stream_responses_to_chat_emits_usage_chunk_from_terminal_event_usage() {
         assert_eq!(
             usage["usage"]["prompt_tokens_details"]["cached_tokens"],
             json!(5)
+        );
+        assert_eq!(
+            usage["usage"]["prompt_tokens_details"]["audio_tokens"],
+            json!(2)
+        );
+        assert_eq!(
+            usage["usage"]["completion_tokens_details"]["reasoning_tokens"],
+            json!(4)
+        );
+        assert_eq!(
+            usage["usage"]["completion_tokens_details"]["audio_tokens"],
+            json!(6)
+        );
+        assert_eq!(
+            usage["usage"]["completion_tokens_details"]["accepted_prediction_tokens"],
+            json!(7)
+        );
+        assert_eq!(
+            usage["usage"]["completion_tokens_details"]["rejected_prediction_tokens"],
+            json!(8)
         );
     });
 }
@@ -944,6 +964,78 @@ fn stream_anthropic_to_responses_emits_reasoning_summary_events_and_snapshot() {
             completed["response"]["output"][1]["content"][0]["text"],
             json!("final answer")
         );
+    });
+}
+
+#[test]
+fn stream_anthropic_to_responses_adds_cache_tokens_to_openai_input_usage() {
+    super::run_async(async {
+        let sqlite_pool = super::create_test_sqlite_pool().await;
+        let log = Arc::new(LogWriter::new(Some(sqlite_pool)));
+        let context = LogContext {
+            client_ip: None,
+            path: "/v1/responses".to_string(),
+            provider: "anthropic".to_string(),
+            upstream_id: "unit-test".to_string(),
+            account_id: None,
+            model: Some("claude-3-7-sonnet".to_string()),
+            mapped_model: Some("claude-3-7-sonnet".to_string()),
+            stream: true,
+            status: 200,
+            upstream_request_id: None,
+            request_headers: None,
+            request_body: None,
+            ttfb_ms: None,
+            timings: Default::default(),
+            start: Instant::now(),
+        };
+
+        let upstream = futures_util::stream::iter(vec![
+            Ok::<Bytes, reqwest::Error>(Bytes::from(
+                "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"model\":\"claude-3-7-sonnet\",\"usage\":{\"input_tokens\":10,\"cache_read_input_tokens\":4,\"cache_creation_input_tokens\":6}}}\n\n",
+            )),
+            Ok(Bytes::from(
+                "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+            )),
+            Ok(Bytes::from(
+                "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"final answer\"}}\n\n",
+            )),
+            Ok(Bytes::from(
+                "event: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":3},\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null}}\n\n",
+            )),
+            Ok(Bytes::from(
+                "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+            )),
+        ]);
+
+        let token_tracker = crate::proxy::token_rate::TokenRateTracker::new()
+            .register(None, None)
+            .await;
+        let responses_stream = super::super::anthropic_to_responses::stream_anthropic_to_responses(
+            upstream,
+            context,
+            log,
+            token_tracker,
+        );
+
+        let chunks: Vec<Bytes> = responses_stream
+            .map(|item| item.expect("stream item"))
+            .collect()
+            .await;
+        let payloads = chunks
+            .iter()
+            .filter_map(super::parse_sse_json)
+            .collect::<Vec<_>>();
+        let completed = payloads
+            .iter()
+            .find(|payload| payload["type"] == json!("response.completed"))
+            .expect("completed event");
+        let usage = &completed["response"]["usage"];
+
+        assert_eq!(usage["input_tokens"], json!(20));
+        assert_eq!(usage["output_tokens"], json!(3));
+        assert_eq!(usage["total_tokens"], json!(23));
+        assert_eq!(usage["input_tokens_details"]["cached_tokens"], json!(4));
     });
 }
 

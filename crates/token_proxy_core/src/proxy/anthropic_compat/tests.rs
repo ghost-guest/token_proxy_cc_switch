@@ -564,6 +564,34 @@ fn anthropic_response_to_responses_maps_thinking_blocks_to_reasoning_items() {
 }
 
 #[test]
+fn anthropic_response_to_responses_adds_cache_tokens_to_openai_input_usage() {
+    let input = bytes_from_json(json!({
+        "id": "msg_cache_usage",
+        "model": "claude-3-7-sonnet",
+        "content": [
+            { "type": "text", "text": "final answer" }
+        ],
+        "usage": {
+            "input_tokens": 10,
+            "output_tokens": 3,
+            "cache_read_input_tokens": 4,
+            "cache_creation_input_tokens": 6
+        }
+    }));
+
+    let output = anthropic_response_to_responses(&input).expect("transform");
+    let value = json_from_bytes(output);
+
+    assert_eq!(value["usage"]["input_tokens"], json!(20));
+    assert_eq!(value["usage"]["output_tokens"], json!(3));
+    assert_eq!(value["usage"]["total_tokens"], json!(23));
+    assert_eq!(
+        value["usage"]["input_tokens_details"]["cached_tokens"],
+        json!(4)
+    );
+}
+
+#[test]
 fn anthropic_response_to_responses_maps_redacted_thinking_to_encrypted_reasoning() {
     let input = bytes_from_json(json!({
         "id": "msg_redacted",

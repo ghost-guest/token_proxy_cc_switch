@@ -3,13 +3,14 @@ use futures_util::StreamExt;
 use serde_json::{json, Value};
 use std::{collections::HashMap, collections::VecDeque, sync::Arc};
 
+use super::super::log::TokenUsage;
 use super::super::log::{attach_response_body, build_log_entry, LogContext, LogWriter};
 use super::super::sse::SseEventParser;
 use super::super::token_rate::RequestTokenTracker;
 use super::super::usage::SseUsageCollector;
 use super::streaming::STREAM_DROPPED_ERROR;
 use crate::proxy::compat_reason;
-use format::{snapshot_to_output_item, usage_to_value, OutputItemSnapshot};
+use format::{snapshot_to_output_item, usage_to_value, AnthropicCacheUsage, OutputItemSnapshot};
 
 mod format;
 
@@ -74,6 +75,9 @@ struct AnthropicToResponsesState<S> {
     logged: bool,
     upstream_ended: bool,
     response_body_buf: String,
+    input_tokens: u64,
+    cache_read_input_tokens: u64,
+    cache_creation_input_tokens: u64,
 }
 
 impl<S> AnthropicToResponsesState<S> {
@@ -138,6 +142,9 @@ where
             logged: false,
             upstream_ended: false,
             response_body_buf: String::new(),
+            input_tokens: 0,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
         };
         state.push_response_created();
         state
@@ -222,6 +229,11 @@ where
                         }
                     }
                 }
+                self.capture_anthropic_usage(
+                    value
+                        .get("message")
+                        .and_then(|message| message.get("usage")),
+                );
             }
             "content_block_start" => self.handle_content_block_start(&value),
             "content_block_delta" => self.handle_content_block_delta(&value, token_texts),
@@ -234,6 +246,7 @@ where
     }
 
     fn handle_message_delta(&mut self, value: &Value) {
+        self.capture_anthropic_usage(value.get("usage"));
         let stop_reason = value
             .get("delta")
             .and_then(Value::as_object)
@@ -243,6 +256,24 @@ where
             compat_reason::responses_status_from_anthropic_stop_reason(stop_reason);
         self.response_status = status;
         self.incomplete_reason = incomplete_reason;
+    }
+
+    fn capture_anthropic_usage(&mut self, usage: Option<&Value>) {
+        let Some(usage) = usage.and_then(Value::as_object) else {
+            return;
+        };
+        if let Some(tokens) = usage.get("cache_read_input_tokens").and_then(Value::as_u64) {
+            self.cache_read_input_tokens = tokens;
+        }
+        if let Some(tokens) = usage.get("input_tokens").and_then(Value::as_u64) {
+            self.input_tokens = tokens;
+        }
+        if let Some(tokens) = usage
+            .get("cache_creation_input_tokens")
+            .and_then(Value::as_u64)
+        {
+            self.cache_creation_input_tokens = tokens;
+        }
     }
 
     fn handle_content_block_start(&mut self, value: &Value) {
@@ -527,10 +558,16 @@ where
 
         let completed_at = (super::now_ms() / 1000) as i64;
         let usage_snapshot = self.collector.finish();
-        let usage = usage_snapshot
-            .usage
-            .clone()
-            .map(|usage| usage_to_value(usage, usage_snapshot.cached_tokens));
+        let usage = usage_snapshot.usage.clone().map(|mut usage| {
+            self.fill_missing_anthropic_stream_usage(&mut usage);
+            usage_to_value(
+                usage,
+                Some(AnthropicCacheUsage {
+                    read_tokens: self.cache_read_input_tokens,
+                    creation_tokens: self.cache_creation_input_tokens,
+                }),
+            )
+        });
 
         let mut snapshots = Vec::new();
         for reasoning in &self.reasonings {
@@ -772,6 +809,12 @@ where
             "incomplete_details": incomplete_details.unwrap_or(Value::Null),
             "metadata": {}
         })
+    }
+
+    fn fill_missing_anthropic_stream_usage(&self, usage: &mut TokenUsage) {
+        if usage.input_tokens.is_none() && self.input_tokens > 0 {
+            usage.input_tokens = Some(self.input_tokens);
+        }
     }
 
     fn parallel_tool_calls(&self) -> bool {

@@ -8,6 +8,7 @@ use super::{request::split_path_query, AttemptOutcome};
 
 const OPENAI_CHAT_PATH: &str = "/v1/chat/completions";
 const OPENAI_RESPONSES_PATH: &str = "/v1/responses";
+const ANTHROPIC_COUNT_TOKENS_PATH: &str = "/v1/messages/count_tokens";
 const REQUEST_MODEL_MAPPING_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 const REQUEST_REASONING_LIMIT_BYTES: usize = 100 * 1024 * 1024;
 const REQUEST_FILTER_LIMIT_BYTES: usize = 20 * 1024 * 1024;
@@ -80,6 +81,7 @@ async fn build_json_transformed_body(
         must_strip_sampling,
     )?;
     changed |= rewrite_developer_roles_if_needed(upstream, upstream_path, object, body_len);
+    changed |= filter_anthropic_count_tokens_request(provider, upstream_path, object, body_len);
     if !changed {
         return Ok(None);
     }
@@ -109,6 +111,9 @@ fn json_transform_read_limit(
     if should_rewrite_developer_roles(upstream, upstream_path) {
         limit = limit.max(REQUEST_FILTER_LIMIT_BYTES);
     }
+    if should_filter_anthropic_count_tokens_request(provider, upstream_path) {
+        limit = limit.max(REQUEST_FILTER_LIMIT_BYTES);
+    }
     limit
 }
 
@@ -123,6 +128,7 @@ fn needs_json_transform(
         || should_filter_openai_responses_fields(provider, upstream, upstream_path)
         || should_strip_openai_responses_sampling_params(provider, upstream_path, meta)
         || should_rewrite_developer_roles(upstream, upstream_path)
+        || should_filter_anthropic_count_tokens_request(provider, upstream_path)
 }
 
 fn rewrite_model_mapping(
@@ -299,6 +305,42 @@ fn rewrite_developer_roles_if_needed(
         return rewrite_chat_developer_roles(object);
     }
     rewrite_responses_developer_roles(object)
+}
+
+fn should_filter_anthropic_count_tokens_request(provider: &str, upstream_path: &str) -> bool {
+    provider == "anthropic" && upstream_path == ANTHROPIC_COUNT_TOKENS_PATH
+}
+
+fn filter_anthropic_count_tokens_request(
+    provider: &str,
+    upstream_path: &str,
+    object: &mut Map<String, Value>,
+    body_len: usize,
+) -> bool {
+    if body_len > REQUEST_FILTER_LIMIT_BYTES {
+        return false;
+    }
+    if !should_filter_anthropic_count_tokens_request(provider, upstream_path) {
+        return false;
+    }
+
+    // Anthropic count_tokens rejects generation-only fields accepted by messages.
+    let mut changed = false;
+    for key in [
+        "temperature",
+        "top_p",
+        "top_k",
+        "stream",
+        "stop_sequences",
+        "stop",
+        "metadata",
+    ] {
+        changed |= object.remove(key).is_some();
+    }
+    if changed {
+        tracing::debug!("filtered Anthropic count_tokens generation-only fields");
+    }
+    changed
 }
 
 fn replayable_from_json(value: Value) -> Result<ReplayableBody, AttemptOutcome> {
