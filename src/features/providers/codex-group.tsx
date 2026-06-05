@@ -91,9 +91,16 @@ function formatAccountLabel(account: CodexAccountSummary) {
 }
 
 function formatAccountStatus(account: CodexAccountSummary) {
-  return account.status === "expired"
-    ? m.codex_account_status_expired()
-    : m.codex_account_status_active();
+  if (account.status === "expired") {
+    return m.codex_account_status_expired();
+  }
+  if (account.status === "invalid") {
+    return m.codex_account_status_invalid();
+  }
+  if (account.status === "disabled") {
+    return m.codex_account_status_disabled();
+  }
+  return m.codex_account_status_active();
 }
 
 function formatDate(value: string | null) {
@@ -133,17 +140,19 @@ function buildStatusSummary(accounts: CodexAccountSummary[]) {
     (acc, account) => {
       if (account.status === "expired") {
         acc.expired += 1;
+      } else if (account.status === "invalid" || account.status === "disabled") {
+        acc.inactive += 1;
       } else {
         acc.active += 1;
       }
       return acc;
     },
-    { active: 0, expired: 0 }
+    { active: 0, expired: 0, inactive: 0 }
   );
 
   return m.providers_status_summary({
     active: summary.active,
-    expired: summary.expired,
+    expired: summary.expired + summary.inactive,
   });
 }
 

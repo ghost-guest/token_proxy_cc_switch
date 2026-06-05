@@ -33,8 +33,10 @@ export function useCodexAccounts(options?: UseCodexAccountsOptions) {
       const next = await listCodexAccounts();
       setAccounts(next);
       setError("");
+      return next;
     } catch (err) {
       setError(parseError(err));
+      return [];
     } finally {
       setLoading(false);
     }

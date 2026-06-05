@@ -13,8 +13,28 @@ const providerMocks = vi.hoisted(() => {
   let kiroQuotasLoading = false;
   let codexAccountsLoading = false;
   let codexQuotasLoading = false;
+  const allCodexAccounts = [
+    {
+      account_id: "codex-1",
+      email: "bob@example.com",
+      expires_at: "2026-04-01T00:00:00Z",
+      status: "expired" as const,
+      auto_refresh_enabled: true,
+      priority: 1,
+      proxy_url: "",
+    },
+    {
+      account_id: "codex-2",
+      email: "two@example.com",
+      expires_at: "2026-07-01T00:00:00Z",
+      status: "active" as const,
+      auto_refresh_enabled: true,
+      priority: 0,
+      proxy_url: "",
+    },
+  ];
   const refreshKiroAccounts = vi.fn(async () => undefined);
-  const refreshCodexAccounts = vi.fn(async () => undefined);
+  const refreshCodexAccounts = vi.fn(async () => allCodexAccounts);
   const refreshCodexAccount = vi.fn(async () => undefined);
   const refreshKiroQuotaCache = vi.fn(async () => undefined);
   const refreshCodexQuotaCache = vi.fn(async () => undefined);
@@ -144,6 +164,14 @@ const providerMocks = vi.hoisted(() => {
     },
   ]);
   const deleteProviderAccounts = vi.fn(async () => undefined);
+  const buildCounts = (rows: ProviderAccountPageItem[]) => ({
+    all: rows.length,
+    active: rows.filter((row) => row.status === "active").length,
+    disabled: rows.filter((row) => row.status === "disabled").length,
+    expired: rows.filter((row) => row.status === "expired").length,
+    invalid: rows.filter((row) => row.status === "invalid").length,
+    cooling_down: rows.filter((row) => row.status === "cooling_down").length,
+  });
   const listProviderAccountsPage = vi.fn(
     async ({
       page = 1,
@@ -155,7 +183,7 @@ const providerMocks = vi.hoisted(() => {
       page?: number;
       pageSize?: number;
       providerKind?: "kiro" | "codex";
-      status?: "active" | "disabled" | "expired" | "cooling_down";
+      status?: "active" | "disabled" | "expired" | "invalid" | "cooling_down";
       search?: string;
     }) => {
       const rows: ProviderAccountPageItem[] = [
@@ -214,11 +242,8 @@ const providerMocks = vi.hoisted(() => {
         },
       ];
       const keyword = search?.trim().toLowerCase() ?? "";
-      const filtered = rows.filter((row) => {
+      const scopedRows = rows.filter((row) => {
         if (providerKind && row.provider_kind !== providerKind) {
-          return false;
-        }
-        if (status && row.status !== status) {
           return false;
         }
         if (!keyword) {
@@ -226,12 +251,14 @@ const providerMocks = vi.hoisted(() => {
         }
         return `${row.email ?? ""} ${row.account_id}`.toLowerCase().includes(keyword);
       });
+      const filtered = status ? scopedRows.filter((row) => row.status === status) : scopedRows;
       const offset = (page - 1) * pageSize;
       return {
         items: filtered.slice(offset, offset + pageSize),
         total: filtered.length,
         page,
         page_size: pageSize,
+        status_counts: buildCounts(scopedRows),
       };
     }
   );
@@ -294,6 +321,7 @@ const providerMocks = vi.hoisted(() => {
     listProviderAccountsPage,
     toastError,
     toastSuccess,
+    allCodexAccounts,
   };
 });
 
@@ -342,16 +370,7 @@ vi.mock("@/features/kiro/use-kiro-accounts", () => ({
 
 vi.mock("@/features/codex/use-codex-accounts", () => ({
   useCodexAccounts: () => ({
-    accounts: [
-      {
-        account_id: "codex-1",
-        email: "bob@example.com",
-        expires_at: "2026-04-01T00:00:00Z",
-        status: "expired",
-        priority: 1,
-        proxy_url: "",
-      },
-    ],
+    accounts: providerMocks.allCodexAccounts,
     loading: providerMocks.codexAccountsLoading,
     error: "",
     refresh: providerMocks.refreshCodexAccounts,
@@ -574,6 +593,14 @@ describe("providers/ProvidersPanel", () => {
       total: 2,
       page: 1,
       page_size: 10,
+      status_counts: {
+        all: 2,
+        active: 1,
+        disabled: 0,
+        expired: 1,
+        invalid: 0,
+        cooling_down: 0,
+      },
     });
 
     render(<ProvidersPanel />);
@@ -649,6 +676,138 @@ describe("providers/ProvidersPanel", () => {
 
     expect(within(getAccountsTable()).getByText("bob@example.com")).toBeInTheDocument();
     expect(within(getAccountsTable()).queryByText("alice@example.com")).not.toBeInTheDocument();
+  });
+
+  it("shows invalid account counts and filters invalid accounts from summary", async () => {
+    const user = userEvent.setup();
+    providerMocks.listProviderAccountsPage.mockImplementation(
+      async ({ status }: { status?: "active" | "disabled" | "expired" | "invalid" | "cooling_down" }) => {
+        const rows: ProviderAccountPageItem[] = [
+          {
+            provider_kind: "codex",
+            account_id: "codex-valid",
+            email: "valid@example.com",
+            expires_at: "2026-07-01T00:00:00Z",
+            status: "active",
+            auth_method: null,
+            provider_name: null,
+            auto_refresh_enabled: true,
+            priority: 1,
+            proxy_url: "",
+            quota: { plan_type: null, error: null, checked_at: null, items: [] },
+          },
+          {
+            provider_kind: "codex",
+            account_id: "codex-invalid",
+            email: "invalid@example.com",
+            expires_at: "2026-07-01T00:00:00Z",
+            status: "invalid",
+            auth_method: null,
+            provider_name: null,
+            auto_refresh_enabled: true,
+            priority: 0,
+            proxy_url: "",
+            quota: {
+              plan_type: null,
+              error: "Codex 登录已失效，请重新登录该账户。",
+              checked_at: "2026-04-01T00:00:00Z",
+              items: [],
+            },
+          },
+        ];
+        const filtered = status ? rows.filter((row) => row.status === status) : rows;
+        return {
+          items: filtered,
+          total: filtered.length,
+          page: 1,
+          page_size: 10,
+          status_counts: {
+            all: 2,
+            active: 1,
+            disabled: 0,
+            expired: 0,
+            invalid: 1,
+            cooling_down: 0,
+          },
+        };
+      }
+    );
+
+    render(<ProvidersPanel />);
+
+    const summary = document.querySelector('[data-slot="providers-status-summary"]');
+    if (!(summary instanceof HTMLElement)) {
+      throw new Error("Missing providers status summary");
+    }
+    expect(await within(summary).findByText(m.codex_account_status_invalid())).toBeInTheDocument();
+    const invalidSummaryButton = summary.querySelector('[data-slot="providers-status-summary-invalid"]');
+    if (!(invalidSummaryButton instanceof HTMLButtonElement)) {
+      throw new Error("Missing invalid status summary button");
+    }
+    expect(invalidSummaryButton).toHaveTextContent(`${m.codex_account_status_invalid()}1`);
+
+    await user.click(invalidSummaryButton);
+
+    await waitFor(() => {
+      expect(providerMocks.listProviderAccountsPage).toHaveBeenLastCalledWith({
+        page: 1,
+        pageSize: 10,
+        providerKind: undefined,
+        status: "invalid",
+        search: "",
+      });
+    });
+    expect(within(getAccountsTable()).getByText("invalid@example.com")).toBeInTheDocument();
+    expect(within(getAccountsTable()).queryByText("valid@example.com")).not.toBeInTheDocument();
+  });
+
+  it("refreshes all auto-refresh Codex tokens from toolbar action", async () => {
+    const user = userEvent.setup();
+    providerMocks.listProviderAccountsPage.mockResolvedValue({
+      items: [
+        {
+          provider_kind: "codex",
+          account_id: "codex-1",
+          email: "one@example.com",
+          expires_at: "2026-07-01T00:00:00Z",
+          status: "active",
+          auth_method: null,
+          provider_name: null,
+          auto_refresh_enabled: true,
+          priority: 2,
+          proxy_url: "",
+          quota: { plan_type: null, error: null, checked_at: null, items: [] },
+        },
+      ],
+      total: 1,
+      page: 1,
+      page_size: 10,
+      status_counts: {
+        all: 2,
+        active: 2,
+        disabled: 0,
+        expired: 0,
+        invalid: 0,
+        cooling_down: 0,
+      },
+    });
+
+    render(<ProvidersPanel />);
+    await screen.findByText("one@example.com");
+    expect(screen.queryByText("two@example.com")).not.toBeInTheDocument();
+    await user.click(
+      within(getToolbar()).getByRole("button", {
+        name: m.providers_refresh_all_codex_tokens(),
+      })
+    );
+
+    await waitFor(() => {
+      expect(providerMocks.refreshCodexAccount).toHaveBeenCalledWith("codex-1");
+      expect(providerMocks.refreshCodexAccount).toHaveBeenCalledWith("codex-2");
+    });
+    expect(providerMocks.toastSuccess).toHaveBeenCalledWith(
+      m.providers_refresh_all_codex_tokens_success({ count: 2 })
+    );
   });
 
   it("opens account dialog from edit action", async () => {
@@ -1292,15 +1451,27 @@ describe("providers/ProvidersPanel", () => {
       total: 2,
       page: 1,
       page_size: 10,
+      status_counts: {
+        all: 2,
+        active: 0,
+        disabled: 1,
+        expired: 0,
+        invalid: 0,
+        cooling_down: 1,
+      },
     });
 
     render(<ProvidersPanel />);
 
     expect(await screen.findByText("disabled@example.com")).toBeInTheDocument();
     expect(screen.getByText("cooling@example.com")).toBeInTheDocument();
-    expect(screen.getByText(m.kiro_account_status_disabled({}, { locale: "zh" }))).toBeInTheDocument();
     expect(
-      screen.getByText(m.providers_account_status_cooling_down({}, { locale: "zh" })),
+      within(getAccountsTable()).getByText(m.kiro_account_status_disabled({}, { locale: "zh" }))
+    ).toBeInTheDocument();
+    expect(
+      within(getAccountsTable()).getByText(
+        m.providers_account_status_cooling_down({}, { locale: "zh" })
+      ),
     ).toBeInTheDocument();
   });
 });

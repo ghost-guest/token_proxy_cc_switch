@@ -15,6 +15,7 @@ use crate::oauth_util::{
 use crate::paths::TokenProxyPaths;
 use crate::provider_accounts;
 
+use super::error::error_requires_relogin;
 use super::oauth::{CodexOAuthClient, CodexRefreshTokenClient};
 use super::types::{CodexAccountStatus, CodexAccountSummary, CodexTokenRecord};
 
@@ -229,6 +230,16 @@ impl CodexAccountStore {
     ) -> Result<CodexAccountSummary, String> {
         let mut record = self.load_account(account_id).await?;
         record.status = status;
+        self.save_record(account_id.to_string(), record).await
+    }
+
+    pub(crate) async fn mark_invalid(
+        &self,
+        account_id: &str,
+    ) -> Result<CodexAccountSummary, String> {
+        let mut record = self.load_account(account_id).await?;
+        record.status = CodexAccountStatus::Invalid;
+        tracing::warn!(account_id, "codex account marked invalid");
         self.save_record(account_id.to_string(), record).await
     }
 
@@ -512,9 +523,24 @@ impl CodexAccountStore {
             client = refresh_client.as_str(),
             "codex account refresh start"
         );
-        let response = client
+        let response = match client
             .refresh_token_with_client(&record.refresh_token, refresh_client)
-            .await?;
+            .await
+        {
+            Ok(response) => response,
+            Err(err) => {
+                if error_requires_relogin(&err) {
+                    if let Err(mark_err) = self.mark_invalid(account_id).await {
+                        tracing::warn!(
+                            account_id,
+                            error = %mark_err,
+                            "codex account invalid mark failed"
+                        );
+                    }
+                }
+                return Err(err);
+            }
+        };
         let mut refreshed = CodexTokenRecord {
             access_token: response.access_token,
             refresh_token: if response.refresh_token.trim().is_empty() {
@@ -606,6 +632,9 @@ impl CodexAccountStore {
             if matches!(record.effective_status(), CodexAccountStatus::Expired) {
                 return Err(format!("Codex account is expired: {account_id}"));
             }
+            if matches!(record.effective_status(), CodexAccountStatus::Invalid) {
+                return Err(format!("Codex account requires re-login: {account_id}"));
+            }
             return Ok((account_id.to_string(), record));
         }
 
@@ -625,6 +654,9 @@ impl CodexAccountStore {
                 }
                 Ok(record) if matches!(record.effective_status(), CodexAccountStatus::Disabled) => {
                     last_error = Some(format!("Codex account is disabled: {account_id}"));
+                }
+                Ok(record) if matches!(record.effective_status(), CodexAccountStatus::Invalid) => {
+                    last_error = Some(format!("Codex account requires re-login: {account_id}"));
                 }
                 Ok(_) => {
                     last_error = Some(format!("Codex account is expired: {account_id}"));
@@ -3333,6 +3365,57 @@ INSERT INTO provider_accounts (
     }
 
     #[test]
+    fn refresh_account_persists_invalid_after_relogin_error() {
+        run_async(async {
+            let (store, data_dir) = create_test_store();
+            let account_id = "codex-refresh-invalid.json".to_string();
+            store
+                .save_record(
+                    account_id.clone(),
+                    CodexTokenRecord {
+                        access_token: "access-old".to_string(),
+                        refresh_token: "refresh-token".to_string(),
+                        client_id: Some(CodexRefreshTokenClient::Codex.client_id().to_string()),
+                        id_token: build_id_token("refresh-invalid@example.com", "acct-invalid"),
+                        auto_refresh_enabled: true,
+                        status: CodexAccountStatus::Active,
+                        account_id: Some("acct-invalid".to_string()),
+                        user_id: None,
+                        email: Some("refresh-invalid@example.com".to_string()),
+                        expires_at: future_rfc3339(24),
+                        last_refresh: None,
+                        proxy_url: None,
+                        priority: 0,
+                        quota: CodexQuotaCache::default(),
+                    },
+                )
+                .await
+                .expect("seed codex account");
+            let (token_url, token_task) = spawn_relogin_required_token_endpoint().await;
+            store.set_test_token_url(&token_url).await;
+
+            let err = store
+                .refresh_account(&account_id)
+                .await
+                .expect_err("refresh should require re-login");
+            let record = store
+                .load_account(&account_id)
+                .await
+                .expect("load invalid record");
+
+            token_task.abort();
+            let _ = std::fs::remove_dir_all(data_dir);
+
+            assert!(err.contains("Codex 登录已失效"));
+            assert!(matches!(record.status, CodexAccountStatus::Invalid));
+            assert!(matches!(
+                record.effective_status(),
+                CodexAccountStatus::Invalid
+            ));
+        });
+    }
+
+    #[test]
     fn quota_refresh_persists_token_refresh_failure_after_relogin_error() {
         run_async(async {
             let (store, data_dir) = create_test_store();
@@ -3384,6 +3467,11 @@ INSERT INTO provider_accounts (
             assert!(error.contains("Codex usage request failed after token refresh failed"));
             assert!(error.contains("Codex 登录已失效"));
             assert_eq!(record.quota.error.as_deref(), Some(error));
+            assert!(matches!(record.status, CodexAccountStatus::Invalid));
+            assert!(matches!(
+                record.effective_status(),
+                CodexAccountStatus::Invalid
+            ));
             assert_eq!(
                 *authorizations.lock().expect("usage authorizations lock"),
                 vec!["Bearer access-old".to_string()]

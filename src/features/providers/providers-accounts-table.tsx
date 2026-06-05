@@ -61,7 +61,7 @@ export type ProviderAccountTableRow = {
   displayName: string;
   accountId: string;
   priority: number;
-  status: "active" | "disabled" | "expired" | "cooling_down";
+  status: "active" | "disabled" | "expired" | "invalid" | "cooling_down";
   statusLabel: string;
   statusVariant: BadgeVariant;
   expiresAtLabel: string;

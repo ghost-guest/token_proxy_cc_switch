@@ -26,6 +26,7 @@ pub enum CodexAccountStatus {
     Active,
     Disabled,
     Expired,
+    Invalid,
 }
 
 fn default_account_priority() -> i32 {
@@ -77,6 +78,9 @@ impl CodexTokenRecord {
     pub fn effective_status(&self) -> CodexAccountStatus {
         if self.status == CodexAccountStatus::Disabled {
             return CodexAccountStatus::Disabled;
+        }
+        if self.status == CodexAccountStatus::Invalid {
+            return CodexAccountStatus::Invalid;
         }
         if self.is_expired() {
             CodexAccountStatus::Expired

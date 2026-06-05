@@ -113,7 +113,9 @@ async fn refresh_quota_cache_with_endpoint(
                 .map(|summary| summary.quota)
         }
         Err(err) => {
-            let mut failed_record = resolved;
+            // Token refresh may have updated account status while quota fetch was running.
+            // Reload before persisting quota error so we do not overwrite an invalid marker.
+            let mut failed_record = store.load_account(account_id).await.unwrap_or(resolved);
             failed_record.quota.error = Some(err);
             failed_record.quota.checked_at = Some(checked_at);
             store

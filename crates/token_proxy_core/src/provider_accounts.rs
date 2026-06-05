@@ -15,6 +15,7 @@ const PROVIDER_KIND_CODEX: &str = "codex";
 const STATUS_ACTIVE: &str = "active";
 const STATUS_DISABLED: &str = "disabled";
 const STATUS_EXPIRED: &str = "expired";
+const STATUS_INVALID: &str = "invalid";
 const STATUS_COOLING_DOWN: &str = "cooling_down";
 
 pub const MAX_PAGE_SIZE: u32 = 100;
@@ -49,6 +50,7 @@ pub enum ProviderAccountStatus {
     Active,
     Disabled,
     Expired,
+    Invalid,
     CoolingDown,
 }
 
@@ -58,6 +60,7 @@ impl ProviderAccountStatus {
             Self::Active => STATUS_ACTIVE,
             Self::Disabled => STATUS_DISABLED,
             Self::Expired => STATUS_EXPIRED,
+            Self::Invalid => STATUS_INVALID,
             Self::CoolingDown => STATUS_COOLING_DOWN,
         }
     }
@@ -67,6 +70,7 @@ impl ProviderAccountStatus {
             STATUS_ACTIVE => Ok(Self::Active),
             STATUS_DISABLED => Ok(Self::Disabled),
             STATUS_EXPIRED => Ok(Self::Expired),
+            STATUS_INVALID => Ok(Self::Invalid),
             STATUS_COOLING_DOWN => Ok(Self::CoolingDown),
             other => Err(format!("Unsupported status filter: {other}")),
         }
@@ -112,6 +116,44 @@ pub struct ProviderAccountsPage {
     pub total: u32,
     pub page: u32,
     pub page_size: u32,
+    pub status_counts: ProviderAccountStatusCounts,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct ProviderAccountStatusCounts {
+    pub all: u32,
+    pub active: u32,
+    pub disabled: u32,
+    pub expired: u32,
+    pub invalid: u32,
+    pub cooling_down: u32,
+}
+
+impl ProviderAccountStatusCounts {
+    pub fn from_items(items: &[ProviderAccountListItem]) -> Self {
+        let mut counts = Self::default();
+        for item in items {
+            counts.all = counts.all.saturating_add(1);
+            match item.status {
+                ProviderAccountStatus::Active => {
+                    counts.active = counts.active.saturating_add(1);
+                }
+                ProviderAccountStatus::Disabled => {
+                    counts.disabled = counts.disabled.saturating_add(1);
+                }
+                ProviderAccountStatus::Expired => {
+                    counts.expired = counts.expired.saturating_add(1);
+                }
+                ProviderAccountStatus::Invalid => {
+                    counts.invalid = counts.invalid.saturating_add(1);
+                }
+                ProviderAccountStatus::CoolingDown => {
+                    counts.cooling_down = counts.cooling_down.saturating_add(1);
+                }
+            }
+        }
+        counts
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -448,6 +490,7 @@ fn provider_status_from_codex(record: &CodexTokenRecord) -> ProviderAccountStatu
         crate::codex::CodexAccountStatus::Active => ProviderAccountStatus::Active,
         crate::codex::CodexAccountStatus::Disabled => ProviderAccountStatus::Disabled,
         crate::codex::CodexAccountStatus::Expired => ProviderAccountStatus::Expired,
+        crate::codex::CodexAccountStatus::Invalid => ProviderAccountStatus::Invalid,
     }
 }
 
@@ -554,4 +597,113 @@ ORDER BY account_id ASC;
         snapshot.insert(account_id, record);
     }
     Ok(snapshot)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::codex::{CodexAccountStatus, CodexAccountStore, CodexQuotaCache, CodexTokenRecord};
+    use crate::paths::TokenProxyPaths;
+    use rand::random;
+
+    fn account_with_status(status: ProviderAccountStatus) -> ProviderAccountListItem {
+        ProviderAccountListItem {
+            provider_kind: ProviderAccountKind::Codex,
+            account_id: format!("codex-{}", status.as_str()),
+            email: None,
+            expires_at: None,
+            priority: 0,
+            status,
+            auth_method: None,
+            provider_name: None,
+            auto_refresh_enabled: Some(true),
+            proxy_url: None,
+            quota: ProviderAccountQuotaSnapshot::default(),
+        }
+    }
+
+    #[test]
+    fn status_counts_include_invalid_accounts() {
+        let items = [
+            account_with_status(ProviderAccountStatus::Active),
+            account_with_status(ProviderAccountStatus::Expired),
+            account_with_status(ProviderAccountStatus::Invalid),
+            account_with_status(ProviderAccountStatus::CoolingDown),
+        ];
+
+        let counts = ProviderAccountStatusCounts::from_items(&items);
+
+        assert_eq!(counts.all, 4);
+        assert_eq!(counts.active, 1);
+        assert_eq!(counts.expired, 1);
+        assert_eq!(counts.invalid, 1);
+        assert_eq!(counts.cooling_down, 1);
+        assert_eq!(counts.disabled, 0);
+    }
+
+    #[tokio::test]
+    async fn list_snapshot_reads_persisted_invalid_codex_status() {
+        let data_dir = std::env::temp_dir().join(format!(
+            "token-proxy-provider-accounts-smoke-{}",
+            random::<u64>()
+        ));
+        let paths = TokenProxyPaths::from_app_data_dir(data_dir.clone()).expect("test paths");
+        let store =
+            CodexAccountStore::new(&paths, crate::app_proxy::new_state()).expect("codex store");
+        for (account_id, email, status) in [
+            (
+                "codex-valid",
+                "valid@example.com",
+                CodexAccountStatus::Active,
+            ),
+            (
+                "codex-invalid",
+                "invalid@example.com",
+                CodexAccountStatus::Invalid,
+            ),
+        ] {
+            store
+                .save_record(
+                    account_id.to_string(),
+                    CodexTokenRecord {
+                        access_token: format!("access-{account_id}"),
+                        refresh_token: format!("refresh-{account_id}"),
+                        client_id: None,
+                        id_token: String::new(),
+                        auto_refresh_enabled: true,
+                        status,
+                        account_id: Some(account_id.to_string()),
+                        user_id: None,
+                        email: Some(email.to_string()),
+                        expires_at: "2099-01-01T00:00:00Z".to_string(),
+                        last_refresh: None,
+                        proxy_url: None,
+                        priority: 0,
+                        quota: CodexQuotaCache::default(),
+                    },
+                )
+                .await
+                .expect("seed codex account");
+        }
+
+        let items = list_accounts_snapshot(
+            &paths,
+            ProviderAccountsQueryParams {
+                provider_kind: Some(ProviderAccountKind::Codex),
+                search: String::new(),
+            },
+        )
+        .await
+        .expect("list provider accounts");
+        let counts = ProviderAccountStatusCounts::from_items(&items);
+
+        let _ = std::fs::remove_dir_all(data_dir);
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(counts.all, 2);
+        assert_eq!(counts.active, 1);
+        assert_eq!(counts.invalid, 1);
+        assert!(items.iter().any(|item| item.account_id == "codex-invalid"
+            && item.status == ProviderAccountStatus::Invalid));
+    }
 }

@@ -31,6 +31,9 @@ function formatAccountStatus(account: CodexAccountSummary) {
   if (account.status === "expired") {
     return m.codex_account_status_expired();
   }
+  if (account.status === "invalid") {
+    return m.codex_account_status_invalid();
+  }
   if (account.status === "disabled") {
     return m.codex_account_status_disabled();
   }

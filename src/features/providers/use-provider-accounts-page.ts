@@ -10,7 +10,7 @@ const PROVIDER_ACCOUNTS_SEARCH_DEBOUNCE_MS = 250;
 export type ProviderAccountsPageFilters = {
   searchKeyword: string;
   providerFilter: "all" | "kiro" | "codex";
-  statusFilter: "all" | "active" | "disabled" | "expired" | "cooling_down";
+  statusFilter: "all" | "active" | "disabled" | "expired" | "invalid" | "cooling_down";
 };
 
 type ProviderAccountsPageStatus = "idle" | "loading" | "error";
@@ -121,6 +121,7 @@ export function useProviderAccountsPage(filters: ProviderAccountsPageFilters) {
 
   return {
     items: snapshot?.items ?? [],
+    statusCounts: snapshot?.status_counts,
     total,
     page,
     pageSize: PROVIDER_ACCOUNTS_PAGE_SIZE,

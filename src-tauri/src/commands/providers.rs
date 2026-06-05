@@ -75,6 +75,8 @@ pub async fn providers_list_accounts_page(
     )
     .await?;
     apply_runtime_account_cooldowns(proxy_service.inner().clone(), &mut items).await;
+    let status_counts =
+        token_proxy_core::provider_accounts::ProviderAccountStatusCounts::from_items(&items);
     if let Some(status) = status {
         items.retain(|item| item.status == status);
     }
@@ -95,6 +97,7 @@ pub async fn providers_list_accounts_page(
         total,
         page,
         page_size,
+        status_counts,
     })
 }
 

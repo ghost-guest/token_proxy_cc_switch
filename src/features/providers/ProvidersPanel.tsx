@@ -51,12 +51,19 @@ type StatusFilterValue =
   | "active"
   | "disabled"
   | "expired"
+  | "invalid"
   | "cooling_down";
 
 type AccountBase = {
   account_id: string;
   email?: string | null;
-  status: "active" | "disabled" | "expired" | "cooling_down";
+  status: AccountStatusValue;
+};
+
+type AccountStatusValue = "active" | "disabled" | "expired" | "invalid" | "cooling_down";
+
+type AccountStatusSummary = Record<AccountStatusValue, number> & {
+  all: number;
 };
 
 type AddDialogProvider = "kiro" | "codex";
@@ -72,6 +79,7 @@ type ProvidersToolbarProps = {
   onStatusFilterChange: (value: StatusFilterValue) => void;
   onAddDialogProviderChange: (provider: AddDialogProvider) => void;
   onRefresh: () => void;
+  onRefreshAllCodexTokens: () => Promise<void>;
   addDialogOpen: boolean;
   onAddDialogOpenChange: (open: boolean) => void;
   onKiroLogin: (method: KiroLoginMethod) => Promise<void>;
@@ -83,6 +91,7 @@ type ProvidersToolbarProps = {
   onImportCodexFile: () => Promise<void>;
   onImportCodexDirectory: () => Promise<void>;
   refreshing: boolean;
+  refreshingCodexTokens: boolean;
   kiroActionBusy: boolean;
   codexActionBusy: boolean;
   kiroStatusText: string;
@@ -173,9 +182,102 @@ function StatusFilterSelect({
           <SelectItem value="active">{m.kiro_account_status_active()}</SelectItem>
           <SelectItem value="disabled">{m.common_disabled()}</SelectItem>
           <SelectItem value="expired">{m.kiro_account_status_expired()}</SelectItem>
+          <SelectItem value="invalid">{m.codex_account_status_invalid()}</SelectItem>
           <SelectItem value="cooling_down">{m.providers_account_status_cooling_down()}</SelectItem>
         </SelectContent>
       </Select>
+    </div>
+  );
+}
+
+function buildEmptyStatusSummary(): AccountStatusSummary {
+  return {
+    all: 0,
+    active: 0,
+    disabled: 0,
+    expired: 0,
+    invalid: 0,
+    cooling_down: 0,
+  };
+}
+
+function buildStatusSummary(rows: ProviderAccountTableRow[]): AccountStatusSummary {
+  const summary = buildEmptyStatusSummary();
+  for (const row of rows) {
+    summary.all += 1;
+    summary[row.status] += 1;
+  }
+  return summary;
+}
+
+function statusSummaryFromPage(
+  counts: {
+    all: number;
+    active: number;
+    disabled: number;
+    expired: number;
+    invalid: number;
+    cooling_down: number;
+  } | undefined
+): AccountStatusSummary {
+  return counts ?? buildEmptyStatusSummary();
+}
+
+function getSummaryStatusLabel(status: StatusFilterValue) {
+  if (status === "all") {
+    return m.providers_filter_all_statuses();
+  }
+  if (status === "active") {
+    return m.kiro_account_status_active();
+  }
+  if (status === "disabled") {
+    return m.common_disabled();
+  }
+  if (status === "expired") {
+    return m.kiro_account_status_expired();
+  }
+  if (status === "invalid") {
+    return m.codex_account_status_invalid();
+  }
+  return m.providers_account_status_cooling_down();
+}
+
+function AccountStatusSummaryBar({
+  summary,
+  activeStatus,
+  onStatusChange,
+}: {
+  summary: AccountStatusSummary;
+  activeStatus: StatusFilterValue;
+  onStatusChange: (status: StatusFilterValue) => void;
+}) {
+  const items: Array<{ status: StatusFilterValue; count: number }> = [
+    { status: "all", count: summary.all },
+    { status: "active", count: summary.active },
+    { status: "expired", count: summary.expired },
+    { status: "invalid", count: summary.invalid },
+    { status: "disabled", count: summary.disabled },
+    { status: "cooling_down", count: summary.cooling_down },
+  ];
+
+  return (
+    <div
+      data-slot="providers-status-summary"
+      className="flex flex-wrap items-center gap-1.5 rounded-lg border border-border/60 bg-background/70 px-3 py-2"
+    >
+      {items.map((item) => (
+        <Button
+          key={item.status}
+          type="button"
+          size="sm"
+          variant={activeStatus === item.status ? "secondary" : "ghost"}
+          onClick={() => onStatusChange(item.status)}
+          data-slot={`providers-status-summary-${item.status}`}
+        >
+          <span>{getSummaryStatusLabel(item.status)}</span>
+          <span className="font-mono text-xs text-muted-foreground">{item.count}</span>
+        </Button>
+      ))}
     </div>
   );
 }
@@ -194,6 +296,7 @@ function ProvidersToolbar({
   onStatusFilterChange,
   onAddDialogProviderChange,
   onRefresh,
+  onRefreshAllCodexTokens,
   addDialogOpen,
   onAddDialogOpenChange,
   onKiroLogin,
@@ -205,6 +308,7 @@ function ProvidersToolbar({
   onImportCodexFile,
   onImportCodexDirectory,
   refreshing,
+  refreshingCodexTokens,
   kiroActionBusy,
   codexActionBusy,
   kiroStatusText,
@@ -245,6 +349,24 @@ function ProvidersToolbar({
           className={["size-4", refreshing ? "animate-spin" : ""].filter(Boolean).join(" ")}
           aria-hidden="true"
         />
+      </Button>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => {
+          void onRefreshAllCodexTokens();
+        }}
+        disabled={refreshingCodexTokens}
+        data-slot="providers-toolbar-refresh-codex-tokens"
+      >
+        <RefreshCw
+          className={["size-4", refreshingCodexTokens ? "animate-spin" : ""]
+            .filter(Boolean)
+            .join(" ")}
+          aria-hidden="true"
+        />
+        {m.providers_refresh_all_codex_tokens()}
       </Button>
       <ProvidersAddAccountDialog
         open={addDialogOpen}
@@ -662,7 +784,9 @@ function buildToolbarProps(
   onImportCodexFile: () => Promise<void>,
   onImportCodexDirectory: () => Promise<void>,
   onRefresh: () => void,
+  onRefreshAllCodexTokens: () => Promise<void>,
   refreshing: boolean,
+  refreshingCodexTokens: boolean,
   kiroActionBusy: boolean,
   codexActionBusy: boolean,
   kiroStatusText: string,
@@ -691,7 +815,9 @@ function buildToolbarProps(
     onImportCodexFile,
     onImportCodexDirectory,
     onRefresh,
+    onRefreshAllCodexTokens,
     refreshing,
+    refreshingCodexTokens,
     kiroActionBusy,
     codexActionBusy,
     kiroStatusText,
@@ -762,7 +888,7 @@ function formatDisplayName(account: AccountBase) {
 }
 
 function formatStatusVariant(status: AccountBase["status"]) {
-  if (status === "expired") {
+  if (status === "expired" || status === "invalid") {
     return "destructive";
   }
   if (status === "disabled") {
@@ -778,6 +904,9 @@ function formatKiroStatus(status: AccountBase["status"]) {
   if (status === "expired") {
     return m.kiro_account_status_expired();
   }
+  if (status === "invalid") {
+    return m.codex_account_status_invalid();
+  }
   if (status === "disabled") {
     return m.kiro_account_status_disabled();
   }
@@ -790,6 +919,9 @@ function formatKiroStatus(status: AccountBase["status"]) {
 function formatCodexStatus(status: AccountBase["status"]) {
   if (status === "expired") {
     return m.codex_account_status_expired();
+  }
+  if (status === "invalid") {
+    return m.codex_account_status_invalid();
   }
   if (status === "disabled") {
     return m.codex_account_status_disabled();
@@ -1113,6 +1245,7 @@ function useProvidersPanelState() {
   }, [resetCodexLogin, resetKiroLogin]);
   const [kiroImporting, setKiroImporting] = useState(false);
   const [codexImporting, setCodexImporting] = useState(false);
+  const [codexBulkRefreshing, setCodexBulkRefreshing] = useState(false);
   const [batchDeleting, setBatchDeleting] = useState(false);
   const [optimisticDeletedIds, setOptimisticDeletedIds] = useState<Set<string>>(new Set());
   const refreshAll = useCallback(async () => {
@@ -1122,6 +1255,59 @@ function useProvidersPanelState() {
       providerAccounts.refresh(),
     ]);
   }, [kiroAccounts, codexAccounts, providerAccounts]);
+  const rows = useMemo(() => {
+    return providerAccounts.items.map(buildProviderRow);
+  }, [providerAccounts.items]);
+  const statusSummary = useMemo(
+    () =>
+      providerAccounts.statusCounts
+        ? statusSummaryFromPage(providerAccounts.statusCounts)
+        : buildStatusSummary(rows),
+    [providerAccounts.statusCounts, rows]
+  );
+  const refreshAllCodexTokens = useCallback(async () => {
+    // 批量刷新必须基于 Codex 全量列表，不能复用当前分页/筛选后的表格行。
+    const accounts =
+      codexAccounts.accounts.length > 0 ? codexAccounts.accounts : await codexAccounts.refresh();
+    const targets = accounts.filter((account) => account.auto_refresh_enabled ?? true);
+    if (targets.length === 0) {
+      toast.error(m.providers_refresh_all_codex_tokens_empty());
+      return;
+    }
+    setCodexBulkRefreshing(true);
+    let failed = 0;
+    let firstError = "";
+    try {
+      for (const account of targets) {
+        try {
+          await codexAccounts.refreshAccount(account.account_id);
+        } catch (error) {
+          failed += 1;
+          firstError ||= parseError(error);
+        }
+      }
+      await Promise.all([providerAccounts.refresh(), codexAccounts.refresh()]);
+      const succeeded = targets.length - failed;
+      console.info("[providers-codex-refresh] bulk refresh finished", {
+        total: targets.length,
+        succeeded,
+        failed,
+      });
+      if (failed > 0) {
+        toast.error(
+          m.providers_refresh_all_codex_tokens_failed({
+            succeeded,
+            failed,
+            error: firstError,
+          })
+        );
+        return;
+      }
+      toast.success(m.providers_refresh_all_codex_tokens_success({ count: succeeded }));
+    } finally {
+      setCodexBulkRefreshing(false);
+    }
+  }, [codexAccounts, providerAccounts]);
   const loginKiro = useCallback(async (method: KiroLoginMethod) => {
     await kiroLogin.beginLogin(method);
   }, [kiroLogin]);
@@ -1264,7 +1450,9 @@ function useProvidersPanelState() {
     importCodexFile,
     importCodexDirectory,
     refreshAll,
+    refreshAllCodexTokens,
     refreshBusy,
+    codexBulkRefreshing,
     kiroActionBusy,
     codexActionBusy,
     getKiroStatusText(kiroLogin.login),
@@ -1273,9 +1461,6 @@ function useProvidersPanelState() {
     getCodexStatusText(codexLogin.login),
     codexLoginUrl,
   );
-  const rows = useMemo(() => {
-    return providerAccounts.items.map(buildProviderRow);
-  }, [providerAccounts.items]);
   const visibleRows = useMemo(
     () => rows.filter((row) => !optimisticDeletedIds.has(row.id)),
     [rows, optimisticDeletedIds]
@@ -1418,6 +1603,9 @@ function useProvidersPanelState() {
 
   return {
     toolbarProps,
+    statusSummary,
+    statusFilter: filters.statusFilter,
+    onStatusFilterChange: filters.setStatusFilter,
     rows: visibleRows,
     loading: tableBusy,
     error: tableError,
@@ -1443,6 +1631,11 @@ export function ProvidersPanel() {
   return (
     <div className="flex flex-col gap-4 px-4 lg:px-6">
       <ProvidersToolbar {...state.toolbarProps} />
+      <AccountStatusSummaryBar
+        summary={state.statusSummary}
+        activeStatus={state.statusFilter}
+        onStatusChange={state.onStatusFilterChange}
+      />
       <ProvidersSections
         rows={state.rows}
         loading={state.loading}

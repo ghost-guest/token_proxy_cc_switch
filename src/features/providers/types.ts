@@ -20,7 +20,7 @@ export type ProviderAccountPageItem = {
   email?: string | null;
   expires_at?: string | null;
   priority: number;
-  status: "active" | "disabled" | "expired" | "cooling_down";
+  status: "active" | "disabled" | "expired" | "invalid" | "cooling_down";
   auth_method?: string | null;
   provider_name?: string | null;
   auto_refresh_enabled?: boolean | null;
@@ -33,4 +33,12 @@ export type ProviderAccountsPage = {
   total: number;
   page: number;
   page_size: number;
+  status_counts: {
+    all: number;
+    active: number;
+    disabled: number;
+    expired: number;
+    invalid: number;
+    cooling_down: number;
+  };
 };

@@ -18,6 +18,10 @@ pub(super) fn usage_status_requires_relogin(body: &str) -> bool {
     relogin_required_message(body).is_some()
 }
 
+pub(super) fn error_requires_relogin(message: &str) -> bool {
+    message.trim() == CODEX_RELOGIN_REQUIRED_MESSAGE
+}
+
 fn relogin_required_message(body: &str) -> Option<&'static str> {
     let error = serde_json::from_str::<Value>(body).ok()?;
     let code = [
