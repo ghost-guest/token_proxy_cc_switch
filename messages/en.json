@@ -436,6 +436,7 @@
   "logs_detail_pricing_context_short": "Short context",
   "logs_detail_pricing_context_long": "Long context",
   "logs_detail_pricing_version": "Pricing version",
+  "logs_detail_image_output_tokens": "Image output tokens",
   "model_pricing_title": "Model Pricing",
   "model_pricing_loading": "Loading…",
   "model_pricing_save": "Save Pricing",

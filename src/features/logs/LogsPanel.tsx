@@ -166,6 +166,10 @@ function BasicInfoSection({ detail, formatter }: BasicInfoSectionProps) {
           value={formatNanoUsdCost(detail.costNanoUsd)}
         />
         <DetailField
+          label={m.logs_detail_image_output_tokens()}
+          value={formatOptionalInteger(detail.imageOutputTokens)}
+        />
+        <DetailField
           label={m.logs_detail_pricing_model()}
           value={detail.pricingModel}
         />
@@ -249,6 +253,7 @@ function formatDetailAsText(detail: RequestLogDetail, formatter: Intl.DateTimeFo
   lines.push(`${m.dashboard_table_status()}: ${detail.status}`);
   lines.push(`${m.logs_detail_stream()}: ${detail.stream ? m.logs_detail_stream_yes() : m.logs_detail_stream_no()}`);
   lines.push(`${m.dashboard_table_cost()}: ${formatNanoUsdCost(detail.costNanoUsd)}`);
+  lines.push(`${m.logs_detail_image_output_tokens()}: ${formatOptionalInteger(detail.imageOutputTokens)}`);
   lines.push(`${m.logs_detail_pricing_model()}: ${detail.pricingModel?.trim() || DETAIL_PLACEHOLDER}`);
   lines.push(`${m.logs_detail_pricing_context_tier()}: ${formatPricingContextTier(detail.pricingContextTier)}`);
   lines.push(`${m.logs_detail_pricing_version()}: ${detail.pricingVersion?.trim() || DETAIL_PLACEHOLDER}`);

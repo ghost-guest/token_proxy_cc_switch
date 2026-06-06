@@ -9,6 +9,7 @@ use url::Url;
 use super::{
     http,
     log::{LogContext, LogWriter, RequestTimings},
+    openai,
     openai_compat::FormatTransform,
     request_detail::RequestDetailSnapshot,
     token_rate::TokenRateTracker,
@@ -25,6 +26,7 @@ const GEMINI_UPLOAD_URL_HEADER: &str = "x-goog-upload-url";
 const GEMINI_PROXY_UPLOAD_TARGET_QUERY: &str = "tp_upload_target";
 const GEMINI_UPLOAD_PROXY_PATH: &str = "/upload/v1beta/files";
 const GEMINI_API_KEY_QUERY: &str = "key";
+const IMAGE_GENERATION_MIN_NO_DATA_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Clone)]
 pub(super) struct RetryableStreamResponse {
@@ -49,6 +51,7 @@ pub(super) async fn build_proxy_response(
     request_detail: Option<RequestDetailSnapshot>,
     upstream_no_data_timeout: Duration,
 ) -> Response {
+    let upstream_no_data_timeout = response_no_data_timeout(inbound_path, upstream_no_data_timeout);
     let status = upstream_res.status();
     let mut response_headers = http::filter_response_headers(upstream_res.headers());
     maybe_rewrite_gemini_upload_url(
@@ -141,6 +144,7 @@ pub(super) async fn build_proxy_response_buffered(
     request_detail: Option<RequestDetailSnapshot>,
     upstream_no_data_timeout: Duration,
 ) -> Response {
+    let upstream_no_data_timeout = response_no_data_timeout(inbound_path, upstream_no_data_timeout);
     let status = upstream_res.status();
     let mut response_headers = http::filter_response_headers(upstream_res.headers());
     maybe_rewrite_gemini_upload_url(
@@ -220,6 +224,14 @@ fn maybe_rewrite_gemini_upload_url(
         return;
     };
     response_headers.insert(GEMINI_UPLOAD_URL_HEADER, value);
+}
+
+fn response_no_data_timeout(inbound_path: &str, configured_timeout: Duration) -> Duration {
+    if openai::is_openai_image_generations_path(inbound_path) {
+        configured_timeout.max(IMAGE_GENERATION_MIN_NO_DATA_TIMEOUT)
+    } else {
+        configured_timeout
+    }
 }
 
 fn build_proxy_upload_url(

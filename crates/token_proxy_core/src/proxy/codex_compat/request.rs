@@ -5,6 +5,12 @@ use std::collections::HashMap;
 use super::tool_names::ToolNameMap;
 use crate::proxy::codex_tool_types::is_codex_tool_call_output_item_type;
 
+const CODEX_DEFAULT_INSTRUCTIONS: &str = "You are Codex, based on GPT-5. You are running as a coding agent in the Codex CLI on a user's computer.";
+const GPT5_1_DEFAULT_INSTRUCTIONS: &str =
+    "You are GPT-5.1 running in the Codex CLI, a terminal-based coding assistant.";
+const GPT5_2_DEFAULT_INSTRUCTIONS: &str =
+    "You are GPT-5.2 running in the Codex CLI, a terminal-based coding assistant.";
+
 pub(crate) fn extract_tool_name_map(body: &Bytes) -> Option<HashMap<String, String>> {
     let value: Value = serde_json::from_slice(body).ok()?;
     let object = value.as_object()?;
@@ -46,7 +52,10 @@ pub(crate) fn chat_request_to_codex_with_prompt_cache_key(
     let mut output = Map::new();
     output.insert("stream".to_string(), Value::Bool(true));
     output.insert("model".to_string(), Value::String(model.clone()));
-    output.insert("instructions".to_string(), Value::String(String::new()));
+    output.insert(
+        "instructions".to_string(),
+        Value::String(codex_base_instructions_for_model(&model).to_string()),
+    );
     output.insert("parallel_tool_calls".to_string(), Value::Bool(true));
     output.insert(
         "include".to_string(),
@@ -504,10 +513,8 @@ fn normalize_responses_payload(
         .and_then(Value::as_str)
         .or(model_hint)
         .unwrap_or_default();
-    object.insert(
-        "model".to_string(),
-        Value::String(normalize_codex_model(model)),
-    );
+    let model = normalize_codex_model(model);
+    object.insert("model".to_string(), Value::String(model.clone()));
     if !object.contains_key("parallel_tool_calls") {
         object.insert("parallel_tool_calls".to_string(), Value::Bool(true));
     }
@@ -549,7 +556,7 @@ fn normalize_responses_payload(
     };
     let (input, extracted_instructions) = extract_system_messages_from_input(input);
     merge_extracted_instructions(object, extracted_instructions);
-    ensure_default_instructions(object);
+    ensure_default_instructions(object, &model);
     ensure_prompt_cache_key(object, prompt_cache_key);
     object.insert("input".to_string(), Value::Array(input));
 }
@@ -771,7 +778,7 @@ fn merge_extracted_instructions(object: &mut Map<String, Value>, extracted: Vec<
     object.insert("instructions".to_string(), Value::String(instructions));
 }
 
-fn ensure_default_instructions(object: &mut Map<String, Value>) {
+fn ensure_default_instructions(object: &mut Map<String, Value>, model: &str) {
     let has_instructions = object
         .get("instructions")
         .and_then(Value::as_str)
@@ -780,9 +787,23 @@ fn ensure_default_instructions(object: &mut Map<String, Value>) {
     if !has_instructions {
         object.insert(
             "instructions".to_string(),
-            Value::String("You are a helpful coding assistant.".to_string()),
+            Value::String(codex_base_instructions_for_model(model).to_string()),
         );
     }
+}
+
+fn codex_base_instructions_for_model(model: &str) -> &'static str {
+    let model = model.trim().to_ascii_lowercase();
+    if model.contains("codex") {
+        return CODEX_DEFAULT_INSTRUCTIONS;
+    }
+    if model.starts_with("gpt-5.2") {
+        return GPT5_2_DEFAULT_INSTRUCTIONS;
+    }
+    if model.starts_with("gpt-5.1") || model.starts_with("gpt-5") {
+        return GPT5_1_DEFAULT_INSTRUCTIONS;
+    }
+    CODEX_DEFAULT_INSTRUCTIONS
 }
 
 fn extract_text_from_content(content: Option<&Value>) -> Option<String> {

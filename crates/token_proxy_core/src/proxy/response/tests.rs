@@ -205,6 +205,37 @@ fn build_proxy_upload_url_rewrites_to_proxy_path_and_strips_upstream_key() {
 }
 
 #[test]
+fn image_generation_response_timeout_is_at_least_300_seconds() {
+    assert_eq!(
+        response_no_data_timeout("/v1/images/generations", Duration::from_secs(120)),
+        Duration::from_secs(300)
+    );
+    assert_eq!(
+        response_no_data_timeout(
+            "/v1/images/generations?stream=true",
+            Duration::from_secs(45)
+        ),
+        Duration::from_secs(300)
+    );
+}
+
+#[test]
+fn image_generation_response_timeout_keeps_larger_user_setting() {
+    assert_eq!(
+        response_no_data_timeout("/v1/images/generations", Duration::from_secs(600)),
+        Duration::from_secs(600)
+    );
+}
+
+#[test]
+fn non_image_response_timeout_uses_user_setting() {
+    assert_eq!(
+        response_no_data_timeout("/v1/responses", Duration::from_secs(120)),
+        Duration::from_secs(120)
+    );
+}
+
+#[test]
 fn stream_with_logging_does_not_record_response_body_when_detail_capture_is_off() {
     run_async(async {
         let sqlite_pool = create_test_sqlite_pool().await;

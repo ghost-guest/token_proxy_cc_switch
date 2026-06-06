@@ -48,6 +48,8 @@ pub struct CodexTokenRecord {
     pub account_id: Option<String>,
     #[serde(default)]
     pub user_id: Option<String>,
+    #[serde(default)]
+    pub openai_device_id: Option<String>,
     pub email: Option<String>,
     pub expires_at: String,
     pub last_refresh: Option<String>,

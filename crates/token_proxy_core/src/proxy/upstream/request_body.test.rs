@@ -135,6 +135,7 @@ async fn strips_sampling_params_for_openai_responses_reasoning_model() {
         "/v1/responses",
         &body,
         &meta,
+        None,
     )
     .await
     {
@@ -176,6 +177,7 @@ async fn strips_sampling_params_for_openai_responses_reasoning_model_from_prefix
         "/v1/responses",
         &body,
         &meta,
+        None,
     )
     .await
     {
@@ -215,9 +217,15 @@ async fn rejects_large_openai_responses_reasoning_body_when_sampling_params_cann
         r#"{{"model":"gpt-5.5","temperature":0.7,"input":"{input}"}}"#
     )));
 
-    let result =
-        build_json_transformed_body("openai-response", &upstream, "/v1/responses", &body, &meta)
-            .await;
+    let result = build_json_transformed_body(
+        "openai-response",
+        &upstream,
+        "/v1/responses",
+        &body,
+        &meta,
+        None,
+    )
+    .await;
 
     match result {
         Err(AttemptOutcome::Fatal(response)) => {
@@ -390,6 +398,7 @@ async fn json_transform_pipeline_applies_reasoning_filters_and_role_rewrite_toge
         "/v1/responses",
         &body,
         &meta,
+        None,
     )
     .await
     {
@@ -418,4 +427,84 @@ async fn json_transform_pipeline_applies_reasoning_filters_and_role_rewrite_toge
     assert!(value.get("safety_identifier").is_none());
     assert_eq!(input[0]["role"], "system");
     assert_eq!(input[1]["role"], "user");
+}
+
+#[tokio::test]
+async fn injects_codex_installation_id_into_client_metadata() {
+    let upstream = test_upstream(false, false, false);
+    let meta = RequestMeta {
+        client_ip: None,
+        stream: true,
+        original_model: Some("gpt-5-codex".to_string()),
+        mapped_model: None,
+        reasoning_effort: None,
+        response_format: None,
+        estimated_input_tokens: None,
+    };
+    let body = ReplayableBody::from_bytes(Bytes::from_static(
+        br#"{"model":"gpt-5-codex","input":"hi","client_metadata":{"source":"token_proxy"}}"#,
+    ));
+
+    let rewritten = match build_json_transformed_body(
+        "codex",
+        &upstream,
+        "/backend-api/codex/responses",
+        &body,
+        &meta,
+        Some("device-123"),
+    )
+    .await
+    {
+        Ok(Some(value)) => value,
+        Ok(None) => panic!("Codex installation id should rewrite body"),
+        Err(_) => panic!("transform result"),
+    };
+    let bytes = rewritten
+        .read_bytes_if_small(1024)
+        .await
+        .expect("read rewritten bytes")
+        .expect("rewritten body exists");
+    let value: Value = serde_json::from_slice(&bytes).expect("json");
+
+    assert_eq!(
+        value["client_metadata"]["x-codex-installation-id"].as_str(),
+        Some("device-123")
+    );
+    assert_eq!(
+        value["client_metadata"]["source"].as_str(),
+        Some("token_proxy")
+    );
+}
+
+#[tokio::test]
+async fn preserves_existing_codex_installation_id() {
+    let upstream = test_upstream(false, false, false);
+    let meta = RequestMeta {
+        client_ip: None,
+        stream: true,
+        original_model: Some("gpt-5-codex".to_string()),
+        mapped_model: None,
+        reasoning_effort: None,
+        response_format: None,
+        estimated_input_tokens: None,
+    };
+    let body = ReplayableBody::from_bytes(Bytes::from_static(
+        br#"{"model":"gpt-5-codex","input":"hi","client_metadata":{"x-codex-installation-id":"existing-device"}}"#,
+    ));
+
+    let rewritten = match build_json_transformed_body(
+        "codex",
+        &upstream,
+        "/backend-api/codex/responses",
+        &body,
+        &meta,
+        Some("device-123"),
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(_) => panic!("transform result"),
+    };
+
+    assert!(rewritten.is_none());
 }

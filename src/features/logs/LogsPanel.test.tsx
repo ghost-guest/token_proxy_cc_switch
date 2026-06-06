@@ -83,6 +83,7 @@ function createRequestLogDetail(patch: Partial<RequestLogDetail> = {}): RequestL
     status: 200,
     inputTokens: 10,
     outputTokens: 20,
+    imageOutputTokens: null,
     totalTokens: 30,
     cachedTokens: 5,
     costNanoUsd: 1_210_000_000,
@@ -686,6 +687,38 @@ describe("logs/LogsPanel", () => {
     expect(screen.getByText("gpt-5.5")).toBeInTheDocument();
     expect(screen.getByText(m.logs_detail_pricing_context_short())).toBeInTheDocument();
     expect(screen.getByText("2026-05-02.openai-openrouter-v1")).toBeInTheDocument();
+  });
+
+  it("shows image output tokens from request usage detail", async () => {
+    const user = userEvent.setup();
+    readRequestLogDetailMock.mockResolvedValueOnce(
+      createRequestLogDetail({
+        outputTokens: 9,
+        imageOutputTokens: 9,
+        totalTokens: 14,
+        usageJson:
+          "{\"input_tokens\":5,\"output_tokens\":9,\"output_tokens_details\":{\"image_tokens\":9}}",
+      })
+    );
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "alpha · openai · codex-a.json" })
+      ).toBeInTheDocument();
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: "alpha · openai · codex-a.json" })
+    );
+
+    await waitFor(() => {
+      expect(readRequestLogDetailMock).toHaveBeenCalledWith(1);
+    });
+
+    expect(await screen.findByText(m.logs_detail_image_output_tokens())).toBeInTheDocument();
+    expect(screen.getByText("9")).toBeInTheDocument();
   });
 
   it("shows response body when available", async () => {

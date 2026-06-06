@@ -1,4 +1,5 @@
 use serde::Serialize;
+use serde_json::Value;
 use sqlx::Row;
 
 /// 请求日志详情，包含表格展示的基础字段和详情面板的扩展字段
@@ -19,6 +20,7 @@ pub struct RequestLogDetail {
     pub status: i32,
     pub input_tokens: Option<i64>,
     pub output_tokens: Option<i64>,
+    pub image_output_tokens: Option<i64>,
     pub total_tokens: Option<i64>,
     pub cached_tokens: Option<i64>,
     pub cost_nano_usd: Option<i64>,
@@ -92,6 +94,14 @@ LIMIT 1;
         return Err("Request log not found.".to_string());
     };
 
+    let usage_json = row
+        .try_get::<Option<String>, _>("usage_json")
+        .ok()
+        .flatten();
+    let image_output_tokens = usage_json
+        .as_deref()
+        .and_then(image_output_tokens_from_usage_json);
+
     Ok(RequestLogDetail {
         id: row.try_get::<i64, _>("id").unwrap_or_default().max(0) as u64,
         ts_ms: row.try_get::<i64, _>("ts_ms").unwrap_or_default(),
@@ -115,6 +125,7 @@ LIMIT 1;
             .try_get::<Option<i64>, _>("output_tokens")
             .ok()
             .flatten(),
+        image_output_tokens,
         total_tokens: row.try_get::<Option<i64>, _>("total_tokens").ok().flatten(),
         cached_tokens: row
             .try_get::<Option<i64>, _>("cached_tokens")
@@ -161,10 +172,7 @@ LIMIT 1;
             .try_get::<Option<String>, _>("upstream_request_id")
             .ok()
             .flatten(),
-        usage_json: row
-            .try_get::<Option<String>, _>("usage_json")
-            .ok()
-            .flatten(),
+        usage_json,
         request_headers: row
             .try_get::<Option<String>, _>("request_headers")
             .ok()
@@ -182,6 +190,32 @@ LIMIT 1;
             .ok()
             .flatten(),
     })
+}
+
+fn image_output_tokens_from_usage_json(raw: &str) -> Option<i64> {
+    let value = serde_json::from_str::<Value>(raw).ok()?;
+    let usage = value
+        .get("usage")
+        .filter(|candidate| candidate.is_object())
+        .unwrap_or(&value);
+    image_output_tokens_from_value(usage).or_else(|| image_output_tokens_from_value(&value))
+}
+
+fn image_output_tokens_from_value(value: &Value) -> Option<i64> {
+    ["output_tokens_details", "completion_tokens_details"]
+        .iter()
+        .find_map(|details_key| {
+            value
+                .get(*details_key)
+                .and_then(|details| details.get("image_tokens"))
+                .and_then(json_integer_to_i64)
+        })
+}
+
+fn json_integer_to_i64(value: &Value) -> Option<i64> {
+    value
+        .as_i64()
+        .or_else(|| value.as_u64().and_then(|number| i64::try_from(number).ok()))
 }
 
 #[cfg(test)]
@@ -251,5 +285,63 @@ mod tests {
         );
         assert_eq!(detail.pricing_model.as_deref(), Some("gpt-5.5"));
         assert_eq!(detail.pricing_context_tier.as_deref(), Some("short"));
+    }
+
+    #[tokio::test]
+    async fn read_request_log_detail_extracts_image_output_tokens_from_usage_json() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect sqlite");
+
+        crate::proxy::sqlite::init_schema(&pool)
+            .await
+            .expect("init schema");
+
+        sqlx::query(
+            r#"
+            INSERT INTO request_logs (
+              ts_ms,
+              path,
+              provider,
+              upstream_id,
+              stream,
+              status,
+              output_tokens,
+              usage_json,
+              latency_ms
+            ) VALUES (
+              123,
+              '/responses',
+              'codex',
+              'codex-default',
+              0,
+              200,
+              9,
+              '{"input_tokens":5,"output_tokens":9,"output_tokens_details":{"image_tokens":9}}',
+              30
+            );
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("insert request log");
+
+        let detail = read_request_log_detail(&pool, 1)
+            .await
+            .expect("read request log detail");
+
+        assert_eq!(detail.output_tokens, Some(9));
+        assert_eq!(detail.image_output_tokens, Some(9));
+    }
+
+    #[test]
+    fn image_output_tokens_falls_back_to_chat_completion_details() {
+        let image_tokens = image_output_tokens_from_usage_json(
+            r#"{"completion_tokens":9,"completion_tokens_details":{"image_tokens":4}}"#,
+        );
+
+        assert_eq!(image_tokens, Some(4));
     }
 }

@@ -154,6 +154,7 @@ pub(super) async fn attempt_send(
         request_headers,
         proxy_url,
         selected_account_id,
+        codex_openai_device_id,
         meta,
     } = prepared;
     let start_time = Instant::now();
@@ -171,6 +172,7 @@ pub(super) async fn attempt_send(
         body,
         &meta,
         selected_account_id.as_deref(),
+        codex_openai_device_id.as_deref(),
         request_detail,
         start_time,
         timings.clone(),

@@ -482,6 +482,7 @@ fn start_spawns_codex_keepalive_without_codex_upstream() {
                     status: crate::codex::CodexAccountStatus::Active,
                     account_id: Some("acct-service".to_string()),
                     user_id: None,
+                    openai_device_id: None,
                     email: Some("service@example.com".to_string()),
                     expires_at,
                     last_refresh: None,

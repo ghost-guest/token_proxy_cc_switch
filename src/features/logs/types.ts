@@ -19,6 +19,7 @@ export type RequestLogDetail = {
   status: number;
   inputTokens: number | null;
   outputTokens: number | null;
+  imageOutputTokens: number | null;
   totalTokens: number | null;
   cachedTokens: number | null;
   costNanoUsd: number | null;

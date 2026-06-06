@@ -145,6 +145,7 @@ pub(super) struct PreparedUpstreamRequest {
     request_headers: HeaderMap,
     proxy_url: Option<String>,
     selected_account_id: Option<String>,
+    codex_openai_device_id: Option<String>,
     meta: RequestMeta,
 }
 
@@ -154,6 +155,7 @@ struct ResolvedUpstreamAuth {
     extra_headers: Option<HeaderMap>,
     proxy_url: Option<String>,
     selected_account_id: Option<String>,
+    codex_openai_device_id: Option<String>,
 }
 
 // 单元测试拆到独立文件，使用 `#[path]` 以保持 `.test.rs` 命名约定。

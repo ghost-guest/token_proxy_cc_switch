@@ -12,6 +12,7 @@ const ANTHROPIC_COUNT_TOKENS_PATH: &str = "/v1/messages/count_tokens";
 const REQUEST_MODEL_MAPPING_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 const REQUEST_REASONING_LIMIT_BYTES: usize = 100 * 1024 * 1024;
 const REQUEST_FILTER_LIMIT_BYTES: usize = 20 * 1024 * 1024;
+const CODEX_INSTALLATION_ID_KEY: &str = "x-codex-installation-id";
 
 pub(super) async fn build_upstream_body(
     provider: &str,
@@ -19,10 +20,17 @@ pub(super) async fn build_upstream_body(
     upstream_path_with_query: &str,
     body: &ReplayableBody,
     meta: &RequestMeta,
+    codex_openai_device_id: Option<&str>,
 ) -> Result<reqwest::Body, AttemptOutcome> {
-    let transformed =
-        build_json_transformed_body(provider, upstream, upstream_path_with_query, body, meta)
-            .await?;
+    let transformed = build_json_transformed_body(
+        provider,
+        upstream,
+        upstream_path_with_query,
+        body,
+        meta,
+        codex_openai_device_id,
+    )
+    .await?;
     let final_source = transformed.as_ref().unwrap_or(body);
     final_source.to_reqwest_body().await.map_err(|err| {
         AttemptOutcome::Fatal(http::error_response(
@@ -38,15 +46,28 @@ async fn build_json_transformed_body(
     upstream_path_with_query: &str,
     body: &ReplayableBody,
     meta: &RequestMeta,
+    codex_openai_device_id: Option<&str>,
 ) -> Result<Option<ReplayableBody>, AttemptOutcome> {
     let upstream_path = split_path_query(upstream_path_with_query).0;
-    if !needs_json_transform(provider, upstream, upstream_path, meta) {
+    if !needs_json_transform(
+        provider,
+        upstream,
+        upstream_path,
+        meta,
+        codex_openai_device_id,
+    ) {
         return Ok(None);
     }
 
     let must_strip_sampling =
         should_strip_openai_responses_sampling_params(provider, upstream_path, meta);
-    let read_limit = json_transform_read_limit(provider, upstream, upstream_path, meta);
+    let read_limit = json_transform_read_limit(
+        provider,
+        upstream,
+        upstream_path,
+        meta,
+        codex_openai_device_id,
+    );
     let Some(bytes) = body.read_bytes_if_small(read_limit).await.map_err(|err| {
         AttemptOutcome::Fatal(http::error_response(
             StatusCode::BAD_GATEWAY,
@@ -82,6 +103,7 @@ async fn build_json_transformed_body(
     )?;
     changed |= rewrite_developer_roles_if_needed(upstream, upstream_path, object, body_len);
     changed |= filter_anthropic_count_tokens_request(provider, upstream_path, object, body_len);
+    changed |= inject_codex_installation_id(object, provider, codex_openai_device_id);
     if !changed {
         return Ok(None);
     }
@@ -94,6 +116,7 @@ fn json_transform_read_limit(
     upstream: &UpstreamRuntime,
     upstream_path: &str,
     meta: &RequestMeta,
+    codex_openai_device_id: Option<&str>,
 ) -> usize {
     let mut limit = 0usize;
     if meta.model_override().is_some() && meta.mapped_model.is_some() {
@@ -114,6 +137,9 @@ fn json_transform_read_limit(
     if should_filter_anthropic_count_tokens_request(provider, upstream_path) {
         limit = limit.max(REQUEST_FILTER_LIMIT_BYTES);
     }
+    if should_inject_codex_installation_id(provider, codex_openai_device_id) {
+        limit = limit.max(REQUEST_FILTER_LIMIT_BYTES);
+    }
     limit
 }
 
@@ -122,6 +148,7 @@ fn needs_json_transform(
     upstream: &UpstreamRuntime,
     upstream_path: &str,
     meta: &RequestMeta,
+    codex_openai_device_id: Option<&str>,
 ) -> bool {
     (meta.model_override().is_some() && meta.mapped_model.is_some())
         || should_apply_reasoning_effort(provider, upstream_path, meta)
@@ -129,6 +156,7 @@ fn needs_json_transform(
         || should_strip_openai_responses_sampling_params(provider, upstream_path, meta)
         || should_rewrite_developer_roles(upstream, upstream_path)
         || should_filter_anthropic_count_tokens_request(provider, upstream_path)
+        || should_inject_codex_installation_id(provider, codex_openai_device_id)
 }
 
 fn rewrite_model_mapping(
@@ -341,6 +369,44 @@ fn filter_anthropic_count_tokens_request(
         tracing::debug!("filtered Anthropic count_tokens generation-only fields");
     }
     changed
+}
+
+fn should_inject_codex_installation_id(
+    provider: &str,
+    codex_openai_device_id: Option<&str>,
+) -> bool {
+    provider == "codex"
+        && codex_openai_device_id
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty())
+}
+
+fn inject_codex_installation_id(
+    object: &mut Map<String, Value>,
+    provider: &str,
+    codex_openai_device_id: Option<&str>,
+) -> bool {
+    if provider != "codex" {
+        return false;
+    }
+    let Some(device_id) = codex_openai_device_id.map(str::trim) else {
+        return false;
+    };
+    if device_id.is_empty() {
+        return false;
+    }
+
+    // Codex OAuth requests expect the account installation id inside client metadata.
+    let client_metadata = ensure_json_object_field(object, "client_metadata");
+    if client_metadata.contains_key(CODEX_INSTALLATION_ID_KEY) {
+        return false;
+    }
+    client_metadata.insert(
+        CODEX_INSTALLATION_ID_KEY.to_string(),
+        Value::String(device_id.to_string()),
+    );
+    tracing::debug!("injected Codex installation id into client_metadata");
+    true
 }
 
 fn replayable_from_json(value: Value) -> Result<ReplayableBody, AttemptOutcome> {

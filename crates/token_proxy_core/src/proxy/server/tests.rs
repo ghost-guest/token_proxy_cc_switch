@@ -1204,6 +1204,7 @@ async fn build_test_state_handle_with_paths(
                             status: crate::codex::CodexAccountStatus::Active,
                             account_id: Some("chatgpt-account".to_string()),
                             user_id: None,
+                            openai_device_id: None,
                             email: Some("codex@example.com".to_string()),
                             expires_at: expires_at.clone(),
                             last_refresh: None,
@@ -1265,12 +1266,53 @@ async fn seed_codex_account(
     .await;
 }
 
+async fn seed_codex_account_with_device_id(
+    state: &ProxyStateHandle,
+    storage_account_id: &str,
+    access_token: &str,
+    chatgpt_account_id: &str,
+    openai_device_id: &str,
+    expires_at: &str,
+) {
+    seed_codex_account_with_options(
+        state,
+        storage_account_id,
+        access_token,
+        "codex-refresh-token",
+        chatgpt_account_id,
+        Some(openai_device_id),
+        expires_at,
+    )
+    .await;
+}
+
 async fn seed_codex_account_with_refresh_token(
     state: &ProxyStateHandle,
     storage_account_id: &str,
     access_token: &str,
     refresh_token: &str,
     chatgpt_account_id: &str,
+    expires_at: &str,
+) {
+    seed_codex_account_with_options(
+        state,
+        storage_account_id,
+        access_token,
+        refresh_token,
+        chatgpt_account_id,
+        None,
+        expires_at,
+    )
+    .await;
+}
+
+async fn seed_codex_account_with_options(
+    state: &ProxyStateHandle,
+    storage_account_id: &str,
+    access_token: &str,
+    refresh_token: &str,
+    chatgpt_account_id: &str,
+    openai_device_id: Option<&str>,
     expires_at: &str,
 ) {
     let state_guard = state.read().await;
@@ -1291,6 +1333,7 @@ async fn seed_codex_account_with_refresh_token(
                 status: crate::codex::CodexAccountStatus::Active,
                 account_id: Some(chatgpt_account_id.to_string()),
                 user_id: None,
+                openai_device_id: openai_device_id.map(ToOwned::to_owned),
                 email: Some(format!("{storage_account_id}@example.com")),
                 expires_at: expires_at.to_string(),
                 last_refresh: None,
@@ -2435,6 +2478,74 @@ fn responses_request_auto_selects_first_available_codex_account_when_unbound() {
             Some("Bearer codex-access-a")
         );
         assert_eq!(requests[0].chatgpt_account_id.as_deref(), Some("chatgpt-a"));
+    });
+}
+
+#[test]
+fn responses_request_injects_codex_installation_id_from_selected_account() {
+    run_async(async {
+        let codex = spawn_mock_upstream(
+            StatusCode::OK,
+            json!({
+                "id": "resp_codex_installation",
+                "object": "response",
+                "created_at": 123,
+                "model": "gpt-5-codex",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "id": "msg_1",
+                        "status": "completed",
+                        "role": "assistant",
+                        "content": [
+                            { "type": "output_text", "text": "from codex installation" }
+                        ]
+                    }
+                ],
+                "usage": { "input_tokens": 1, "output_tokens": 2, "total_tokens": 3 }
+            }),
+        )
+        .await;
+
+        let config = config_with_runtime_upstreams(&[(
+            PROVIDER_CODEX,
+            0,
+            "codex-installation",
+            codex.base_url.as_str(),
+            FORMATS_RESPONSES,
+        )]);
+        let data_dir = next_test_data_dir("responses_codex_installation");
+        let state = build_test_state_handle(config, data_dir.clone()).await;
+        let expires_at = (OffsetDateTime::now_utc() + TimeDuration::days(1))
+            .format(&time::format_description::well_known::Rfc3339)
+            .expect("format expires_at");
+        seed_codex_account_with_device_id(
+            &state,
+            "codex-codex-installation.json",
+            "codex-access-install",
+            "chatgpt-install",
+            "device-install-123",
+            &expires_at,
+        )
+        .await;
+
+        let (status, json) = send_responses_request_with_model(state, "gpt-5-codex").await;
+        let requests = codex.requests();
+
+        codex.abort();
+        let _ = std::fs::remove_dir_all(&data_dir);
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            json["output"][0]["content"][0]["text"].as_str(),
+            Some("from codex installation")
+        );
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].body["client_metadata"]["x-codex-installation-id"].as_str(),
+            Some("device-install-123")
+        );
     });
 }
 

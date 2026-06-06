@@ -83,7 +83,10 @@ fn chat_request_to_codex_accepts_responses_shaped_body() {
     assert_eq!(value["model"], "gpt-5.5");
     assert_eq!(value["stream"], true);
     assert_eq!(value["store"], false);
-    assert_eq!(value["instructions"], "You are a helpful coding assistant.");
+    assert_eq!(
+        value["instructions"],
+        "You are GPT-5.1 running in the Codex CLI, a terminal-based coding assistant."
+    );
     assert_eq!(value["input"][0]["role"], "user");
     assert!(value.get("messages").is_none());
     assert!(value.get("metadata").is_none());
@@ -150,6 +153,35 @@ fn responses_request_to_codex_normalizes_gpt_5_5_and_sanitizes_oauth_payload() {
 }
 
 #[test]
+fn responses_request_to_codex_uses_model_aware_default_instructions() {
+    for (model, expected) in [
+        (
+            "gpt-5.2",
+            "You are GPT-5.2 running in the Codex CLI, a terminal-based coding assistant.",
+        ),
+        (
+            "gpt-5",
+            "You are GPT-5.1 running in the Codex CLI, a terminal-based coding assistant.",
+        ),
+        (
+            "gpt-5-codex",
+            "You are Codex, based on GPT-5. You are running as a coding agent in the Codex CLI on a user's computer.",
+        ),
+    ] {
+        let input = json!({
+            "model": model,
+            "input": "hi"
+        });
+
+        let output = responses_request_to_codex(&Bytes::from(input.to_string()), None)
+            .expect("convert responses request");
+        let value: serde_json::Value = serde_json::from_slice(&output).expect("json");
+
+        assert_eq!(value["instructions"], expected, "model={model}");
+    }
+}
+
+#[test]
 fn responses_request_to_codex_preserves_prompt_cache_key() {
     let input = json!({
         "model": "gpt-5.5",
@@ -196,7 +228,10 @@ fn responses_compact_request_to_codex_normalizes_gpt_5_5_and_removes_stream_stor
     let value: serde_json::Value = serde_json::from_slice(&output).expect("json");
 
     assert_eq!(value["model"], "gpt-5.5");
-    assert_eq!(value["instructions"], "You are a helpful coding assistant.");
+    assert_eq!(
+        value["instructions"],
+        "You are GPT-5.1 running in the Codex CLI, a terminal-based coding assistant."
+    );
     assert_eq!(value["stream"], true);
     assert_eq!(value["store"], false);
     assert!(value.get("include").is_none());

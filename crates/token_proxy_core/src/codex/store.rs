@@ -311,6 +311,9 @@ impl CodexAccountStore {
             if record.client_id.is_none() {
                 record.client_id = existing_record.client_id.clone();
             }
+            if record.openai_device_id.is_none() {
+                record.openai_device_id = existing_record.openai_device_id.clone();
+            }
             if record.proxy_url.is_none() {
                 record.proxy_url = existing_record.proxy_url.clone();
             }
@@ -375,6 +378,7 @@ impl CodexAccountStore {
             status: CodexAccountStatus::Active,
             account_id: None,
             user_id: None,
+            openai_device_id: None,
             email: None,
             expires_at: expires_at_from_seconds(response.expires_in),
             last_refresh: Some(now_rfc3339()),
@@ -558,6 +562,7 @@ impl CodexAccountStore {
             status: record.status,
             account_id: record.account_id.clone(),
             user_id: record.user_id.clone(),
+            openai_device_id: record.openai_device_id.clone(),
             email: record.email.clone(),
             expires_at: expires_at_from_seconds(response.expires_in),
             last_refresh: Some(now_rfc3339()),
@@ -1215,6 +1220,7 @@ fn raw_access_token_record(
         status: CodexAccountStatus::Active,
         account_id: None,
         user_id: None,
+        openai_device_id: None,
         email: None,
         expires_at,
         last_refresh: Some(now_rfc3339()),
@@ -1384,6 +1390,31 @@ fn parse_import_record(value: &Value) -> Option<CodexTokenRecord> {
             &["data", "clientId"],
         ],
     );
+    let openai_device_id = find_string(
+        value,
+        &[
+            &["openai_device_id"],
+            &["openaiDeviceId"],
+            &["device_id"],
+            &["deviceId"],
+            &["tokens", "openai_device_id"],
+            &["tokens", "openaiDeviceId"],
+            &["tokens", "device_id"],
+            &["tokens", "deviceId"],
+            &["token", "openai_device_id"],
+            &["token", "openaiDeviceId"],
+            &["token", "device_id"],
+            &["token", "deviceId"],
+            &["token_data", "openai_device_id"],
+            &["token_data", "openaiDeviceId"],
+            &["token_data", "device_id"],
+            &["token_data", "deviceId"],
+            &["data", "openai_device_id"],
+            &["data", "openaiDeviceId"],
+            &["data", "device_id"],
+            &["data", "deviceId"],
+        ],
+    );
 
     Some(CodexTokenRecord {
         access_token,
@@ -1394,6 +1425,7 @@ fn parse_import_record(value: &Value) -> Option<CodexTokenRecord> {
         status: CodexAccountStatus::Active,
         account_id,
         user_id,
+        openai_device_id,
         email,
         expires_at,
         last_refresh,
@@ -1788,6 +1820,7 @@ mod tests {
             status: CodexAccountStatus::Active,
             account_id: Some("acct-paid".to_string()),
             user_id: None,
+            openai_device_id: None,
             email: Some("paid@example.com".to_string()),
             expires_at: future_rfc3339(24),
             last_refresh: None,
@@ -2049,6 +2082,40 @@ mod tests {
             assert_eq!(
                 record.client_id.as_deref(),
                 Some(CodexRefreshTokenClient::Mobile.client_id())
+            );
+
+            let _ = std::fs::remove_dir_all(data_dir);
+        });
+    }
+
+    #[test]
+    fn import_text_preserves_openai_device_id() {
+        run_async(async {
+            let (store, data_dir) = create_test_store();
+            let imported = store
+                .import_text(
+                    serde_json::to_string_pretty(&json!({
+                        "tokens": {
+                            "accessToken": "access-token",
+                            "refreshToken": "refresh-token",
+                            "idToken": build_id_token("device@example.com", "acct-device"),
+                            "expires_in": 7200,
+                            "openai_device_id": "device-import-123",
+                        },
+                    }))
+                    .expect("serialize test json")
+                    .as_str(),
+                )
+                .await
+                .expect("text import should succeed");
+
+            let record = store
+                .get_account_record(&imported[0].account_id)
+                .await
+                .expect("record should exist");
+            assert_eq!(
+                record.openai_device_id.as_deref(),
+                Some("device-import-123")
             );
 
             let _ = std::fs::remove_dir_all(data_dir);
@@ -2844,6 +2911,7 @@ mod tests {
                     "access_token": "first-access-token",
                     "refresh_token": "first-refresh-token",
                     "client_id": CodexRefreshTokenClient::Mobile.client_id(),
+                    "openai_device_id": "device-existing",
                     "account_id": "acct-overwrite",
                     "email": "overwrite@example.com",
                     "expired": future_rfc3339(6),
@@ -2908,6 +2976,7 @@ mod tests {
                 record.client_id.as_deref(),
                 Some(CodexRefreshTokenClient::Mobile.client_id())
             );
+            assert_eq!(record.openai_device_id.as_deref(), Some("device-existing"));
             assert_eq!(record.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
 
             let _ = std::fs::remove_dir_all(data_dir);
@@ -3272,6 +3341,7 @@ INSERT INTO provider_accounts (
                         status: CodexAccountStatus::Active,
                         account_id: Some("acct-old".to_string()),
                         user_id: None,
+                        openai_device_id: None,
                         email: Some("old@example.com".to_string()),
                         expires_at: expired_at,
                         last_refresh: None,
@@ -3320,6 +3390,7 @@ INSERT INTO provider_accounts (
                         status: CodexAccountStatus::Active,
                         account_id: Some("acct-quota".to_string()),
                         user_id: None,
+                        openai_device_id: None,
                         email: Some("quota@example.com".to_string()),
                         expires_at: future_rfc3339(24),
                         last_refresh: None,
@@ -3381,6 +3452,7 @@ INSERT INTO provider_accounts (
                         status: CodexAccountStatus::Active,
                         account_id: Some("acct-invalid".to_string()),
                         user_id: None,
+                        openai_device_id: None,
                         email: Some("refresh-invalid@example.com".to_string()),
                         expires_at: future_rfc3339(24),
                         last_refresh: None,
@@ -3432,6 +3504,7 @@ INSERT INTO provider_accounts (
                         status: CodexAccountStatus::Active,
                         account_id: Some("acct-quota-fails".to_string()),
                         user_id: None,
+                        openai_device_id: None,
                         email: Some("quota-fails@example.com".to_string()),
                         expires_at: future_rfc3339(24),
                         last_refresh: None,
@@ -3498,6 +3571,7 @@ INSERT INTO provider_accounts (
                         status: CodexAccountStatus::Disabled,
                         account_id: Some("acct-disabled".to_string()),
                         user_id: None,
+                        openai_device_id: None,
                         email: Some("disabled@example.com".to_string()),
                         expires_at: expired_at.clone(),
                         last_refresh: None,
@@ -3517,6 +3591,7 @@ INSERT INTO provider_accounts (
                         status: CodexAccountStatus::Active,
                         account_id: Some("acct-manual".to_string()),
                         user_id: None,
+                        openai_device_id: None,
                         email: Some("manual@example.com".to_string()),
                         expires_at: expired_at.clone(),
                         last_refresh: None,
@@ -3536,6 +3611,7 @@ INSERT INTO provider_accounts (
                         status: CodexAccountStatus::Active,
                         account_id: Some("acct-access-only".to_string()),
                         user_id: None,
+                        openai_device_id: None,
                         email: Some("access-only@example.com".to_string()),
                         expires_at: expired_at.clone(),
                         last_refresh: None,
@@ -3622,6 +3698,7 @@ INSERT INTO provider_accounts (
                 status: CodexAccountStatus::Disabled,
                 account_id: Some("acct-disabled".to_string()),
                 user_id: None,
+                openai_device_id: None,
                 email: Some("aaa@example.com".to_string()),
                 expires_at: future_rfc3339(6),
                 last_refresh: None,
@@ -3638,6 +3715,7 @@ INSERT INTO provider_accounts (
                 status: CodexAccountStatus::Active,
                 account_id: Some("acct-enabled".to_string()),
                 user_id: None,
+                openai_device_id: None,
                 email: Some("zzz@example.com".to_string()),
                 expires_at: future_rfc3339(6),
                 last_refresh: None,

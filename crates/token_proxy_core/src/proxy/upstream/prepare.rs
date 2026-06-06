@@ -39,6 +39,7 @@ pub(super) async fn prepare_upstream_request(
         extra_headers,
         proxy_url,
         selected_account_id,
+        codex_openai_device_id,
     } = resolved;
     let request_headers = request::build_request_headers(
         provider,
@@ -54,6 +55,7 @@ pub(super) async fn prepare_upstream_request(
         request_headers,
         proxy_url,
         selected_account_id,
+        codex_openai_device_id,
         meta: mapped_meta,
     })
 }
@@ -80,6 +82,7 @@ async fn resolve_upstream_auth(
             extra_headers: None,
             proxy_url: upstream.proxy_url.clone(),
             selected_account_id: None,
+            codex_openai_device_id: None,
         });
     }
     if provider == "kiro" {
@@ -99,6 +102,7 @@ async fn resolve_upstream_auth(
         extra_headers: None,
         proxy_url: upstream.proxy_url.clone(),
         selected_account_id: None,
+        codex_openai_device_id: None,
     })
 }
 
@@ -148,6 +152,7 @@ async fn resolve_kiro_upstream(
         extra_headers: None,
         proxy_url,
         selected_account_id: Some(selected_account_id),
+        codex_openai_device_id: None,
     })
 }
 
@@ -210,6 +215,10 @@ async fn resolve_codex_upstream(
         extra_headers,
         proxy_url,
         selected_account_id: Some(selected_account_id),
+        codex_openai_device_id: record
+            .openai_device_id
+            .clone()
+            .filter(|value| !value.trim().is_empty()),
     })
 }
 

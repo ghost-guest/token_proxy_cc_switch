@@ -674,6 +674,7 @@ mod tests {
                         status,
                         account_id: Some(account_id.to_string()),
                         user_id: None,
+                        openai_device_id: None,
                         email: Some(email.to_string()),
                         expires_at: "2099-01-01T00:00:00Z".to_string(),
                         last_refresh: None,

@@ -32,6 +32,7 @@ pub(super) async fn send_upstream_request(
     body: &ReplayableBody,
     meta: &RequestMeta,
     selected_account_id: Option<&str>,
+    codex_openai_device_id: Option<&str>,
     request_detail: Option<&RequestDetailSnapshot>,
     start_time: Instant,
     timings: RequestTimings,
@@ -51,6 +52,7 @@ pub(super) async fn send_upstream_request(
             body,
             meta,
             selected_account_id,
+            codex_openai_device_id,
             request_detail,
             start_time,
             timings,
@@ -71,6 +73,7 @@ pub(super) async fn send_upstream_request(
         body,
         meta,
         selected_account_id,
+        codex_openai_device_id,
         request_detail,
         start_time,
         timings,
@@ -92,6 +95,7 @@ async fn send_codex_request(
     body: &ReplayableBody,
     meta: &RequestMeta,
     selected_account_id: Option<&str>,
+    codex_openai_device_id: Option<&str>,
     request_detail: Option<&RequestDetailSnapshot>,
     start_time: Instant,
     timings: RequestTimings,
@@ -109,6 +113,7 @@ async fn send_codex_request(
         body,
         meta,
         selected_account_id,
+        codex_openai_device_id,
         request_detail,
         start_time,
         timings,
@@ -131,6 +136,7 @@ async fn send_upstream_request_once(
     body: &ReplayableBody,
     meta: &RequestMeta,
     selected_account_id: Option<&str>,
+    codex_openai_device_id: Option<&str>,
     request_detail: Option<&RequestDetailSnapshot>,
     start_time: Instant,
     timings: RequestTimings,
@@ -149,9 +155,15 @@ async fn send_upstream_request_once(
         .map_err(|message| {
             AttemptOutcome::Fatal(http::error_response(StatusCode::BAD_GATEWAY, message))
         })?;
-    let upstream_body =
-        request_body::build_upstream_body(provider, upstream, upstream_path_with_query, body, meta)
-            .await?;
+    let upstream_body = request_body::build_upstream_body(
+        provider,
+        upstream,
+        upstream_path_with_query,
+        body,
+        meta,
+        codex_openai_device_id,
+    )
+    .await?;
     let response_header_timeout = response_header_timeout_for_provider(&state.config, provider);
     match send_request_once(
         client,
@@ -205,6 +217,7 @@ async fn send_codex_with_fallback(
     body: &ReplayableBody,
     meta: &RequestMeta,
     selected_account_id: Option<&str>,
+    codex_openai_device_id: Option<&str>,
     request_detail: Option<&RequestDetailSnapshot>,
     start_time: Instant,
     timings: RequestTimings,
@@ -227,6 +240,7 @@ async fn send_codex_with_fallback(
             body,
             meta,
             selected_account_id,
+            codex_openai_device_id,
             request_detail,
             start_time,
             timings.clone(),
@@ -266,6 +280,7 @@ async fn send_codex_attempt(
     body: &ReplayableBody,
     meta: &RequestMeta,
     selected_account_id: Option<&str>,
+    codex_openai_device_id: Option<&str>,
     request_detail: Option<&RequestDetailSnapshot>,
     start_time: Instant,
     timings: RequestTimings,
@@ -288,10 +303,16 @@ async fn send_codex_attempt(
                 message,
             )))
         })?;
-    let upstream_body =
-        request_body::build_upstream_body(provider, upstream, upstream_path_with_query, body, meta)
-            .await
-            .map_err(CodexAttemptError::Fatal)?;
+    let upstream_body = request_body::build_upstream_body(
+        provider,
+        upstream,
+        upstream_path_with_query,
+        body,
+        meta,
+        codex_openai_device_id,
+    )
+    .await
+    .map_err(CodexAttemptError::Fatal)?;
     let response_header_timeout = response_header_timeout_for_provider(&state.config, provider);
     match send_request_once(
         client,
