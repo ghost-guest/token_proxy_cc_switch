@@ -10,8 +10,7 @@ use super::{
     gemini,
     http_client::ProxyHttpClients,
     openai_compat::{
-        transform_request_body_with_codex_prompt_cache_key, FormatTransform, CHAT_PATH,
-        PROVIDER_CHAT,
+        transform_request_body_with_prompt_cache_key, FormatTransform, CHAT_PATH, PROVIDER_CHAT,
     },
     request_body::ReplayableBody,
     request_token_estimate, RequestMeta,
@@ -262,19 +261,24 @@ pub(crate) async fn maybe_transform_request_body(
     )
     .await;
 
-    let codex_prompt_cache_key = codex_prompt_cache_key_for_transform(transform, headers);
+    let prompt_cache_key = prompt_cache_key_for_transform(transform, headers);
     if is_codex_request_transform(transform) {
         tracing::debug!(
-            has_prompt_cache_key = codex_prompt_cache_key.is_some(),
+            has_prompt_cache_key = prompt_cache_key.is_some(),
             "codex request transform context"
         );
+    } else if transform == FormatTransform::ChatToResponses {
+        tracing::debug!(
+            has_prompt_cache_key = prompt_cache_key.is_some(),
+            "chat to responses transform context"
+        );
     }
-    let outbound_bytes = transform_request_body_with_codex_prompt_cache_key(
+    let outbound_bytes = transform_request_body_with_prompt_cache_key(
         transform,
         &bytes,
         http_clients,
         model_hint,
-        codex_prompt_cache_key.as_deref(),
+        prompt_cache_key.as_deref(),
     )
     .await
     .map_err(|message| RequestError::new(StatusCode::BAD_REQUEST, message))?;
@@ -289,15 +293,19 @@ pub(crate) async fn maybe_transform_request_body(
     Ok(outbound_body)
 }
 
-fn codex_prompt_cache_key_for_transform(
+fn prompt_cache_key_for_transform(
     transform: FormatTransform,
     headers: &HeaderMap,
 ) -> Option<String> {
-    if !is_codex_request_transform(transform) {
+    if !is_prompt_cache_key_transform(transform) {
         return None;
     }
     // Official Codex uses thread-id as Responses prompt_cache_key; session-id is a fallback for clients that only send session identity.
     header_string(headers, "thread-id").or_else(|| header_string(headers, "session-id"))
+}
+
+fn is_prompt_cache_key_transform(transform: FormatTransform) -> bool {
+    transform == FormatTransform::ChatToResponses || is_codex_request_transform(transform)
 }
 
 fn is_codex_request_transform(transform: FormatTransform) -> bool {

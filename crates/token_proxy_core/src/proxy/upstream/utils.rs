@@ -4,6 +4,15 @@ use std::sync::atomic::Ordering;
 use super::super::{config::UpstreamOrderStrategy, ProxyState};
 use crate::proxy::redact::redact_query_param_value;
 
+const RETRYABLE_TRANSPORT_ERROR_MARKERS: &[&str] = &[
+    "authentication failed",
+    "proxy authentication required",
+    "connection refused",
+    "no route to host",
+    "network is unreachable",
+    "no such host",
+];
+
 pub(super) fn extract_query_param(path_with_query: &str, name: &str) -> Option<String> {
     let url = url::Url::parse(&format!("http://localhost{path_with_query}")).ok()?;
     url.query_pairs()
@@ -59,7 +68,15 @@ pub(super) fn resolve_group_start(
 }
 
 pub(super) fn is_retryable_error(err: &reqwest::Error) -> bool {
-    err.is_timeout() || err.is_connect()
+    err.is_timeout() || err.is_connect() || is_retryable_transport_error_message(&err.to_string())
+}
+
+pub(super) fn is_retryable_transport_error_message(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    // Some proxy failures, especially SOCKS5 auth rejection, only surface as text inside reqwest errors.
+    RETRYABLE_TRANSPORT_ERROR_MARKERS
+        .iter()
+        .any(|marker| message.contains(marker))
 }
 
 pub(super) fn is_retryable_status(status: StatusCode) -> bool {

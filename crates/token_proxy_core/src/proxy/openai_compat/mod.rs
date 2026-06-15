@@ -74,26 +74,22 @@ pub(crate) async fn transform_request_body(
     http_clients: &ProxyHttpClients,
     model_hint: Option<&str>,
 ) -> Result<Bytes, String> {
-    transform_request_body_with_codex_prompt_cache_key(
-        transform,
-        body,
-        http_clients,
-        model_hint,
-        None,
-    )
-    .await
+    transform_request_body_with_prompt_cache_key(transform, body, http_clients, model_hint, None)
+        .await
 }
 
-pub(crate) async fn transform_request_body_with_codex_prompt_cache_key(
+pub(crate) async fn transform_request_body_with_prompt_cache_key(
     transform: FormatTransform,
     body: &Bytes,
     http_clients: &ProxyHttpClients,
     model_hint: Option<&str>,
-    codex_prompt_cache_key: Option<&str>,
+    prompt_cache_key: Option<&str>,
 ) -> Result<Bytes, String> {
     match transform {
         FormatTransform::None => Ok(body.clone()),
-        FormatTransform::ChatToResponses => chat_request_to_responses(body),
+        FormatTransform::ChatToResponses => {
+            chat_request_to_responses_with_prompt_cache_key(body, prompt_cache_key)
+        }
         FormatTransform::ResponsesToChat => responses_request_to_chat(body),
         FormatTransform::ResponsesToAnthropic => {
             anthropic_compat::responses_request_to_anthropic(body, http_clients).await
@@ -107,7 +103,7 @@ pub(crate) async fn transform_request_body_with_codex_prompt_cache_key(
             codex_compat::responses_request_to_codex_with_prompt_cache_key(
                 &intermediate,
                 model_hint,
-                codex_prompt_cache_key,
+                prompt_cache_key,
             )
         }
         FormatTransform::ChatToAnthropic => {
@@ -131,20 +127,20 @@ pub(crate) async fn transform_request_body_with_codex_prompt_cache_key(
         FormatTransform::ChatToCodex => codex_compat::chat_request_to_codex_with_prompt_cache_key(
             body,
             model_hint,
-            codex_prompt_cache_key,
+            prompt_cache_key,
         ),
         FormatTransform::ResponsesToCodex => {
             codex_compat::responses_request_to_codex_with_prompt_cache_key(
                 body,
                 model_hint,
-                codex_prompt_cache_key,
+                prompt_cache_key,
             )
         }
         FormatTransform::ResponsesCompactToCodex => {
             codex_compat::responses_compact_request_to_codex_with_prompt_cache_key(
                 body,
                 model_hint,
-                codex_prompt_cache_key,
+                prompt_cache_key,
             )
         }
         FormatTransform::ImagesGenerationsToCodex => {
@@ -152,7 +148,7 @@ pub(crate) async fn transform_request_body_with_codex_prompt_cache_key(
             codex_compat::responses_request_to_codex_with_prompt_cache_key(
                 &responses_body,
                 None,
-                codex_prompt_cache_key,
+                prompt_cache_key,
             )
         }
         FormatTransform::CodexToChat
@@ -217,6 +213,13 @@ pub(crate) fn transform_response_body(
 }
 
 fn chat_request_to_responses(body: &Bytes) -> Result<Bytes, String> {
+    chat_request_to_responses_with_prompt_cache_key(body, None)
+}
+
+fn chat_request_to_responses_with_prompt_cache_key(
+    body: &Bytes,
+    prompt_cache_key: Option<&str>,
+) -> Result<Bytes, String> {
     let value: Value =
         serde_json::from_slice(body).map_err(|_| "Request body must be JSON.".to_string())?;
     let Some(object) = value.as_object() else {
@@ -271,6 +274,7 @@ fn chat_request_to_responses(body: &Bytes) -> Result<Bytes, String> {
             "context_management",
         ],
     );
+    ensure_prompt_cache_key(&mut output, prompt_cache_key);
     copy_key(object, &mut output, "text");
 
     strip_sampling_params_for_reasoning_responses_model(&mut output);
@@ -321,6 +325,26 @@ fn chat_request_to_responses(body: &Bytes) -> Result<Bytes, String> {
     serde_json::to_vec(&Value::Object(output))
         .map(Bytes::from)
         .map_err(|err| format!("Failed to serialize request: {err}"))
+}
+
+fn ensure_prompt_cache_key(output: &mut Map<String, Value>, prompt_cache_key: Option<&str>) {
+    let existing = output
+        .get("prompt_cache_key")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if existing.is_some() {
+        return;
+    }
+    if let Some(prompt_cache_key) = prompt_cache_key
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        output.insert(
+            "prompt_cache_key".to_string(),
+            Value::String(prompt_cache_key.to_string()),
+        );
+    }
 }
 
 fn is_responses_shaped_chat_request(object: &Map<String, Value>) -> bool {

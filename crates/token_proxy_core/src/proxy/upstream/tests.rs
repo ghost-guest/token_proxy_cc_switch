@@ -1,6 +1,6 @@
 use axum::http::StatusCode;
 
-use super::utils::is_retryable_status;
+use super::utils::{is_retryable_status, is_retryable_transport_error_message};
 use super::*;
 
 #[test]
@@ -50,6 +50,27 @@ fn cooldown_status_matches_proxy_policy() {
     ));
     assert!(!result::should_cooldown_retryable_status(
         StatusCode::TEMPORARY_REDIRECT
+    ));
+}
+
+#[test]
+fn retryable_transport_error_message_matches_persistent_proxy_failures() {
+    for message in [
+        "error sending request: username/password authentication failed",
+        "error sending request: proxy authentication required",
+        "tcp connect error: connection refused",
+        "tcp connect error: no route to host",
+        "tcp connect error: network is unreachable",
+        "dns error: no such host",
+    ] {
+        assert!(
+            is_retryable_transport_error_message(message),
+            "{message} should trigger upstream failover"
+        );
+    }
+
+    assert!(!is_retryable_transport_error_message(
+        "request body serialization failed"
     ));
 }
 

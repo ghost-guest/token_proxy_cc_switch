@@ -184,6 +184,55 @@ fn chat_request_to_responses_maps_advanced_optional_params() {
 }
 
 #[test]
+fn chat_request_to_responses_uses_prompt_cache_key_hint_when_missing() {
+    let http_clients = ProxyHttpClients::new().expect("http clients");
+    let input = bytes_from_json(json!({
+        "model": "gpt-5",
+        "messages": [{ "role": "user", "content": "hi" }]
+    }));
+
+    let output = run_async(async {
+        transform_request_body_with_prompt_cache_key(
+            FormatTransform::ChatToResponses,
+            &input,
+            &http_clients,
+            None,
+            Some("thread-from-header"),
+        )
+        .await
+        .expect("transform")
+    });
+    let value = json_from_bytes(output);
+
+    assert_eq!(value["prompt_cache_key"], json!("thread-from-header"));
+}
+
+#[test]
+fn chat_request_to_responses_keeps_existing_prompt_cache_key() {
+    let http_clients = ProxyHttpClients::new().expect("http clients");
+    let input = bytes_from_json(json!({
+        "model": "gpt-5",
+        "messages": [{ "role": "user", "content": "hi" }],
+        "prompt_cache_key": "body-cache-key"
+    }));
+
+    let output = run_async(async {
+        transform_request_body_with_prompt_cache_key(
+            FormatTransform::ChatToResponses,
+            &input,
+            &http_clients,
+            None,
+            Some("thread-from-header"),
+        )
+        .await
+        .expect("transform")
+    });
+    let value = json_from_bytes(output);
+
+    assert_eq!(value["prompt_cache_key"], json!("body-cache-key"));
+}
+
+#[test]
 fn responses_request_to_chat_maps_reasoning_web_search_and_tool_metadata() {
     let http_clients = ProxyHttpClients::new().expect("http clients");
     let schema = json!({
