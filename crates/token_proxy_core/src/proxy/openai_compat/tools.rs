@@ -89,7 +89,14 @@ fn map_chat_tool_to_responses(value: &Value) -> Value {
     if let Some(parameters) = normalize_tool_parameters(function.get("parameters")) {
         output.insert("parameters".to_string(), parameters);
     }
-    copy_optional_tool_key(function, &mut output, "strict");
+    // OpenAI-compatible Responses tools expect an explicit `strict` boolean.
+    output.insert(
+        "strict".to_string(),
+        function
+            .get("strict")
+            .cloned()
+            .unwrap_or_else(|| json!(false)),
+    );
     copy_optional_tool_key(tool, &mut output, "cache_control");
     copy_optional_tool_key(tool, &mut output, "defer_loading");
     copy_optional_tool_key(tool, &mut output, "allowed_callers");

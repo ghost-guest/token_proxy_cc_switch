@@ -214,6 +214,7 @@ fn chat_request_to_responses_maps_tools_and_tool_choice() {
     assert_eq!(value["tools"][0]["name"], json!("search"));
     assert_eq!(value["tools"][0]["description"], json!("Search something"));
     assert_eq!(value["tools"][0]["parameters"], parameters);
+    assert_eq!(value["tools"][0]["strict"], json!(false));
     assert_eq!(value["tool_choice"]["type"], json!("function"));
     assert_eq!(value["tool_choice"]["name"], json!("search"));
 }
