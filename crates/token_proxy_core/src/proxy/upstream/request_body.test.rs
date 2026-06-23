@@ -430,6 +430,93 @@ async fn json_transform_pipeline_applies_reasoning_filters_and_role_rewrite_toge
 }
 
 #[tokio::test]
+async fn openai_chat_reasoning_effort_normalizes_glm_xhigh_to_max() {
+    let upstream = test_upstream(false, false, false);
+    let meta = RequestMeta {
+        client_ip: None,
+        stream: false,
+        original_model: Some("z-ai/glm-5.1-xhigh".to_string()),
+        mapped_model: Some("glm-5.1".to_string()),
+        reasoning_effort: Some("xhigh".to_string()),
+        response_format: None,
+        estimated_input_tokens: None,
+    };
+    let body = ReplayableBody::from_bytes(Bytes::from_static(
+        br#"{"model":"z-ai/glm-5.1-xhigh","messages":[{"role":"user","content":"hi"}]}"#,
+    ));
+
+    let rewritten = match build_json_transformed_body(
+        "openai",
+        &upstream,
+        "/v1/chat/completions",
+        &body,
+        &meta,
+        None,
+    )
+    .await
+    {
+        Ok(Some(value)) => value,
+        Ok(None) => panic!("GLM effort should rewrite body"),
+        Err(_) => panic!("transform result"),
+    };
+    let bytes = rewritten
+        .read_bytes_if_small(1024)
+        .await
+        .expect("read rewritten bytes")
+        .expect("rewritten body exists");
+    let value: Value = serde_json::from_slice(&bytes).expect("json");
+
+    assert_eq!(value.get("model").and_then(Value::as_str), Some("glm-5.1"));
+    assert_eq!(
+        value.get("reasoning_effort").and_then(Value::as_str),
+        Some("max")
+    );
+}
+
+#[tokio::test]
+async fn openai_chat_reasoning_effort_keeps_non_glm_xhigh() {
+    let upstream = test_upstream(false, false, false);
+    let meta = RequestMeta {
+        client_ip: None,
+        stream: false,
+        original_model: Some("openai/gpt-5.5-xhigh".to_string()),
+        mapped_model: Some("gpt-5.5".to_string()),
+        reasoning_effort: Some("xhigh".to_string()),
+        response_format: None,
+        estimated_input_tokens: None,
+    };
+    let body = ReplayableBody::from_bytes(Bytes::from_static(
+        br#"{"model":"openai/gpt-5.5-xhigh","messages":[{"role":"user","content":"hi"}]}"#,
+    ));
+
+    let rewritten = match build_json_transformed_body(
+        "openai",
+        &upstream,
+        "/v1/chat/completions",
+        &body,
+        &meta,
+        None,
+    )
+    .await
+    {
+        Ok(Some(value)) => value,
+        Ok(None) => panic!("reasoning effort should rewrite body"),
+        Err(_) => panic!("transform result"),
+    };
+    let bytes = rewritten
+        .read_bytes_if_small(1024)
+        .await
+        .expect("read rewritten bytes")
+        .expect("rewritten body exists");
+    let value: Value = serde_json::from_slice(&bytes).expect("json");
+
+    assert_eq!(
+        value.get("reasoning_effort").and_then(Value::as_str),
+        Some("xhigh")
+    );
+}
+
+#[tokio::test]
 async fn injects_codex_installation_id_into_client_metadata() {
     let upstream = test_upstream(false, false, false);
     let meta = RequestMeta {

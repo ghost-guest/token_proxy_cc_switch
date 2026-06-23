@@ -134,6 +134,49 @@ fn chat_request_to_gemini_maps_tool_result_name_from_prior_tool_call() {
 }
 
 #[test]
+fn chat_request_to_gemini_cleans_unsupported_tool_schema_fields() {
+    let input = json!({
+        "messages": [
+            { "role": "user", "content": "find file" }
+        ],
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "description": "Read a file",
+                    "parameters": {
+                        "type": "object",
+                        "$defs": { "unused": { "type": "string" } },
+                        "definitions": { "legacy": { "type": "number" } },
+                        "additionalProperties": false,
+                        "properties": {
+                            "path": { "type": ["string", "null"], "minLength": 1 },
+                            "count": { "type": ["null", "integer"] },
+                            "empty": { "type": ["null"] }
+                        }
+                    }
+                }
+            }
+        ]
+    });
+
+    let output =
+        chat_request_to_gemini(&Bytes::from(serde_json::to_vec(&input).unwrap())).expect("convert");
+    let value: Value = serde_json::from_slice(&output).expect("json");
+    let parameters = &value["tools"][0]["functionDeclarations"][0]["parameters"];
+
+    assert_eq!(parameters["type"], json!("OBJECT"));
+    assert!(parameters.get("$defs").is_none());
+    assert!(parameters.get("definitions").is_none());
+    assert!(parameters.get("additionalProperties").is_none());
+    assert_eq!(parameters["properties"]["path"]["type"], json!("STRING"));
+    assert!(parameters["properties"]["path"].get("minLength").is_none());
+    assert_eq!(parameters["properties"]["count"]["type"], json!("INTEGER"));
+    assert!(parameters["properties"]["empty"].get("type").is_none());
+}
+
+#[test]
 fn chat_request_to_gemini_preserves_remote_images_and_input_audio() {
     let input = json!({
         "messages": [

@@ -4860,6 +4860,253 @@ data: [DONE]\n\n",
 }
 
 #[test]
+fn openai_image_generation_codex_bridge_retries_incomplete_to_next_upstream() {
+    run_async(async {
+        let primary = spawn_mock_raw_upstream(
+            StatusCode::OK,
+            Bytes::from(
+                "data: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_img_incomplete\",\"object\":\"response\",\"created_at\":1710000020,\"model\":\"gpt-5.4-mini\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"output\":[]}}\n\n\
+data: [DONE]\n\n",
+            ),
+            "text/event-stream",
+        )
+        .await;
+        let fallback = spawn_mock_raw_upstream(
+            StatusCode::OK,
+            Bytes::from(
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_img_after_incomplete\",\"object\":\"response\",\"created_at\":1710000021,\"model\":\"gpt-5.4-mini\",\"status\":\"completed\",\"output\":[{\"type\":\"image_generation_call\",\"id\":\"ig_1\",\"result\":\"ZmFpbG92ZXI=\",\"output_format\":\"png\"}]}}\n\n\
+data: [DONE]\n\n",
+            ),
+            "text/event-stream",
+        )
+        .await;
+
+        let mut config = config_with_runtime_upstreams(&[
+            (
+                PROVIDER_CODEX,
+                10,
+                "codex-images-primary",
+                primary.base_url.as_str(),
+                FORMATS_RESPONSES,
+            ),
+            (
+                PROVIDER_CODEX,
+                10,
+                "codex-images-fallback",
+                fallback.base_url.as_str(),
+                FORMATS_RESPONSES,
+            ),
+        ]);
+        config.upstream_strategy = UpstreamStrategyRuntime {
+            order: UpstreamOrderStrategy::FillFirst,
+            dispatch: UpstreamDispatchRuntime::Serial,
+        };
+        let data_dir = next_test_data_dir("openai_images_generation_incomplete_retry");
+        let state = build_test_state_handle(config, data_dir.clone()).await;
+
+        let response = proxy_request(
+            State(state),
+            Method::POST,
+            Uri::from_static("/v1/images/generations"),
+            axum::http::HeaderMap::new(),
+            Body::from(
+                json!({
+                    "model": "gpt-image-2",
+                    "prompt": "draw after incomplete"
+                })
+                .to_string(),
+            ),
+        )
+        .await;
+
+        let response_status = response.status();
+        let response_bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("proxy response bytes");
+        let response_json: Value =
+            serde_json::from_slice(&response_bytes).expect("proxy response json");
+        let primary_requests = primary.requests();
+        let fallback_requests = fallback.requests();
+
+        primary.abort();
+        fallback.abort();
+        let _ = std::fs::remove_dir_all(&data_dir);
+
+        assert_eq!(response_status, StatusCode::OK);
+        assert_eq!(
+            response_json["data"][0]["b64_json"].as_str(),
+            Some("ZmFpbG92ZXI=")
+        );
+        assert_eq!(primary_requests.len(), 1);
+        assert_eq!(fallback_requests.len(), 1);
+        assert_eq!(primary_requests[0].path, CODEX_RESPONSES_PATH);
+        assert_eq!(fallback_requests[0].path, CODEX_RESPONSES_PATH);
+    });
+}
+
+#[test]
+fn openai_image_generation_codex_bridge_retries_empty_output_to_next_upstream() {
+    run_async(async {
+        let primary = spawn_mock_raw_upstream(
+            StatusCode::OK,
+            Bytes::from(
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_img_empty_retry\",\"object\":\"response\",\"created_at\":1710000024,\"model\":\"gpt-5.4-mini\",\"status\":\"completed\",\"output\":[]}}\n\n\
+data: [DONE]\n\n",
+            ),
+            "text/event-stream",
+        )
+        .await;
+        let fallback = spawn_mock_raw_upstream(
+            StatusCode::OK,
+            Bytes::from(
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_img_after_empty\",\"object\":\"response\",\"created_at\":1710000025,\"model\":\"gpt-5.4-mini\",\"status\":\"completed\",\"output\":[{\"type\":\"image_generation_call\",\"id\":\"ig_1\",\"result\":\"ZW1wdHktZmFpbG92ZXI=\",\"output_format\":\"png\"}]}}\n\n\
+data: [DONE]\n\n",
+            ),
+            "text/event-stream",
+        )
+        .await;
+
+        let mut config = config_with_runtime_upstreams(&[
+            (
+                PROVIDER_CODEX,
+                10,
+                "codex-images-empty-primary",
+                primary.base_url.as_str(),
+                FORMATS_RESPONSES,
+            ),
+            (
+                PROVIDER_CODEX,
+                10,
+                "codex-images-empty-fallback",
+                fallback.base_url.as_str(),
+                FORMATS_RESPONSES,
+            ),
+        ]);
+        config.upstream_strategy = UpstreamStrategyRuntime {
+            order: UpstreamOrderStrategy::FillFirst,
+            dispatch: UpstreamDispatchRuntime::Serial,
+        };
+        let data_dir = next_test_data_dir("openai_images_generation_empty_output_retry");
+        let state = build_test_state_handle(config, data_dir.clone()).await;
+
+        let response = proxy_request(
+            State(state),
+            Method::POST,
+            Uri::from_static("/v1/images/generations"),
+            axum::http::HeaderMap::new(),
+            Body::from(
+                json!({
+                    "model": "gpt-image-2",
+                    "prompt": "draw after empty output"
+                })
+                .to_string(),
+            ),
+        )
+        .await;
+
+        let response_status = response.status();
+        let response_bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("proxy response bytes");
+        let response_json: Value =
+            serde_json::from_slice(&response_bytes).expect("proxy response json");
+        let primary_requests = primary.requests();
+        let fallback_requests = fallback.requests();
+
+        primary.abort();
+        fallback.abort();
+        let _ = std::fs::remove_dir_all(&data_dir);
+
+        assert_eq!(response_status, StatusCode::OK);
+        assert_eq!(
+            response_json["data"][0]["b64_json"].as_str(),
+            Some("ZW1wdHktZmFpbG92ZXI=")
+        );
+        assert_eq!(primary_requests.len(), 1);
+        assert_eq!(fallback_requests.len(), 1);
+    });
+}
+
+#[test]
+fn openai_image_generation_codex_bridge_content_filter_incomplete_does_not_retry() {
+    run_async(async {
+        let primary = spawn_mock_raw_upstream(
+            StatusCode::OK,
+            Bytes::from(
+                "data: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_img_filtered\",\"object\":\"response\",\"created_at\":1710000022,\"model\":\"gpt-5.4-mini\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"content_filter\"},\"output\":[]}}\n\n\
+data: [DONE]\n\n",
+            ),
+            "text/event-stream",
+        )
+        .await;
+        let fallback = spawn_mock_raw_upstream(
+            StatusCode::OK,
+            Bytes::from(
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_img_unused\",\"object\":\"response\",\"created_at\":1710000023,\"model\":\"gpt-5.4-mini\",\"status\":\"completed\",\"output\":[{\"type\":\"image_generation_call\",\"id\":\"ig_1\",\"result\":\"dW51c2Vk\",\"output_format\":\"png\"}]}}\n\n\
+data: [DONE]\n\n",
+            ),
+            "text/event-stream",
+        )
+        .await;
+
+        let mut config = config_with_runtime_upstreams(&[
+            (
+                PROVIDER_CODEX,
+                10,
+                "codex-images-primary",
+                primary.base_url.as_str(),
+                FORMATS_RESPONSES,
+            ),
+            (
+                PROVIDER_CODEX,
+                10,
+                "codex-images-fallback",
+                fallback.base_url.as_str(),
+                FORMATS_RESPONSES,
+            ),
+        ]);
+        config.upstream_strategy = UpstreamStrategyRuntime {
+            order: UpstreamOrderStrategy::FillFirst,
+            dispatch: UpstreamDispatchRuntime::Serial,
+        };
+        let data_dir = next_test_data_dir("openai_images_generation_content_filter_no_retry");
+        let state = build_test_state_handle(config, data_dir.clone()).await;
+
+        let response = proxy_request(
+            State(state),
+            Method::POST,
+            Uri::from_static("/v1/images/generations"),
+            axum::http::HeaderMap::new(),
+            Body::from(
+                json!({
+                    "model": "gpt-image-2",
+                    "prompt": "draw filtered"
+                })
+                .to_string(),
+            ),
+        )
+        .await;
+
+        let response_status = response.status();
+        let response_bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("proxy response bytes");
+        let response_text = String::from_utf8_lossy(&response_bytes);
+        let primary_requests = primary.requests();
+        let fallback_requests = fallback.requests();
+
+        primary.abort();
+        fallback.abort();
+        let _ = std::fs::remove_dir_all(&data_dir);
+
+        assert_eq!(response_status, StatusCode::BAD_REQUEST);
+        assert!(response_text.contains("content_filter"));
+        assert_eq!(primary_requests.len(), 1);
+        assert!(fallback_requests.is_empty());
+    });
+}
+
+#[test]
 fn openai_image_generation_codex_bridge_falls_back_to_tool_usage() {
     run_async(async {
         let codex = spawn_mock_raw_upstream(

@@ -198,7 +198,7 @@ pub(crate) fn transform_response_body(
             anthropic_compat::responses_response_to_anthropic(&intermediate, model_hint)
         }
         FormatTransform::CodexToImagesGenerations => {
-            images::codex_response_to_images_generation(bytes, None)
+            images::codex_response_to_images_generation(bytes, None).map_err(|err| err.message)
         }
         FormatTransform::CodexToChat | FormatTransform::CodexToResponses => {
             Err("Codex response conversion is handled upstream.".to_string())

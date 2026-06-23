@@ -207,6 +207,7 @@ fn apply_reasoning_effort(
         .mapped_model
         .as_deref()
         .or(meta.original_model.as_deref());
+    let effort = normalize_glm_reasoning_effort(model_for_upstream, effort).unwrap_or(effort);
     if let Some(model) = model_for_upstream {
         object.insert("model".to_string(), Value::String(model.to_string()));
     }
@@ -221,6 +222,22 @@ fn apply_reasoning_effort(
     let reasoning = ensure_json_object_field(object, "reasoning");
     reasoning.insert("effort".to_string(), Value::String(effort.to_string()));
     true
+}
+
+fn normalize_glm_reasoning_effort(model: Option<&str>, effort: &str) -> Option<&'static str> {
+    let model = model?.trim().to_ascii_lowercase();
+    if !model.starts_with("glm-") {
+        return None;
+    }
+    let normalized = effort
+        .trim()
+        .to_ascii_lowercase()
+        .replace(['-', '_', ' '], "");
+    match normalized.as_str() {
+        "low" | "medium" | "high" => Some("high"),
+        "xhigh" | "extrahigh" | "max" | "ultracode" => Some("max"),
+        _ => None,
+    }
 }
 
 fn ensure_json_object_field<'a>(

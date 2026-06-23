@@ -723,8 +723,10 @@ fn convert_codex_to_images_generation_body(
             response_format,
         ) {
             Ok(converted) => converted,
-            Err(message) => {
-                return Err(respond_transform_error(context, usage, log, message));
+            Err(error) => {
+                return Err(respond_codex_images_transform_error(
+                    context, usage, log, error,
+                ));
             }
         };
     Ok(ConvertedBody {
@@ -901,6 +903,26 @@ fn respond_transform_error(
     let entry = build_log_entry(context, usage, Some(error_message.clone()));
     log.clone().write_detached(entry);
     http::error_response(StatusCode::BAD_GATEWAY, error_message)
+}
+
+fn respond_codex_images_transform_error(
+    context: &mut LogContext,
+    usage: UsageSnapshot,
+    log: Arc<LogWriter>,
+    error: super::super::super::openai_compat::images::CodexImagesGenerationError,
+) -> Response {
+    let error_message = format!("Failed to transform upstream response: {}", error.message);
+    context.status = error.status.as_u16();
+    let entry = build_log_entry(context, usage, Some(error_message.clone()));
+    log.clone().write_detached(entry);
+    let mut response = http::error_response(error.status, &error_message);
+    if error.retryable {
+        response.extensions_mut().insert(RetryableStreamResponse {
+            message: error_message,
+            should_cooldown: false,
+        });
+    }
+    response
 }
 
 fn resolve_kiro_usage(

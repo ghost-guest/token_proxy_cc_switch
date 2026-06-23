@@ -1,6 +1,20 @@
 //! OpenAI Chat ↔ Gemini 工具定义转换
 
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
+
+const GEMINI_UNSUPPORTED_SCHEMA_KEYS: &[&str] = &[
+    "$schema",
+    "$id",
+    "$ref",
+    "$defs",
+    "definitions",
+    "additionalProperties",
+    "patternProperties",
+    "minLength",
+    "maxLength",
+    "minItems",
+    "maxItems",
+];
 
 /// 将 OpenAI Chat 格式的 tools 转换为 Gemini 格式的 functionDeclarations
 pub(super) fn map_chat_tools_to_gemini(tools: &Value) -> Value {
@@ -23,7 +37,7 @@ pub(super) fn map_chat_tools_to_gemini(tools: &Value) -> Value {
                 .unwrap_or("");
             let parameters = function
                 .get("parameters")
-                .cloned()
+                .map(clean_tool_schema)
                 .unwrap_or_else(|| json!({}));
             Some(json!({
                 "name": name,
@@ -36,6 +50,53 @@ pub(super) fn map_chat_tools_to_gemini(tools: &Value) -> Value {
     json!([{
         "functionDeclarations": declarations
     }])
+}
+
+fn clean_tool_schema(schema: &Value) -> Value {
+    match schema {
+        Value::Object(object) => clean_tool_schema_object(object),
+        Value::Array(items) => Value::Array(items.iter().map(clean_tool_schema).collect()),
+        other => other.clone(),
+    }
+}
+
+fn clean_tool_schema_object(object: &Map<String, Value>) -> Value {
+    let mut cleaned = Map::new();
+    for (key, value) in object {
+        if GEMINI_UNSUPPORTED_SCHEMA_KEYS.contains(&key.as_str()) {
+            continue;
+        }
+        cleaned.insert(key.clone(), clean_tool_schema(value));
+    }
+    normalize_gemini_schema_type(&mut cleaned);
+    Value::Object(cleaned)
+}
+
+fn normalize_gemini_schema_type(object: &mut Map<String, Value>) {
+    match object.get("type") {
+        Some(Value::String(schema_type)) => {
+            object.insert(
+                "type".to_string(),
+                Value::String(schema_type.to_ascii_uppercase()),
+            );
+        }
+        Some(Value::Array(schema_types)) => {
+            let normalized = schema_types
+                .iter()
+                .filter_map(Value::as_str)
+                .find(|schema_type| !schema_type.eq_ignore_ascii_case("null"))
+                .map(str::to_ascii_uppercase);
+            match normalized {
+                Some(schema_type) => {
+                    object.insert("type".to_string(), Value::String(schema_type));
+                }
+                None => {
+                    object.remove("type");
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 /// 将 OpenAI Chat 格式的 tool_choice 转换为 Gemini 格式的 toolConfig

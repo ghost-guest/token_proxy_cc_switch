@@ -1,9 +1,16 @@
-use axum::body::Bytes;
+use axum::{body::Bytes, http::StatusCode};
 use serde_json::{json, Map, Value};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const CODEX_IMAGE_RESPONSES_MODEL: &str = "gpt-5.4-mini";
 const DEFAULT_IMAGE_TOOL_MODEL: &str = "gpt-image-2";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CodexImagesGenerationError {
+    pub(crate) status: StatusCode,
+    pub(crate) message: String,
+    pub(crate) retryable: bool,
+}
 
 pub(crate) fn images_generation_request_to_responses(body: &Bytes) -> Result<Bytes, String> {
     let object = parse_object(body)?;
@@ -72,11 +79,15 @@ pub(crate) fn images_generation_request_to_responses(body: &Bytes) -> Result<Byt
 pub(crate) fn codex_response_to_images_generation(
     bytes: &Bytes,
     response_format: Option<&str>,
-) -> Result<Bytes, String> {
+) -> Result<Bytes, CodexImagesGenerationError> {
     let value: Value = serde_json::from_slice(bytes)
-        .map_err(|_| "Codex image bridge response must be JSON.".to_string())?;
-    let response = extract_response_object(&value)
-        .ok_or_else(|| "Codex image bridge response missing response object.".to_string())?;
+        .map_err(|_| codex_images_error("Codex image bridge response must be JSON."))?;
+    if let Some(error) = codex_images_upstream_error(&value) {
+        return Err(error);
+    }
+    let response = extract_response_object(&value).ok_or_else(|| {
+        codex_images_error("Codex image bridge response missing response object.")
+    })?;
     let created = response
         .get("created_at")
         .and_then(Value::as_i64)
@@ -84,7 +95,7 @@ pub(crate) fn codex_response_to_images_generation(
     let output = response
         .get("output")
         .and_then(Value::as_array)
-        .ok_or_else(|| "Codex image bridge response missing output array.".to_string())?;
+        .ok_or_else(|| codex_images_error("Codex image bridge response missing output array."))?;
 
     let response_meta = first_image_tool_meta(response);
     let mut data = Vec::new();
@@ -127,7 +138,10 @@ pub(crate) fn codex_response_to_images_generation(
     }
 
     if data.is_empty() {
-        return Err("Codex image bridge response contained no generated images.".to_string());
+        return Err(codex_images_retryable_error(format!(
+            "Codex image bridge response contained no generated images. {}",
+            summarize_no_image_output(&value)
+        )));
     }
 
     let mut output = Map::new();
@@ -144,7 +158,7 @@ pub(crate) fn codex_response_to_images_generation(
 
     serde_json::to_vec(&Value::Object(output))
         .map(Bytes::from)
-        .map_err(|err| format!("Failed to serialize images response: {err}"))
+        .map_err(|err| codex_images_error(format!("Failed to serialize images response: {err}")))
 }
 
 fn parse_object(body: &Bytes) -> Result<Map<String, Value>, String> {
@@ -227,6 +241,146 @@ fn extract_response_object(value: &Value) -> Option<&Map<String, Value>> {
         return Some(response);
     }
     value.as_object()
+}
+
+fn codex_images_upstream_error(value: &Value) -> Option<CodexImagesGenerationError> {
+    match value.get("type").and_then(Value::as_str) {
+        Some("error") => Some(codex_images_error_from_object(
+            value.get("error"),
+            StatusCode::BAD_GATEWAY,
+            true,
+        )),
+        Some("response.failed") => Some(codex_images_error_from_object(
+            value
+                .get("response")
+                .and_then(|response| response.get("error")),
+            StatusCode::BAD_GATEWAY,
+            true,
+        )),
+        Some("response.incomplete") => value
+            .get("response")
+            .map(codex_images_incomplete_error)
+            .or_else(|| {
+                Some(codex_images_retryable_error(
+                    "Upstream did not complete image generation",
+                ))
+            }),
+        _ => {
+            match value.get("status").and_then(Value::as_str) {
+                Some("failed") => {
+                    return Some(codex_images_error_from_object(
+                        value.get("error"),
+                        StatusCode::BAD_GATEWAY,
+                        true,
+                    ));
+                }
+                Some("incomplete") => {
+                    return Some(codex_images_incomplete_error(value));
+                }
+                _ => {}
+            }
+            let response = value.get("response")?;
+            match response.get("status").and_then(Value::as_str) {
+                Some("failed") => Some(codex_images_error_from_object(
+                    response.get("error"),
+                    StatusCode::BAD_GATEWAY,
+                    true,
+                )),
+                Some("incomplete") => Some(codex_images_incomplete_error(response)),
+                _ => None,
+            }
+        }
+    }
+}
+
+fn codex_images_error_from_object(
+    error: Option<&Value>,
+    fallback_status: StatusCode,
+    retryable: bool,
+) -> CodexImagesGenerationError {
+    let message = error
+        .and_then(|error| error.get("message"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|message| !message.is_empty())
+        .unwrap_or("Upstream image generation failed");
+    CodexImagesGenerationError {
+        status: fallback_status,
+        message: message.to_string(),
+        retryable,
+    }
+}
+
+fn codex_images_incomplete_error(response: &Value) -> CodexImagesGenerationError {
+    let reason = response
+        .get("incomplete_details")
+        .and_then(|details| details.get("reason"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|reason| !reason.is_empty());
+    let is_content_filter = reason.is_some_and(|reason| {
+        let reason = reason.to_ascii_lowercase();
+        reason.contains("content_filter") || reason.contains("moderation")
+    });
+    let message = reason
+        .map(|reason| format!("Upstream image generation incomplete: {reason}"))
+        .unwrap_or_else(|| "Upstream did not complete image generation".to_string());
+    CodexImagesGenerationError {
+        status: if is_content_filter {
+            StatusCode::BAD_REQUEST
+        } else {
+            StatusCode::BAD_GATEWAY
+        },
+        message,
+        retryable: !is_content_filter,
+    }
+}
+
+fn codex_images_error(message: impl Into<String>) -> CodexImagesGenerationError {
+    CodexImagesGenerationError {
+        status: StatusCode::BAD_GATEWAY,
+        message: message.into(),
+        retryable: false,
+    }
+}
+
+fn codex_images_retryable_error(message: impl Into<String>) -> CodexImagesGenerationError {
+    CodexImagesGenerationError {
+        status: StatusCode::BAD_GATEWAY,
+        message: message.into(),
+        retryable: true,
+    }
+}
+
+fn summarize_no_image_output(value: &Value) -> String {
+    let status = value
+        .get("status")
+        .or_else(|| {
+            value
+                .get("response")
+                .and_then(|response| response.get("status"))
+        })
+        .and_then(Value::as_str);
+    let incomplete_reason = value
+        .get("incomplete_details")
+        .or_else(|| {
+            value
+                .get("response")
+                .and_then(|response| response.get("incomplete_details"))
+        })
+        .and_then(|details| details.get("reason"))
+        .and_then(Value::as_str);
+    let mut parts = vec!["no_image_output".to_string()];
+    if let Some(event_type) = value.get("type").and_then(Value::as_str) {
+        parts.push(format!("last_event={event_type}"));
+    }
+    if let Some(status) = status {
+        parts.push(format!("status={status}"));
+    }
+    if let Some(incomplete_reason) = incomplete_reason {
+        parts.push(format!("incomplete_reason={incomplete_reason}"));
+    }
+    parts.join(" ")
 }
 
 pub(crate) fn image_generation_usage(response: &Map<String, Value>) -> Option<Value> {
