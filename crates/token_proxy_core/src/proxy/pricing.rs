@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::fmt::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const DEFAULT_PRICING_VERSION: &str = "2026-05-24.gpt-5-2";
+pub const DEFAULT_PRICING_VERSION: &str = "2026-06-26.opus-4-8";
 
 const DEFAULT_LONG_CONTEXT_INPUT_TOKEN_THRESHOLD: u64 = 272_000;
 const SETTINGS_ROW_ID: i64 = 1;
@@ -133,6 +133,23 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
                     input_nano_usd_per_token: 3_000,
                     cached_input_nano_usd_per_token: 300,
                     output_nano_usd_per_token: 15_000,
+                },
+                long: None,
+                long_context_input_token_threshold: None,
+            },
+            // Claude Opus 4.8 shares Opus 4.7 list pricing ($5 / $0.5 cached / $25 per million tokens).
+            ModelPricingModel {
+                model_id: "claude-opus-4-8".to_string(),
+                aliases: alias_list(&[
+                    "claude-opus-4.8",
+                    "opus-4-8",
+                    "anthropic/claude-opus-4-8",
+                    "anthropic/claude-opus-4.8",
+                ]),
+                short: ModelPricingTier {
+                    input_nano_usd_per_token: 5_000,
+                    cached_input_nano_usd_per_token: 500,
+                    output_nano_usd_per_token: 25_000,
                 },
                 long: None,
                 long_context_input_token_threshold: None,
@@ -660,6 +677,7 @@ fn push_model_lookup_key(keys: &mut Vec<String>, value: &str) {
 
 fn canonical_model_lookup_key(model: &str) -> String {
     match model {
+        "claude-opus-4.8" => "claude-opus-4-8".to_string(),
         "claude-opus-4.7" => "claude-opus-4-7".to_string(),
         _ => model.to_string(),
     }
@@ -737,6 +755,10 @@ mod tests {
     fn matches_provider_prefixed_and_snapshot_default_aliases() {
         let settings = default_model_pricing_settings();
         let cases = [
+            ("anthropic/claude-opus-4-8", "claude-opus-4-8"),
+            ("anthropic/claude-opus-4.8", "claude-opus-4-8"),
+            ("claude-opus-4.8", "claude-opus-4-8"),
+            ("opus-4-8", "claude-opus-4-8"),
             ("anthropic/claude-opus-4-7", "claude-opus-4-7"),
             ("anthropic/claude-opus-4.7", "claude-opus-4-7"),
             ("claude-opus-4.7", "claude-opus-4-7"),
@@ -1000,6 +1022,24 @@ mod tests {
             .expect("claude-sonnet-4.6 should exist");
         assert_eq!(claude_sonnet.short.input_nano_usd_per_token, 3_000);
         assert_eq!(claude_sonnet.aliases, vec!["anthropic/claude-sonnet-4.6"]);
+
+        let claude_opus_4_8 = settings
+            .models
+            .iter()
+            .find(|model| model.model_id == "claude-opus-4-8")
+            .expect("claude-opus-4-8 should exist");
+        assert_eq!(claude_opus_4_8.short.input_nano_usd_per_token, 5_000);
+        assert_eq!(claude_opus_4_8.short.cached_input_nano_usd_per_token, 500);
+        assert_eq!(claude_opus_4_8.short.output_nano_usd_per_token, 25_000);
+        assert_eq!(
+            claude_opus_4_8.aliases,
+            vec![
+                "claude-opus-4.8",
+                "opus-4-8",
+                "anthropic/claude-opus-4-8",
+                "anthropic/claude-opus-4.8"
+            ]
+        );
 
         let claude_opus = settings
             .models
