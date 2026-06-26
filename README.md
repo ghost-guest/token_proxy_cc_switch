@@ -172,9 +172,8 @@ Notes:
 - The Logs panel supports a 30-second request-detail capture window: when enabled it stores request headers/bodies during that window, always keeps error responses for failed requests, and turns off automatically afterward.
 
 ## One-click CLI setup
-- Claude Code: writes `~/.claude/settings.json` `env` (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` when local key is set).
-- Codex: writes `~/.codex/config.toml` `model_provider="token_proxy"` and `[model_providers.token_proxy].base_url` → `http://127.0.0.1:<port>/v1`; writes `~/.codex/auth.json` `OPENAI_API_KEY`.
-- OpenCode: writes `~/.config/opencode/opencode.json[c]` `provider.token_proxy` and `options.baseURL` → `http://127.0.0.1:<port>/v1`; writes `~/.local/share/opencode/auth.json` `token_proxy.key`. This requires at least one **exact model mapping** in Upstreams (no `*`).
+- Claude Code: writes `~/.claude/settings.json` `env` (`ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL=claude-sonnet-4-6`, `ANTHROPIC_AUTH_TOKEN` when local key is set).
+- Codex: writes `~/.codex/config.toml` `model="gpt-5.5"`, `model_provider="token_proxy"`, and `[model_providers.token_proxy].base_url` → `http://127.0.0.1:<port>/v1`; writes `~/.codex/auth.json` `OPENAI_API_KEY`.
 - A `.token_proxy.bak` file is created before overwriting; restart the CLI to apply.
 
 ## FAQ

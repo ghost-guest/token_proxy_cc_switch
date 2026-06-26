@@ -27,7 +27,6 @@ use commands::{
     read_request_detail_capture, read_request_log_detail, refresh_dashboard_model_discovery,
     reset_model_pricing_settings, save_model_pricing_settings, save_proxy_config,
     set_request_detail_capture, write_claude_code_settings, write_codex_config,
-    write_opencode_config,
 };
 
 type ProxyServiceHandle = proxy::service::ProxyServiceHandle;
@@ -219,7 +218,6 @@ pub fn run() {
             preview_client_setup,
             write_claude_code_settings,
             write_codex_config,
-            write_opencode_config,
             save_proxy_config,
             read_model_pricing_settings,
             save_model_pricing_settings,

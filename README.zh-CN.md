@@ -172,9 +172,8 @@ pnpm exec tsc --noEmit
 - Logs 面板支持“记录 30 秒内请求详情”：开启后会在 30 秒窗口内记录请求 header/body，失败请求的错误响应始终保留，到时自动关闭
 
 ## 一键写 CLI 配置
-- Claude Code：写入 `~/.claude/settings.json` 的 `env`（`ANTHROPIC_BASE_URL`，若有本地密钥则写 `ANTHROPIC_AUTH_TOKEN`）
-- Codex：写入 `~/.codex/config.toml` 的 `model_provider="token_proxy"` 与 `[model_providers.token_proxy].base_url` → `http://127.0.0.1:<port>/v1`；写入 `~/.codex/auth.json` 的 `OPENAI_API_KEY`
-- OpenCode：写入 `~/.config/opencode/opencode.json[c]` 的 `provider.token_proxy` 与 `options.baseURL` → `http://127.0.0.1:<port>/v1`；写入 `~/.local/share/opencode/auth.json` 的 `token_proxy.key`。需要在 Upstreams 中至少配置一个**精确模型映射**（不能带 `*`）
+- Claude Code：写入 `~/.claude/settings.json` 的 `env`（`ANTHROPIC_BASE_URL`、`ANTHROPIC_MODEL=claude-sonnet-4-6`，若有本地密钥则写 `ANTHROPIC_AUTH_TOKEN`）
+- Codex：写入 `~/.codex/config.toml` 的 `model="gpt-5.5"`、`model_provider="token_proxy"` 与 `[model_providers.token_proxy].base_url` → `http://127.0.0.1:<port>/v1`；写入 `~/.codex/auth.json` 的 `OPENAI_API_KEY`
 - 写入前会生成 `.token_proxy.bak` 备份；写完重启对应 CLI 生效
 
 ## FAQ

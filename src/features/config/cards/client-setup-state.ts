@@ -8,6 +8,7 @@ export type ClientSetupInfo = {
   proxy_http_base_url: string;
   claude_settings_path: string;
   claude_base_url: string;
+  claude_model: string;
   claude_auth_token_configured: boolean;
   codex_config_path: string;
   codex_auth_path: string;
@@ -22,12 +23,6 @@ export type ClientSetupInfo = {
   codex_provider_requires_openai_auth: boolean;
   codex_provider_wire_api: string;
   codex_api_key_configured: boolean;
-  opencode_config_path: string;
-  opencode_auth_path: string;
-  opencode_provider_id: string;
-  opencode_provider_base_url: string;
-  opencode_models: string[];
-  opencode_api_key_configured: boolean;
 };
 
 type ClientConfigWriteResult = {
@@ -44,8 +39,7 @@ export type ActionState = {
 
 export type WriteCommand =
   | "write_claude_code_settings"
-  | "write_codex_config"
-  | "write_opencode_config";
+  | "write_codex_config";
 
 export function toActionState(): ActionState {
   return { state: "idle", message: "", lastPath: "" };

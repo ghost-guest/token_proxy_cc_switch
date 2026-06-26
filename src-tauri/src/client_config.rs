@@ -1,6 +1,5 @@
 use serde::Serialize;
 use std::{
-    collections::HashSet,
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
@@ -11,7 +10,8 @@ use tauri::Manager;
 use crate::proxy::config::ProxyConfigFile;
 
 const CODEX_DISABLE_RESPONSE_STORAGE: bool = true;
-const CODEX_MODEL: &str = "gpt-5.4";
+const CLAUDE_MODEL: &str = "claude-sonnet-4-6";
+const CODEX_MODEL: &str = "gpt-5.5";
 const CODEX_DEFAULT_MODEL_PROVIDER: &str = "token_proxy";
 const CODEX_MODEL_REASONING_EFFORT: &str = "xhigh";
 const CODEX_NETWORK_ACCESS: &str = "enabled";
@@ -20,17 +20,13 @@ const CODEX_PROVIDER_NAME: &str = "token_proxy";
 const CODEX_PROVIDER_REQUIRES_OPENAI_AUTH: bool = true;
 const CODEX_PROVIDER_WIRE_API: &str = "responses";
 
-const OPENCODE_PROVIDER_ID: &str = "token_proxy";
-const OPENCODE_PROVIDER_NPM: &str = "@ai-sdk/openai-compatible";
-const OPENCODE_PROVIDER_NAME: &str = "Token Proxy";
-const OPENCODE_SCHEMA_URL: &str = "https://opencode.ai/config.json";
-
 #[derive(Clone, Serialize)]
 pub(crate) struct ClientSetupInfo {
     pub(crate) proxy_http_base_url: String,
 
     pub(crate) claude_settings_path: String,
     pub(crate) claude_base_url: String,
+    pub(crate) claude_model: String,
     pub(crate) claude_auth_token_configured: bool,
 
     pub(crate) codex_config_path: String,
@@ -47,13 +43,6 @@ pub(crate) struct ClientSetupInfo {
     pub(crate) codex_provider_requires_openai_auth: bool,
     pub(crate) codex_provider_wire_api: String,
     pub(crate) codex_api_key_configured: bool,
-
-    pub(crate) opencode_config_path: String,
-    pub(crate) opencode_auth_path: String,
-    pub(crate) opencode_provider_id: String,
-    pub(crate) opencode_provider_base_url: String,
-    pub(crate) opencode_models: Vec<String>,
-    pub(crate) opencode_api_key_configured: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -67,8 +56,6 @@ pub(crate) async fn preview(app: AppHandle) -> Result<ClientSetupInfo, String> {
     let claude_settings_path = resolve_claude_settings_path(&app)?;
     let codex_config_path = resolve_codex_config_path(&app)?;
     let codex_auth_path = resolve_codex_auth_path(&app)?;
-    let opencode_config_path = resolve_opencode_config_path(&app)?;
-    let opencode_auth_path = resolve_opencode_auth_path(&app)?;
     let codex_config_input = read_text_or_empty(&codex_config_path).await?;
     let (codex_model_provider, codex_provider_name) =
         resolve_codex_target_provider_and_name(&codex_config_input);
@@ -77,12 +64,12 @@ pub(crate) async fn preview(app: AppHandle) -> Result<ClientSetupInfo, String> {
         .as_ref()
         .is_some_and(|key| !key.trim().is_empty());
     let openai_compat_base_url = build_openai_compat_base_url(&proxy_http_base_url);
-    let opencode_models = collect_opencode_models(&config);
 
     Ok(ClientSetupInfo {
         proxy_http_base_url: proxy_http_base_url.clone(),
         claude_settings_path: claude_settings_path.to_string_lossy().to_string(),
         claude_base_url: proxy_http_base_url.clone(),
+        claude_model: CLAUDE_MODEL.to_string(),
         claude_auth_token_configured: has_local_key,
         codex_config_path: codex_config_path.to_string_lossy().to_string(),
         codex_auth_path: codex_auth_path.to_string_lossy().to_string(),
@@ -97,12 +84,6 @@ pub(crate) async fn preview(app: AppHandle) -> Result<ClientSetupInfo, String> {
         codex_provider_requires_openai_auth: CODEX_PROVIDER_REQUIRES_OPENAI_AUTH,
         codex_provider_wire_api: CODEX_PROVIDER_WIRE_API.to_string(),
         codex_api_key_configured: has_local_key,
-        opencode_config_path: opencode_config_path.to_string_lossy().to_string(),
-        opencode_auth_path: opencode_auth_path.to_string_lossy().to_string(),
-        opencode_provider_id: OPENCODE_PROVIDER_ID.to_string(),
-        opencode_provider_base_url: openai_compat_base_url,
-        opencode_models,
-        opencode_api_key_configured: has_local_key,
     })
 }
 
@@ -117,12 +98,17 @@ pub(crate) async fn write_claude_code_settings(
     // 这样无需改 shell profile 就能全局生效。
     //
     // - ANTHROPIC_BASE_URL: 指向本地代理（不带 /v1）
+    // - ANTHROPIC_MODEL: 固定 Claude Code 默认编码模型，避免依赖客户端账号档位推断
     // - ANTHROPIC_AUTH_TOKEN: 用于 Authorization: Bearer <token>，与 Token Proxy 的 local_api_key 匹配
     let mut root = read_json_object_or_default(&settings_path).await?;
     let env = ensure_json_object_field(&mut root, "env")?;
     env.insert(
         "ANTHROPIC_BASE_URL".to_string(),
         serde_json::Value::String(proxy_http_base_url),
+    );
+    env.insert(
+        "ANTHROPIC_MODEL".to_string(),
+        serde_json::Value::String(CLAUDE_MODEL.to_string()),
     );
     match config
         .local_api_key
@@ -202,71 +188,6 @@ pub(crate) async fn write_codex_config(app: AppHandle) -> Result<ClientConfigWri
     })
 }
 
-pub(crate) async fn write_opencode_config(
-    app: AppHandle,
-) -> Result<ClientConfigWriteResult, String> {
-    let config = load_proxy_config(&app).await?;
-    let proxy_http_base_url = build_proxy_http_base_url(&config)?;
-    let opencode_config_path = resolve_opencode_config_path(&app)?;
-    let opencode_auth_path = resolve_opencode_auth_path(&app)?;
-    let opencode_provider_base_url = build_openai_compat_base_url(&proxy_http_base_url);
-    let opencode_models = collect_opencode_models(&config);
-
-    if opencode_models.is_empty() {
-        return Err(
-            "OpenCode requires at least one model for custom providers. Add an exact model mapping (no '*') in Upstreams, then try again."
-                .to_string(),
-        );
-    }
-
-    let mut root = read_json_object_or_default(&opencode_config_path).await?;
-    root.insert(
-        "$schema".to_string(),
-        serde_json::Value::String(OPENCODE_SCHEMA_URL.to_string()),
-    );
-    let providers = ensure_json_object_field(&mut root, "provider")?;
-    providers.insert(
-        OPENCODE_PROVIDER_ID.to_string(),
-        build_opencode_provider_config(&opencode_provider_base_url, &opencode_models),
-    );
-    write_json_with_backup(&opencode_config_path, &serde_json::Value::Object(root)).await?;
-
-    let mut auth_root = read_json_object_or_default(&opencode_auth_path).await?;
-    match config
-        .local_api_key
-        .as_ref()
-        .map(|key| key.trim())
-        .filter(|key| !key.is_empty())
-    {
-        Some(token) => {
-            auth_root.insert(
-                OPENCODE_PROVIDER_ID.to_string(),
-                serde_json::Value::Object(serde_json::Map::from_iter([
-                    (
-                        "type".to_string(),
-                        serde_json::Value::String("api".to_string()),
-                    ),
-                    (
-                        "key".to_string(),
-                        serde_json::Value::String(token.to_string()),
-                    ),
-                ])),
-            );
-        }
-        None => {
-            auth_root.remove(OPENCODE_PROVIDER_ID);
-        }
-    }
-    write_json_with_backup(&opencode_auth_path, &serde_json::Value::Object(auth_root)).await?;
-
-    Ok(ClientConfigWriteResult {
-        paths: vec![
-            opencode_config_path.to_string_lossy().to_string(),
-            opencode_auth_path.to_string_lossy().to_string(),
-        ],
-    })
-}
-
 async fn load_proxy_config(app: &AppHandle) -> Result<ProxyConfigFile, String> {
     let paths = app.state::<Arc<token_proxy_core::paths::TokenProxyPaths>>();
     Ok(crate::proxy::config::read_config(paths.inner().as_ref())
@@ -306,47 +227,6 @@ fn resolve_codex_home_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(std::env::var_os("CODEX_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| home.join(".codex")))
-}
-
-fn resolve_opencode_config_path(app: &AppHandle) -> Result<PathBuf, String> {
-    if let Some(path) = std::env::var_os("OPENCODE_CONFIG").map(PathBuf::from) {
-        return Ok(path);
-    }
-
-    let dir = resolve_opencode_config_dir(app)?;
-    let jsonc = dir.join("opencode.jsonc");
-    let json = dir.join("opencode.json");
-    if jsonc.exists() {
-        return Ok(jsonc);
-    }
-    if json.exists() {
-        return Ok(json);
-    }
-    Ok(jsonc)
-}
-
-fn resolve_opencode_config_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    if let Some(dir) = std::env::var_os("OPENCODE_CONFIG_DIR").map(PathBuf::from) {
-        return Ok(dir);
-    }
-    if let Some(dir) = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from) {
-        return Ok(dir.join("opencode"));
-    }
-    Ok(resolve_home_dir(app)?.join(".config").join("opencode"))
-}
-
-fn resolve_opencode_auth_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(resolve_opencode_data_dir(app)?.join("auth.json"))
-}
-
-fn resolve_opencode_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    if let Some(dir) = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from) {
-        return Ok(dir.join("opencode"));
-    }
-    Ok(resolve_home_dir(app)?
-        .join(".local")
-        .join("share")
-        .join("opencode"))
 }
 
 fn build_proxy_http_base_url(config: &ProxyConfigFile) -> Result<String, String> {
@@ -448,94 +328,6 @@ fn apply_codex_proxy_settings(
     Ok(())
 }
 
-fn build_opencode_model_display_name(model: &str) -> String {
-    let display = model
-        .split('-')
-        .map(str::trim)
-        .filter(|segment| !segment.is_empty())
-        .map(title_case_segment)
-        .collect::<Vec<_>>()
-        .join(" ");
-
-    if display.is_empty() {
-        model.to_string()
-    } else {
-        display
-    }
-}
-
-fn title_case_segment(segment: &str) -> String {
-    let mut chars = segment.chars();
-    let Some(first) = chars.next() else {
-        return String::new();
-    };
-
-    let mut title = first.to_uppercase().collect::<String>();
-    title.push_str(&chars.as_str().to_lowercase());
-    title
-}
-
-fn collect_opencode_models(config: &ProxyConfigFile) -> Vec<String> {
-    let mut models = HashSet::new();
-    for pattern in config.hot_model_mappings.keys() {
-        let value = pattern.trim();
-        if value.is_empty() || value.contains('*') {
-            continue;
-        }
-        models.insert(value.to_string());
-    }
-    for upstream in &config.upstreams {
-        for pattern in upstream.model_mappings.keys() {
-            let value = pattern.trim();
-            if value.is_empty() {
-                continue;
-            }
-            if value.contains('*') {
-                continue;
-            }
-            models.insert(value.to_string());
-        }
-    }
-    let mut list = models.into_iter().collect::<Vec<_>>();
-    list.sort();
-    list
-}
-
-fn build_opencode_provider_config(base_url: &str, models: &[String]) -> serde_json::Value {
-    let mut models_object = serde_json::Map::new();
-    for model in models {
-        models_object.insert(
-            model.to_string(),
-            serde_json::Value::Object(serde_json::Map::from_iter([(
-                "name".to_string(),
-                serde_json::Value::String(build_opencode_model_display_name(model)),
-            )])),
-        );
-    }
-
-    serde_json::Value::Object(serde_json::Map::from_iter([
-        (
-            "npm".to_string(),
-            serde_json::Value::String(OPENCODE_PROVIDER_NPM.to_string()),
-        ),
-        (
-            "name".to_string(),
-            serde_json::Value::String(OPENCODE_PROVIDER_NAME.to_string()),
-        ),
-        (
-            "options".to_string(),
-            serde_json::Value::Object(serde_json::Map::from_iter([(
-                "baseURL".to_string(),
-                serde_json::Value::String(base_url.to_string()),
-            )])),
-        ),
-        (
-            "models".to_string(),
-            serde_json::Value::Object(models_object),
-        ),
-    ]))
-}
-
 async fn read_text_or_empty(path: &Path) -> Result<String, String> {
     match tokio::fs::read_to_string(path).await {
         Ok(contents) => Ok(contents),
@@ -626,41 +418,9 @@ async fn write_text_with_backup(path: &Path, contents: String) -> Result<(), Str
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        apply_codex_proxy_settings, build_opencode_provider_config,
-        resolve_codex_target_provider_and_name,
-    };
+    use super::{apply_codex_proxy_settings, resolve_codex_target_provider_and_name};
     use std::str::FromStr;
     use toml_edit::DocumentMut;
-
-    #[test]
-    fn opencode_provider_uses_readable_model_display_names() {
-        let config = build_opencode_provider_config(
-            "http://127.0.0.1:9208/v1",
-            &["claude-sonnet-4-5".to_string(), "gpt-5.4".to_string()],
-        );
-
-        let models = config
-            .get("models")
-            .and_then(serde_json::Value::as_object)
-            .expect("models object");
-
-        let claude_name = models
-            .get("claude-sonnet-4-5")
-            .and_then(serde_json::Value::as_object)
-            .and_then(|value| value.get("name"))
-            .and_then(serde_json::Value::as_str)
-            .expect("claude display name");
-        let gpt_name = models
-            .get("gpt-5.4")
-            .and_then(serde_json::Value::as_object)
-            .and_then(|value| value.get("name"))
-            .and_then(serde_json::Value::as_str)
-            .expect("gpt display name");
-
-        assert_eq!(claude_name, "Claude Sonnet 4 5");
-        assert_eq!(gpt_name, "Gpt 5.4");
-    }
 
     #[test]
     fn resolve_codex_target_provider_preserves_existing_model_provider() {
@@ -710,6 +470,21 @@ base_url = "https://api.openai.com/v1"
             .and_then(toml_edit::Item::as_table_like)
             .and_then(|table| table.get("token_proxy"));
         assert!(token_proxy_provider.is_none());
+    }
+
+    #[test]
+    fn apply_codex_proxy_settings_writes_current_default_model() {
+        let mut doc = DocumentMut::new();
+
+        apply_codex_proxy_settings(
+            &mut doc,
+            "token_proxy",
+            "token_proxy",
+            "http://127.0.0.1:9208/v1",
+        )
+        .expect("apply codex proxy settings");
+
+        assert_eq!(doc["model"].as_str(), Some("gpt-5.5"));
     }
 }
 

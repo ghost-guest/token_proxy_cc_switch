@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 import { m } from "@/paraglide/messages.js";
 
 import {
-  ClientSetupOverviewCard,
   PlaintextWarning,
   SummaryItem,
   ToolDetailsFallback,
@@ -19,7 +18,6 @@ import {
 import {
   ClaudeSetupDetails,
   CodexSetupDetails,
-  OpenCodeSetupDetails,
 } from "./client-setup-details";
 
 type ClientSetupCardProps = {
@@ -114,49 +112,6 @@ function buildCodexTool({
   } satisfies ToolListItem;
 }
 
-type OpenCodeToolArgs = ToolBuildBaseArgs & ToolBuildActionArgs & {
-  openCodeModelCount: number;
-  canApplyOpenCode: boolean;
-};
-
-function buildOpenCodeTool({
-  setup,
-  previewState,
-  previewMessage,
-  canApplyOpenCode,
-  openCodeModelCount,
-  isWorking,
-  action,
-  onApply,
-}: OpenCodeToolArgs) {
-  return {
-    id: "opencode",
-    title: m.client_setup_opencode_title(),
-    description: m.client_setup_opencode_desc(),
-    summary: (
-      <div className="space-y-1">
-        <SummaryItem
-          label={m.client_setup_target_file_label()}
-          value={setup ? `${setup.opencode_config_path} (+1)` : "—"}
-        />
-        <SummaryItem
-          label={m.client_setup_opencode_models_label()}
-          value={setup ? String(openCodeModelCount) : "—"}
-        />
-      </div>
-    ),
-    content: setup ? (
-      <OpenCodeSetupDetails setup={setup} />
-    ) : (
-      <ToolDetailsFallback previewState={previewState} previewMessage={previewMessage} />
-    ),
-    action,
-    canApply: Boolean(setup) && canApplyOpenCode,
-    isWorking,
-    onApply,
-  } satisfies ToolListItem;
-}
-
 function ToolCards({ tools }: { tools: readonly ToolListItem[] }) {
   return (
     <>
@@ -184,16 +139,11 @@ export function ClientSetupCard({ savedAt, isDirty }: ClientSetupCardProps) {
 
   const claude = useWriteAction("write_claude_code_settings", loadPreview);
   const codex = useWriteAction("write_codex_config", loadPreview);
-  const opencode = useWriteAction("write_opencode_config", loadPreview);
 
   const isWorking =
     previewState === "working" ||
     claude.action.state === "working" ||
-    codex.action.state === "working" ||
-    opencode.action.state === "working";
-
-  const openCodeModelCount = setup?.opencode_models.length ?? 0;
-  const canApplyOpenCode = canApply && openCodeModelCount > 0;
+    codex.action.state === "working";
 
   const baseArgs: ToolBuildBaseArgs = {
     setup,
@@ -206,25 +156,10 @@ export function ClientSetupCard({ savedAt, isDirty }: ClientSetupCardProps) {
   const tools: ToolListItem[] = [
     buildClaudeTool({ ...baseArgs, action: claude.action, onApply: claude.apply }),
     buildCodexTool({ ...baseArgs, action: codex.action, onApply: codex.apply }),
-    buildOpenCodeTool({
-      ...baseArgs,
-      action: opencode.action,
-      onApply: opencode.apply,
-      openCodeModelCount,
-      canApplyOpenCode,
-    }),
   ];
 
   return (
     <>
-      <ClientSetupOverviewCard
-        previewState={previewState}
-        previewMessage={previewMessage}
-        setup={setup}
-        isDirty={isDirty}
-        isWorking={isWorking}
-        onRefresh={loadPreview}
-      />
       <ToolCards tools={tools} />
       <PlaintextWarning />
     </>

@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { m } from "@/paraglide/messages.js";
 
-import type { ActionState, ClientSetupInfo, RequestState } from "./client-setup-state";
+import type { ActionState, RequestState } from "./client-setup-state";
 
 type ToolSetupDialogProps = {
   title: string;
@@ -248,65 +248,5 @@ export function PlaintextWarning() {
     >
       {m.client_setup_plaintext_warning()}
     </div>
-  );
-}
-
-type ClientSetupOverviewCardProps = {
-  previewState: RequestState;
-  previewMessage: string;
-  setup: ClientSetupInfo | null;
-  isDirty: boolean;
-  isWorking: boolean;
-  onRefresh: () => void;
-};
-
-export function ClientSetupOverviewCard({
-  previewState,
-  previewMessage,
-  setup,
-  isDirty,
-  isWorking,
-  onRefresh,
-}: ClientSetupOverviewCardProps) {
-  return (
-    <Card data-slot="client-setup-overview-card">
-      <CardHeader>
-        <CardTitle>{m.client_setup_title()}</CardTitle>
-        <CardDescription>{m.client_setup_desc()}</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex flex-wrap items-center gap-2">
-          {shouldShowBadge(previewState) ? (
-            <Badge variant={toBadgeVariant(previewState)}>{toBadgeLabel(previewState)}</Badge>
-          ) : null}
-          <Button type="button" variant="outline" size="sm" onClick={onRefresh} disabled={isWorking}>
-            {m.common_refresh()}
-          </Button>
-        </div>
-
-        {previewMessage ? (
-          <div className="rounded-md border border-border/60 bg-background/60 p-3 text-xs text-muted-foreground">
-            {previewMessage}
-          </div>
-        ) : null}
-
-        {isDirty ? (
-          <div className="rounded-md border border-border/60 bg-background/60 p-3 text-xs text-muted-foreground">
-            {m.client_setup_dirty_notice()}
-          </div>
-        ) : null}
-
-        {setup ? (
-          <div className="rounded-md border border-border/60 bg-background/60 p-3">
-            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-              {m.client_setup_proxy_base_url_label()}
-            </p>
-            <p className="mt-1 font-mono text-xs text-foreground/80">
-              {setup.proxy_http_base_url}
-            </p>
-          </div>
-        ) : null}
-      </CardContent>
-    </Card>
   );
 }
