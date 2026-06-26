@@ -56,8 +56,6 @@ const DEFAULT_PROVIDER_OPTIONS = [
   "openai-response",
   "anthropic",
   "gemini",
-  "kiro",
-  "codex",
 ] as const;
 
 export function mergeProviderOptions(values: readonly string[]) {

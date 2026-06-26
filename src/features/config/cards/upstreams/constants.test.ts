@@ -19,8 +19,17 @@ describe("upstreams/constants", () => {
     expect(priorityColumn?.cellClassName).toBe("w-[6rem]");
   });
 
-  it("exposes only supported provider options by default", () => {
-    expect(mergeProviderOptions(["legacy-provider"])).toEqual([
+  it("exposes public API provider options first by default", () => {
+    expect(mergeProviderOptions([])).toEqual([
+      "openai",
+      "openai-response",
+      "anthropic",
+      "gemini",
+    ]);
+  });
+
+  it("preserves providers already present in existing config", () => {
+    expect(mergeProviderOptions(["kiro", "codex", "legacy-provider"])).toEqual([
       "openai",
       "openai-response",
       "anthropic",

@@ -32,6 +32,15 @@ const SUPPORTED_PROVIDERS = new Set([
   "kiro",
   "codex",
 ]);
+const DEFAULT_UPSTREAM_PROVIDERS = [
+  "openai",
+  "openai-response",
+  "anthropic",
+  "gemini",
+] as const;
+const DEFAULT_UPSTREAM_ID = "airouter.mxyhi.com";
+const DEFAULT_UPSTREAM_BASE_URL = "https://airouter.mxyhi.com";
+const DEFAULT_UPSTREAM_PRIORITY = "19";
 const INTEGER_PATTERN = /^-?\d+$/;
 const NON_NEGATIVE_INTEGER_PATTERN = /^\d+$/;
 const POSITIVE_INTEGER_PATTERN = /^[1-9]\d*$/;
@@ -123,9 +132,9 @@ export const EMPTY_FORM: ConfigForm = {
 
 export function createEmptyUpstream(): UpstreamForm {
   return {
-    id: "",
-    providers: ["openai"],
-    baseUrl: "",
+    id: DEFAULT_UPSTREAM_ID,
+    providers: [...DEFAULT_UPSTREAM_PROVIDERS],
+    baseUrl: DEFAULT_UPSTREAM_BASE_URL,
     apiKeys: "",
     filterPromptCacheRetention: false,
     filterSafetyIdentifier: false,
@@ -133,7 +142,7 @@ export function createEmptyUpstream(): UpstreamForm {
     rewriteDeveloperRoleToSystem: false,
     preferredEndpoint: "",
     proxyUrl: "",
-    priority: "",
+    priority: DEFAULT_UPSTREAM_PRIORITY,
     // 新增上游默认作为草稿，避免用户尚未填完必填项时被“无法保存”阻塞。
     enabled: false,
     modelMappings: [],

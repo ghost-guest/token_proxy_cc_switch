@@ -9,7 +9,6 @@ import {
 import {
   cloneUpstreamDraft,
   coerceProviderSelection,
-  createAutoUpstreamId,
   createCopiedUpstreamId,
   normalizeProviders,
   pruneConvertFromMap,
@@ -168,8 +167,9 @@ export function UpstreamsCard({
   const openCreateDialog = () => {
     const draft = createEmptyUpstream();
     const nextProviders = normalizeProviders(draft.providers);
-    const id = createAutoUpstreamId(nextProviders, upstreams);
-    setEditor({ open: true, mode: "create", draft: { ...draft, id } });
+    const hasDuplicateId = upstreams.some((upstream) => upstream.id.trim() === draft.id.trim());
+    const nextId = hasDuplicateId ? createCopiedUpstreamId(draft.id, upstreams) : draft.id;
+    setEditor({ open: true, mode: "create", draft: { ...draft, id: nextId, providers: nextProviders } });
   };
 
   const openEditDialog = (index: number) => {

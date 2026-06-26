@@ -47,6 +47,8 @@ describe("config/form", () => {
 
   it("requires upstream id for enabled upstreams", () => {
     const upstream = createEmptyUpstream();
+    upstream.id = "";
+    upstream.enabled = true;
     const result = validate({ ...EMPTY_FORM, upstreams: [upstream] });
 
     expect(result.valid).toBe(false);
@@ -89,10 +91,13 @@ describe("config/form", () => {
     expect(validate({ ...EMPTY_FORM, upstreams: [upstream] }).valid).toBe(true);
   });
 
-  it("creates new upstream as disabled draft", () => {
+  it("creates new upstream with default airouter template", () => {
     const upstream = createEmptyUpstream();
-    upstream.id = "openai-1";
 
+    expect(upstream.id).toBe("airouter.mxyhi.com");
+    expect(upstream.baseUrl).toBe("https://airouter.mxyhi.com");
+    expect(upstream.providers).toEqual(["openai", "openai-response", "anthropic", "gemini"]);
+    expect(upstream.priority).toBe("19");
     expect(upstream.enabled).toBe(false);
     expect(validate({ ...EMPTY_FORM, upstreams: [upstream] }).valid).toBe(true);
   });
