@@ -19,8 +19,9 @@ const DEFAULT_TRAY_TOKEN_RATE: TrayTokenRateConfig = {
   format: "split",
 };
 
-const MIN_UPSTREAM_NO_DATA_TIMEOUT_SECS = 3;
-const DEFAULT_UPSTREAM_NO_DATA_TIMEOUT_SECS = 120;
+const MIN_TIMEOUT_SECS = 1;
+const DEFAULT_STREAM_FIRST_OUTPUT_TIMEOUT_SECS = 60;
+const DEFAULT_SYNC_RESPONSE_TIMEOUT_SECS = 300;
 const DEFAULT_HEDGE_DELAY_MS = 2000;
 const DEFAULT_MAX_PARALLEL = 2;
 const MIN_PARALLEL_ATTEMPTS = 2;
@@ -98,12 +99,17 @@ const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "log_level",
   "retryable_failure_cooldown_secs",
   "codex_session_scoped_cooldown_enabled",
-  "upstream_no_data_timeout_secs",
-  "openai_response_header_timeout_secs",
+  "stream_first_output_timeout_secs",
+  "sync_response_timeout_secs",
   "tray_token_rate",
   "upstream_strategy",
   "hot_model_mappings",
   "upstreams",
+]);
+
+const REMOVED_CONFIG_KEYS: ReadonlySet<string> = new Set([
+  "upstream_no_data_timeout_secs",
+  "openai_response_header_timeout_secs",
 ]);
 
 export const EMPTY_FORM: ConfigForm = {
@@ -117,8 +123,8 @@ export const EMPTY_FORM: ConfigForm = {
   logLevel: "silent",
   retryableFailureCooldownSecs: "15",
   codexSessionScopedCooldownEnabled: false,
-  upstreamNoDataTimeoutSecs: String(DEFAULT_UPSTREAM_NO_DATA_TIMEOUT_SECS),
-  openaiResponseHeaderTimeoutSecs: "0",
+  streamFirstOutputTimeoutSecs: String(DEFAULT_STREAM_FIRST_OUTPUT_TIMEOUT_SECS),
+  syncResponseTimeoutSecs: String(DEFAULT_SYNC_RESPONSE_TIMEOUT_SECS),
   trayTokenRate: { ...DEFAULT_TRAY_TOKEN_RATE },
   upstreamStrategy: {
     order: "fill_first",
@@ -173,6 +179,9 @@ export function createModelMapping(pattern = "", target = "") {
 export function extractConfigExtras(config: ProxyConfigFile) {
   const extras: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(config)) {
+    if (REMOVED_CONFIG_KEYS.has(key)) {
+      continue;
+    }
     if (!KNOWN_CONFIG_KEYS.has(key)) {
       extras[key] = value;
     }
@@ -203,11 +212,11 @@ export function toForm(config: ProxyConfigFile): ConfigForm {
     retryableFailureCooldownSecs: String(config.retryable_failure_cooldown_secs ?? 15),
     codexSessionScopedCooldownEnabled:
       config.codex_session_scoped_cooldown_enabled ?? false,
-    upstreamNoDataTimeoutSecs: String(
-      config.upstream_no_data_timeout_secs ?? DEFAULT_UPSTREAM_NO_DATA_TIMEOUT_SECS,
+    streamFirstOutputTimeoutSecs: String(
+      config.stream_first_output_timeout_secs ?? DEFAULT_STREAM_FIRST_OUTPUT_TIMEOUT_SECS,
     ),
-    openaiResponseHeaderTimeoutSecs: String(
-      config.openai_response_header_timeout_secs ?? 0,
+    syncResponseTimeoutSecs: String(
+      config.sync_response_timeout_secs ?? DEFAULT_SYNC_RESPONSE_TIMEOUT_SECS,
     ),
     trayTokenRate: normalizeTrayTokenRate(config.tray_token_rate),
     upstreamStrategy: toUpstreamStrategyForm(config.upstream_strategy),
@@ -251,11 +260,13 @@ export function toPayload(form: ConfigForm): ProxyConfigFile {
       form.retryableFailureCooldownSecs,
     ),
     codex_session_scoped_cooldown_enabled: form.codexSessionScopedCooldownEnabled,
-    upstream_no_data_timeout_secs: parseUpstreamNoDataTimeoutSecs(
-      form.upstreamNoDataTimeoutSecs,
+    stream_first_output_timeout_secs: parseTimeoutSecs(
+      form.streamFirstOutputTimeoutSecs,
+      DEFAULT_STREAM_FIRST_OUTPUT_TIMEOUT_SECS,
     ),
-    openai_response_header_timeout_secs: parseOpenaiResponseHeaderTimeoutSecs(
-      form.openaiResponseHeaderTimeoutSecs,
+    sync_response_timeout_secs: parseTimeoutSecs(
+      form.syncResponseTimeoutSecs,
+      DEFAULT_SYNC_RESPONSE_TIMEOUT_SECS,
     ),
     tray_token_rate: form.trayTokenRate,
     upstream_strategy: toUpstreamStrategyPayload(form.upstreamStrategy),
@@ -343,16 +354,16 @@ export function validate(form: ConfigForm) {
       message: m.error_retryable_failure_cooldown_secs_integer(),
     };
   }
-  if (!isValidUpstreamNoDataTimeoutSecs(form.upstreamNoDataTimeoutSecs)) {
+  if (!isValidTimeoutSecs(form.streamFirstOutputTimeoutSecs)) {
     return {
       valid: false,
-      message: m.error_upstream_no_data_timeout_secs_integer(),
+      message: m.error_stream_first_output_timeout_secs_integer(),
     };
   }
-  if (!isValidOpenaiResponseHeaderTimeoutSecs(form.openaiResponseHeaderTimeoutSecs)) {
+  if (!isValidTimeoutSecs(form.syncResponseTimeoutSecs)) {
     return {
       valid: false,
-      message: m.error_openai_response_header_timeout_secs_integer(),
+      message: m.error_sync_response_timeout_secs_integer(),
     };
   }
   const upstreamStrategyError = validateUpstreamStrategy(form.upstreamStrategy);
@@ -737,7 +748,7 @@ function parseRetryableFailureCooldownSecs(value: string) {
   return Number.isFinite(number) ? number : 15;
 }
 
-function isValidUpstreamNoDataTimeoutSecs(value: string) {
+function isValidTimeoutSecs(value: string) {
   const trimmed = value.trim();
   if (!trimmed) {
     return false;
@@ -746,33 +757,16 @@ function isValidUpstreamNoDataTimeoutSecs(value: string) {
     return false;
   }
   const number = Number.parseInt(trimmed, 10);
-  return Number.isFinite(number) && number >= MIN_UPSTREAM_NO_DATA_TIMEOUT_SECS;
+  return Number.isFinite(number) && number >= MIN_TIMEOUT_SECS;
 }
 
-function parseUpstreamNoDataTimeoutSecs(value: string) {
+function parseTimeoutSecs(value: string, fallback: number) {
   const trimmed = value.trim();
   if (!NON_NEGATIVE_INTEGER_PATTERN.test(trimmed)) {
-    return DEFAULT_UPSTREAM_NO_DATA_TIMEOUT_SECS;
+    return fallback;
   }
   const number = Number.parseInt(trimmed, 10);
-  return Number.isFinite(number) ? number : DEFAULT_UPSTREAM_NO_DATA_TIMEOUT_SECS;
-}
-
-function isValidOpenaiResponseHeaderTimeoutSecs(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return false;
-  }
-  return NON_NEGATIVE_INTEGER_PATTERN.test(trimmed);
-}
-
-function parseOpenaiResponseHeaderTimeoutSecs(value: string) {
-  const trimmed = value.trim();
-  if (!NON_NEGATIVE_INTEGER_PATTERN.test(trimmed)) {
-    return 0;
-  }
-  const number = Number.parseInt(trimmed, 10);
-  return Number.isFinite(number) ? number : 0;
+  return Number.isFinite(number) ? number : fallback;
 }
 
 function isPositiveInteger(value: string) {

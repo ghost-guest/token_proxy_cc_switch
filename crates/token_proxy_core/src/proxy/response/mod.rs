@@ -49,9 +49,10 @@ pub(super) async fn build_proxy_response(
     client_gemini_api_key: Option<&str>,
     response_transform: FormatTransform,
     request_detail: Option<RequestDetailSnapshot>,
-    upstream_no_data_timeout: Duration,
+    stream_first_output_timeout: Duration,
+    sync_response_timeout: Duration,
 ) -> Response {
-    let upstream_no_data_timeout = response_no_data_timeout(inbound_path, upstream_no_data_timeout);
+    let sync_response_timeout = response_no_data_timeout(inbound_path, sync_response_timeout);
     let status = upstream_res.status();
     let mut response_headers = http::filter_response_headers(upstream_res.headers());
     maybe_rewrite_gemini_upload_url(
@@ -106,7 +107,9 @@ pub(super) async fn build_proxy_response(
             model_override,
             meta.estimated_input_tokens,
             meta.response_format.as_deref(),
-            upstream_no_data_timeout,
+            timeout_remaining(stream_first_output_timeout, start),
+            stream_first_output_timeout,
+            sync_response_timeout,
         )
         .await
     } else {
@@ -121,7 +124,7 @@ pub(super) async fn build_proxy_response(
             model_override,
             meta.estimated_input_tokens,
             meta.response_format.as_deref(),
-            upstream_no_data_timeout,
+            sync_response_timeout,
         )
         .await
     }
@@ -142,9 +145,9 @@ pub(super) async fn build_proxy_response_buffered(
     client_gemini_api_key: Option<&str>,
     response_transform: FormatTransform,
     request_detail: Option<RequestDetailSnapshot>,
-    upstream_no_data_timeout: Duration,
+    sync_response_timeout: Duration,
 ) -> Response {
-    let upstream_no_data_timeout = response_no_data_timeout(inbound_path, upstream_no_data_timeout);
+    let sync_response_timeout = response_no_data_timeout(inbound_path, sync_response_timeout);
     let status = upstream_res.status();
     let mut response_headers = http::filter_response_headers(upstream_res.headers());
     maybe_rewrite_gemini_upload_url(
@@ -196,7 +199,7 @@ pub(super) async fn build_proxy_response_buffered(
         model_override,
         meta.estimated_input_tokens,
         meta.response_format.as_deref(),
-        upstream_no_data_timeout,
+        sync_response_timeout,
     )
     .await
 }
@@ -232,6 +235,10 @@ fn response_no_data_timeout(inbound_path: &str, configured_timeout: Duration) ->
     } else {
         configured_timeout
     }
+}
+
+fn timeout_remaining(timeout_duration: Duration, start_time: Instant) -> Duration {
+    timeout_duration.saturating_sub(start_time.elapsed())
 }
 
 fn build_proxy_upload_url(

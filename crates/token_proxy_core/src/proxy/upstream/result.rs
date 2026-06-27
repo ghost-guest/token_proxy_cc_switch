@@ -83,7 +83,7 @@ pub(super) async fn handle_upstream_result(
                 client_gemini_api_key,
                 response_transform,
                 request_detail.clone(),
-                state.config.upstream_no_data_timeout,
+                state.config.sync_response_timeout,
             )
             .await;
             AttemptOutcome::Retryable {
@@ -111,7 +111,8 @@ pub(super) async fn handle_upstream_result(
                 client_gemini_api_key,
                 response_transform,
                 request_detail.clone(),
-                state.config.upstream_no_data_timeout,
+                state.config.stream_first_output_timeout,
+                state.config.sync_response_timeout,
             )
             .await;
             if let Some(retryable) = response

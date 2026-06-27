@@ -112,8 +112,8 @@ export type ProxyConfigFileBase = {
   log_level?: LogLevel;
   retryable_failure_cooldown_secs?: number;
   codex_session_scoped_cooldown_enabled?: boolean;
-  upstream_no_data_timeout_secs?: number;
-  openai_response_header_timeout_secs?: number;
+  stream_first_output_timeout_secs?: number;
+  sync_response_timeout_secs?: number;
   tray_token_rate: TrayTokenRateConfig;
   upstream_strategy: UpstreamStrategy;
   hot_model_mappings?: Record<string, string>;
@@ -186,8 +186,8 @@ export type ConfigForm = {
   logLevel: LogLevel;
   retryableFailureCooldownSecs: string;
   codexSessionScopedCooldownEnabled: boolean;
-  upstreamNoDataTimeoutSecs: string;
-  openaiResponseHeaderTimeoutSecs: string;
+  streamFirstOutputTimeoutSecs: string;
+  syncResponseTimeoutSecs: string;
   trayTokenRate: TrayTokenRateConfig;
   upstreamStrategy: {
     order: UpstreamOrderStrategy;

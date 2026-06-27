@@ -86,7 +86,8 @@ pub(super) async fn finalize_response(
             None,
             response_transform,
             request_detail,
-            state.config.upstream_no_data_timeout,
+            state.config.stream_first_output_timeout,
+            state.config.sync_response_timeout,
         )
         .await;
         return AttemptOutcome::Success(output);

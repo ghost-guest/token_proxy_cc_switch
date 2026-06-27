@@ -133,8 +133,8 @@ mod tests {
             max_request_body_bytes: 1024,
             retryable_failure_cooldown: Duration::from_secs(15),
             codex_session_scoped_cooldown_enabled: true,
-            upstream_no_data_timeout: Duration::from_secs(120),
-            openai_response_header_timeout: None,
+            stream_first_output_timeout: Duration::from_secs(60),
+            sync_response_timeout: Duration::from_secs(120),
             upstream_strategy: UpstreamStrategyRuntime {
                 order: UpstreamOrderStrategy::RoundRobin,
                 dispatch: UpstreamDispatchRuntime::Serial,

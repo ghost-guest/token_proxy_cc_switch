@@ -35,8 +35,8 @@ fn config_with_addr_and_body_limit(
         max_request_body_bytes,
         retryable_failure_cooldown: Duration::from_secs(15),
         codex_session_scoped_cooldown_enabled: false,
-        upstream_no_data_timeout: Duration::from_secs(120),
-        openai_response_header_timeout: None,
+        stream_first_output_timeout: Duration::from_secs(60),
+        sync_response_timeout: Duration::from_secs(120),
         upstream_strategy: crate::proxy::config::UpstreamStrategyRuntime::default(),
         hot_model_mappings: HashMap::new(),
         upstreams: HashMap::new(),
@@ -96,7 +96,7 @@ fn classify_reload_behavior_skips_apply_when_proxy_is_stopped() {
 fn classify_reload_behavior_keeps_reload_for_timeout_only_changes() {
     let current = config_with_addr_and_body_limit("127.0.0.1", 9208, 1024);
     let mut next = config_with_addr_and_body_limit("127.0.0.1", 9208, 1024);
-    next.upstream_no_data_timeout = Duration::from_secs(7);
+    next.sync_response_timeout = Duration::from_secs(7);
 
     let action = classify_reload_behavior(
         Some((current.addr(), current.max_request_body_bytes)),

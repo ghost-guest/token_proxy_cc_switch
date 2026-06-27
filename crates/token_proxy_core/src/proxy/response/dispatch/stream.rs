@@ -10,6 +10,7 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use tokio::time::timeout;
 
 use super::super::super::{
     codex_compat, gemini_compat, http,
@@ -47,7 +48,9 @@ pub(super) async fn build_stream_response(
     model_override: Option<&str>,
     estimated_input_tokens: Option<u64>,
     response_format: Option<&str>,
-    upstream_no_data_timeout: Duration,
+    stream_first_output_timeout_remaining: Duration,
+    stream_first_output_timeout: Duration,
+    sync_response_timeout: Duration,
 ) -> Response {
     let mut context = context;
     let upstream = match prepare_upstream_stream(
@@ -57,7 +60,9 @@ pub(super) async fn build_stream_response(
         response_transform,
         &mut context,
         &log,
-        upstream_no_data_timeout,
+        stream_first_output_timeout_remaining,
+        stream_first_output_timeout,
+        sync_response_timeout,
     )
     .await
     {
@@ -82,7 +87,7 @@ pub(super) async fn build_stream_response(
         estimated_input_tokens,
         model_override,
         response_format,
-        upstream_no_data_timeout,
+        sync_response_timeout,
     );
     log_debug_headers_body(
         "outbound.response.headers",
@@ -105,7 +110,7 @@ fn stream_for_transform(
     estimated_input_tokens: Option<u64>,
     model_override: Option<&str>,
     response_format: Option<&str>,
-    upstream_no_data_timeout: Duration,
+    sync_response_timeout: Duration,
 ) -> ResponseStream {
     if is_simple_transform(transform) {
         return stream_for_simple_transform(
@@ -117,7 +122,7 @@ fn stream_for_transform(
             model_override,
             estimated_input_tokens,
             response_format,
-            upstream_no_data_timeout,
+            sync_response_timeout,
         );
     }
     stream_for_composed_transform(
@@ -159,7 +164,7 @@ fn stream_for_simple_transform(
     model_override: Option<&str>,
     estimated_input_tokens: Option<u64>,
     response_format: Option<&str>,
-    upstream_no_data_timeout: Duration,
+    sync_response_timeout: Duration,
 ) -> ResponseStream {
     match transform {
         FormatTransform::None
@@ -173,7 +178,7 @@ fn stream_for_simple_transform(
             log,
             request_tracker,
             model_override,
-            upstream_no_data_timeout,
+            sync_response_timeout,
         ),
         _ => stream_for_simple_extended(
             transform,
@@ -183,7 +188,7 @@ fn stream_for_simple_transform(
             request_tracker,
             estimated_input_tokens,
             response_format,
-            upstream_no_data_timeout,
+            sync_response_timeout,
         ),
     }
 }
@@ -195,12 +200,12 @@ fn stream_for_basic_transform(
     log: Arc<LogWriter>,
     request_tracker: RequestTokenTracker,
     model_override: Option<&str>,
-    upstream_no_data_timeout: Duration,
+    sync_response_timeout: Duration,
 ) -> ResponseStream {
     match transform {
         FormatTransform::None => {
             let semantic_timeout =
-                openai_semantic_timeout(&context.provider, &context.path, upstream_no_data_timeout);
+                openai_semantic_timeout(&context.provider, &context.path, sync_response_timeout);
             stream_with_optional_model_override(
                 upstream,
                 context,
@@ -248,7 +253,7 @@ fn stream_for_simple_extended(
     request_tracker: RequestTokenTracker,
     estimated_input_tokens: Option<u64>,
     response_format: Option<&str>,
-    upstream_no_data_timeout: Duration,
+    sync_response_timeout: Duration,
 ) -> ResponseStream {
     match transform {
         FormatTransform::GeminiToChat => {
@@ -274,7 +279,7 @@ fn stream_for_simple_extended(
                 context,
                 log,
                 request_tracker,
-                Some(upstream_no_data_timeout),
+                Some(sync_response_timeout),
             )
             .boxed()
         }
@@ -852,7 +857,9 @@ async fn prepare_upstream_stream(
     response_transform: FormatTransform,
     context: &mut LogContext,
     log: &Arc<LogWriter>,
-    upstream_no_data_timeout: Duration,
+    stream_first_output_timeout_remaining: Duration,
+    stream_first_output_timeout: Duration,
+    sync_response_timeout: Duration,
 ) -> Result<
     futures_util::stream::BoxStream<
         'static,
@@ -860,8 +867,40 @@ async fn prepare_upstream_stream(
     >,
     Response,
 > {
+    match timeout(
+        stream_first_output_timeout_remaining,
+        prepare_upstream_stream_inner(
+            status,
+            headers,
+            upstream_res,
+            response_transform,
+            context,
+            log,
+            sync_response_timeout,
+        ),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err(stream_first_output_timeout_response(
+            context,
+            log,
+            stream_first_output_timeout,
+        )),
+    }
+}
+
+async fn prepare_upstream_stream_inner(
+    status: StatusCode,
+    headers: &HeaderMap,
+    upstream_res: reqwest::Response,
+    response_transform: FormatTransform,
+    context: &mut LogContext,
+    log: &Arc<LogWriter>,
+    sync_response_timeout: Duration,
+) -> Result<UpstreamBytesStream, Response> {
     let mut upstream =
-        upstream_stream::with_idle_timeout(upstream_res.bytes_stream(), upstream_no_data_timeout);
+        upstream_stream::with_idle_timeout(upstream_res.bytes_stream(), sync_response_timeout);
     let mut buffered_chunks: Vec<Bytes> = Vec::new();
     let mut codex_prelude = codex_prelude_inspector(response_transform);
     loop {
@@ -893,7 +932,7 @@ async fn prepare_upstream_stream(
                     err,
                     context,
                     log,
-                    upstream_no_data_timeout,
+                    sync_response_timeout,
                 ));
             }
             None => {
@@ -904,6 +943,37 @@ async fn prepare_upstream_stream(
             }
         }
     }
+}
+
+fn stream_first_output_timeout_response(
+    context: &mut LogContext,
+    log: &Arc<LogWriter>,
+    stream_first_output_timeout: Duration,
+) -> Response {
+    let timeout_secs = stream_first_output_timeout.as_secs();
+    let message = format!("Upstream stream first output timed out after {timeout_secs}s.");
+    tracing::warn!(
+        provider = %context.provider,
+        upstream = %context.upstream_id,
+        account = ?context.account_id,
+        path = %context.path,
+        timeout_secs,
+        "upstream stream first output timeout"
+    );
+    context.status = StatusCode::GATEWAY_TIMEOUT.as_u16();
+    let empty_usage = UsageSnapshot {
+        usage: None,
+        cached_tokens: None,
+        usage_json: None,
+    };
+    let entry = build_log_entry(context, empty_usage, Some(message.clone()));
+    log.clone().write_detached(entry);
+    let mut response = http::error_response(StatusCode::GATEWAY_TIMEOUT, &message);
+    response.extensions_mut().insert(RetryableStreamResponse {
+        message,
+        should_cooldown: true,
+    });
+    response
 }
 
 fn codex_prelude_inspector(
@@ -971,14 +1041,14 @@ fn stream_error_response(
     err: upstream_stream::UpstreamStreamError<reqwest::Error>,
     context: &mut LogContext,
     log: &Arc<LogWriter>,
-    upstream_no_data_timeout: Duration,
+    sync_response_timeout: Duration,
 ) -> Response {
     let (status, message) = match err {
         upstream_stream::UpstreamStreamError::IdleTimeout(_) => (
             StatusCode::GATEWAY_TIMEOUT,
             format!(
                 "Upstream response timed out after {}s.",
-                upstream_no_data_timeout.as_secs()
+                sync_response_timeout.as_secs()
             ),
         ),
         upstream_stream::UpstreamStreamError::Upstream(err) => {
@@ -1003,7 +1073,14 @@ fn stream_error_response(
     };
     let entry = build_log_entry(context, empty_usage, Some(message.clone()));
     log.clone().write_detached(entry);
-    http::error_response(status, message)
+    let mut response = http::error_response(status, &message);
+    if status == StatusCode::GATEWAY_TIMEOUT {
+        response.extensions_mut().insert(RetryableStreamResponse {
+            message,
+            should_cooldown: true,
+        });
+    }
+    response
 }
 
 fn log_upstream_stream_if_debug(upstream: UpstreamBytesStream) -> UpstreamBytesStream {
@@ -1099,7 +1176,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn codex_prelude_releases_after_first_preamble_event() {
+    async fn stream_first_output_timeout_returns_retryable_response() {
+        let upstream_res = reqwest_response_from_delayed_chunks(vec![(
+            Duration::from_millis(80),
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n",
+        )]);
+        let mut context = test_context();
+        context.provider = PROVIDER_OPENAI.to_string();
+        context.upstream_id = "openai-slow".to_string();
+        context.account_id = Some("acct-1".to_string());
+        context.path = CHAT_PATH.to_string();
+        let log = Arc::new(LogWriter::new(None));
+
+        let response = match prepare_upstream_stream(
+            StatusCode::OK,
+            &HeaderMap::new(),
+            upstream_res,
+            FormatTransform::None,
+            &mut context,
+            &log,
+            Duration::from_millis(20),
+            Duration::from_millis(20),
+            Duration::from_secs(30),
+        )
+        .await
+        {
+            Ok(_) => panic!("first output timeout should return retryable response"),
+            Err(response) => response,
+        };
+
+        assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
+        assert!(response
+            .extensions()
+            .get::<RetryableStreamResponse>()
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn codex_prelude_waits_until_first_business_output() {
         let upstream_res = reqwest_response_from_delayed_chunks(vec![
             (
                 Duration::ZERO,
@@ -1114,7 +1228,7 @@ mod tests {
         let log = Arc::new(LogWriter::new(None));
 
         let prepared = tokio::time::timeout(
-            Duration::from_millis(80),
+            Duration::from_millis(300),
             prepare_upstream_stream(
                 StatusCode::OK,
                 &HeaderMap::new(),
@@ -1122,6 +1236,8 @@ mod tests {
                 FormatTransform::CodexToResponses,
                 &mut context,
                 &log,
+                Duration::from_secs(1),
+                Duration::from_secs(1),
                 Duration::from_secs(30),
             ),
         )
@@ -1129,7 +1245,7 @@ mod tests {
 
         assert!(
             prepared.is_ok(),
-            "Codex prelude should release before first output event"
+            "Codex prelude should release once first business output is visible"
         );
     }
 

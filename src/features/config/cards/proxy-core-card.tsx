@@ -199,37 +199,37 @@ function ProxyCoreFields({
         />
       </div>
       <div className="grid gap-2">
-        <Label htmlFor="upstream-no-data-timeout-secs">
-          {m.proxy_core_upstream_no_data_timeout_secs_label()}
+        <Label htmlFor="stream-first-output-timeout-secs">
+          {m.proxy_core_stream_first_output_timeout_secs_label()}
         </Label>
         <Input
-          id="upstream-no-data-timeout-secs"
-          value={form.upstreamNoDataTimeoutSecs}
+          id="stream-first-output-timeout-secs"
+          value={form.streamFirstOutputTimeoutSecs}
           onChange={(event) =>
-            onChange({ upstreamNoDataTimeoutSecs: event.target.value })
+            onChange({ streamFirstOutputTimeoutSecs: event.target.value })
           }
-          placeholder="120"
+          placeholder="60"
           inputMode="numeric"
         />
         <p className="text-xs text-muted-foreground">
-          {m.proxy_core_upstream_no_data_timeout_secs_help()}
+          {m.proxy_core_stream_first_output_timeout_secs_help()}
         </p>
       </div>
       <div className="grid gap-2">
-        <Label htmlFor="openai-response-header-timeout-secs">
-          {m.proxy_core_openai_response_header_timeout_secs_label()}
+        <Label htmlFor="sync-response-timeout-secs">
+          {m.proxy_core_sync_response_timeout_secs_label()}
         </Label>
         <Input
-          id="openai-response-header-timeout-secs"
-          value={form.openaiResponseHeaderTimeoutSecs}
+          id="sync-response-timeout-secs"
+          value={form.syncResponseTimeoutSecs}
           onChange={(event) =>
-            onChange({ openaiResponseHeaderTimeoutSecs: event.target.value })
+            onChange({ syncResponseTimeoutSecs: event.target.value })
           }
-          placeholder="0"
+          placeholder="300"
           inputMode="numeric"
         />
         <p className="text-xs text-muted-foreground">
-          {m.proxy_core_openai_response_header_timeout_secs_help()}
+          {m.proxy_core_sync_response_timeout_secs_help()}
         </p>
       </div>
     </>

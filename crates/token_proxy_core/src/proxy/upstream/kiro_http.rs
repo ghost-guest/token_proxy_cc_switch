@@ -65,7 +65,7 @@ pub(super) async fn send_kiro_request(
     is_idc: bool,
     payload: &[u8],
     overrides: Option<&[crate::proxy::config::HeaderOverride]>,
-    upstream_no_data_timeout: Duration,
+    sync_response_timeout: Duration,
 ) -> Result<reqwest::Response, KiroSendError> {
     let mut request_headers = build_kiro_headers(access_token, amz_target, is_idc);
     if let Some(overrides) = overrides {
@@ -73,7 +73,7 @@ pub(super) async fn send_kiro_request(
     }
 
     let result = timeout(
-        upstream_no_data_timeout,
+        sync_response_timeout,
         client
             .request(method, url)
             .headers(request_headers)
@@ -134,7 +134,7 @@ pub(super) async fn handle_send_error(
         KiroSendError::Timeout => {
             let message = format!(
                 "Upstream did not respond within {}s.",
-                state.config.upstream_no_data_timeout.as_secs()
+                state.config.sync_response_timeout.as_secs()
             );
             result::log_upstream_error_if_needed(
                 &state.log,

@@ -127,43 +127,31 @@ fn build_runtime_config_codex_accepts_chat_and_responses_by_default() {
 }
 
 #[test]
-fn build_runtime_config_maps_upstream_no_data_timeout_secs() {
+fn build_runtime_config_maps_stream_first_output_timeout_secs() {
     let mut config = ProxyConfigFile::default();
-    config.upstream_no_data_timeout_secs = 3;
+    config.stream_first_output_timeout_secs = 3;
 
     let runtime = build_runtime_config(config).expect("runtime config");
 
-    assert_eq!(runtime.upstream_no_data_timeout, Duration::from_secs(3));
+    assert_eq!(runtime.stream_first_output_timeout, Duration::from_secs(3));
 }
 
 #[test]
-fn build_runtime_config_maps_openai_response_header_timeout_secs() {
+fn build_runtime_config_maps_sync_response_timeout_secs() {
     let mut config = ProxyConfigFile::default();
-    config.openai_response_header_timeout_secs = 30;
+    config.sync_response_timeout_secs = 30;
 
     let runtime = build_runtime_config(config).expect("runtime config");
 
-    assert_eq!(
-        runtime.openai_response_header_timeout,
-        Some(Duration::from_secs(30))
-    );
+    assert_eq!(runtime.sync_response_timeout, Duration::from_secs(30));
 }
 
 #[test]
-fn build_runtime_config_disables_openai_response_header_timeout_by_default() {
+fn build_runtime_config_maps_split_timeout_defaults() {
     let runtime = build_runtime_config(ProxyConfigFile::default()).expect("runtime config");
 
-    assert_eq!(runtime.openai_response_header_timeout, None);
-}
-
-#[test]
-fn build_runtime_config_rejects_openai_response_header_timeout_that_overflows_instant() {
-    let mut config = ProxyConfigFile::default();
-    config.openai_response_header_timeout_secs = u64::MAX;
-
-    let result = build_runtime_config(config);
-
-    assert!(result.is_err());
+    assert_eq!(runtime.stream_first_output_timeout, Duration::from_secs(60));
+    assert_eq!(runtime.sync_response_timeout, Duration::from_secs(300));
 }
 
 #[test]
@@ -268,9 +256,9 @@ fn build_runtime_config_rejects_race_strategy_with_max_parallel_below_two() {
 }
 
 #[test]
-fn build_runtime_config_rejects_upstream_no_data_timeout_below_minimum() {
+fn build_runtime_config_rejects_stream_first_output_timeout_below_minimum() {
     let mut config = ProxyConfigFile::default();
-    config.upstream_no_data_timeout_secs = 2;
+    config.stream_first_output_timeout_secs = 0;
 
     let result = build_runtime_config(config);
 
@@ -278,9 +266,29 @@ fn build_runtime_config_rejects_upstream_no_data_timeout_below_minimum() {
 }
 
 #[test]
-fn build_runtime_config_rejects_upstream_no_data_timeout_that_overflows_instant() {
+fn build_runtime_config_rejects_sync_response_timeout_below_minimum() {
     let mut config = ProxyConfigFile::default();
-    config.upstream_no_data_timeout_secs = u64::MAX;
+    config.sync_response_timeout_secs = 0;
+
+    let result = build_runtime_config(config);
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn build_runtime_config_rejects_stream_first_output_timeout_that_overflows_instant() {
+    let mut config = ProxyConfigFile::default();
+    config.stream_first_output_timeout_secs = u64::MAX;
+
+    let result = build_runtime_config(config);
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn build_runtime_config_rejects_sync_response_timeout_that_overflows_instant() {
+    let mut config = ProxyConfigFile::default();
+    config.sync_response_timeout_secs = u64::MAX;
 
     let result = build_runtime_config(config);
 

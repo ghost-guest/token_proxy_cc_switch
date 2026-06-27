@@ -43,14 +43,13 @@ pub(super) async fn build_buffered_response(
     model_override: Option<&str>,
     estimated_input_tokens: Option<u64>,
     response_format: Option<&str>,
-    upstream_no_data_timeout: Duration,
+    sync_response_timeout: Duration,
 ) -> Response {
     let mut context = context;
     let mut response_transform = response_transform;
     let response_headers = upstream_res.headers().clone();
     let bytes =
-        match read_upstream_bytes(upstream_res, &mut context, &log, upstream_no_data_timeout).await
-        {
+        match read_upstream_bytes(upstream_res, &mut context, &log, sync_response_timeout).await {
             Ok(bytes) => bytes,
             Err(response) => return response,
         };
@@ -846,23 +845,51 @@ async fn read_upstream_bytes(
     upstream_res: reqwest::Response,
     context: &mut LogContext,
     log: &Arc<LogWriter>,
-    upstream_no_data_timeout: Duration,
+    sync_response_timeout: Duration,
 ) -> Result<Bytes, Response> {
-    let bytes = match upstream_read::read_upstream_bytes_with_ttfb(
-        upstream_res,
-        context,
-        upstream_no_data_timeout,
+    let read_result = tokio::time::timeout(
+        sync_response_timeout,
+        upstream_read::read_upstream_bytes_with_ttfb(upstream_res, context, sync_response_timeout),
     )
-    .await
-    {
+    .await;
+    let bytes = match read_result {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            let timeout_secs = sync_response_timeout.as_secs();
+            let message = format!("Upstream synchronous response timed out after {timeout_secs}s.");
+            tracing::warn!(
+                provider = %context.provider,
+                upstream = %context.upstream_id,
+                account = ?context.account_id,
+                path = %context.path,
+                timeout_secs,
+                "upstream synchronous response timeout"
+            );
+            context.status = StatusCode::GATEWAY_TIMEOUT.as_u16();
+            let empty_usage = UsageSnapshot {
+                usage: None,
+                cached_tokens: None,
+                usage_json: None,
+            };
+            let entry = build_log_entry(context, empty_usage, Some(message.clone()));
+            log.clone().write_detached(entry);
+            let mut response = http::error_response(StatusCode::GATEWAY_TIMEOUT, &message);
+            response.extensions_mut().insert(RetryableStreamResponse {
+                message,
+                should_cooldown: true,
+            });
+            return Err(response);
+        }
+    };
+    let bytes = match bytes {
         Ok(bytes) => bytes,
         Err(err) => {
             let (status, message) = match err {
                 upstream_stream::UpstreamStreamError::IdleTimeout(_) => (
                     StatusCode::GATEWAY_TIMEOUT,
                     format!(
-                        "Upstream response timed out after {}s.",
-                        upstream_no_data_timeout.as_secs()
+                        "Upstream synchronous response timed out after {}s.",
+                        sync_response_timeout.as_secs()
                     ),
                 ),
                 upstream_stream::UpstreamStreamError::Upstream(err) => {
@@ -886,7 +913,14 @@ async fn read_upstream_bytes(
             };
             let entry = build_log_entry(context, empty_usage, Some(message.clone()));
             log.clone().write_detached(entry);
-            return Err(http::error_response(status, message));
+            let mut response = http::error_response(status, &message);
+            if status == StatusCode::GATEWAY_TIMEOUT {
+                response.extensions_mut().insert(RetryableStreamResponse {
+                    message,
+                    should_cooldown: true,
+                });
+            }
+            return Err(response);
         }
     };
     Ok(bytes)

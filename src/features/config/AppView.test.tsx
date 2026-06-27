@@ -141,14 +141,14 @@ describe("config/AppView", () => {
         isDirty
         validation={{
           valid: false,
-          message: m.error_upstream_no_data_timeout_secs_integer(),
+          message: m.error_stream_first_output_timeout_secs_integer(),
         }}
       />
     );
 
     expect(screen.getByText(m.config_invalid_configuration())).toBeInTheDocument();
     expect(
-      screen.getByText(m.error_upstream_no_data_timeout_secs_integer())
+      screen.getByText(m.error_stream_first_output_timeout_secs_integer())
     ).toBeInTheDocument();
   });
 

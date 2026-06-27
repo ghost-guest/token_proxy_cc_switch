@@ -29,20 +29,20 @@ describe("config/form", () => {
     expect(validate({ ...EMPTY_FORM, retryableFailureCooldownSecs: "15" }).valid).toBe(true);
   });
 
-  it("validates upstream no data timeout as integer >= 3", () => {
-    expect(validate({ ...EMPTY_FORM, upstreamNoDataTimeoutSecs: "-1" }).valid).toBe(false);
-    expect(validate({ ...EMPTY_FORM, upstreamNoDataTimeoutSecs: "" }).valid).toBe(false);
-    expect(validate({ ...EMPTY_FORM, upstreamNoDataTimeoutSecs: "0" }).valid).toBe(false);
-    expect(validate({ ...EMPTY_FORM, upstreamNoDataTimeoutSecs: "2" }).valid).toBe(false);
-    expect(validate({ ...EMPTY_FORM, upstreamNoDataTimeoutSecs: "3" }).valid).toBe(true);
-    expect(validate({ ...EMPTY_FORM, upstreamNoDataTimeoutSecs: "120" }).valid).toBe(true);
+  it("validates stream first output timeout as integer >= 1", () => {
+    expect(validate({ ...EMPTY_FORM, streamFirstOutputTimeoutSecs: "-1" }).valid).toBe(false);
+    expect(validate({ ...EMPTY_FORM, streamFirstOutputTimeoutSecs: "" }).valid).toBe(false);
+    expect(validate({ ...EMPTY_FORM, streamFirstOutputTimeoutSecs: "0" }).valid).toBe(false);
+    expect(validate({ ...EMPTY_FORM, streamFirstOutputTimeoutSecs: "1" }).valid).toBe(true);
+    expect(validate({ ...EMPTY_FORM, streamFirstOutputTimeoutSecs: "60" }).valid).toBe(true);
   });
 
-  it("validates OpenAI response header timeout as non-negative integer", () => {
-    expect(validate({ ...EMPTY_FORM, openaiResponseHeaderTimeoutSecs: "-1" }).valid).toBe(false);
-    expect(validate({ ...EMPTY_FORM, openaiResponseHeaderTimeoutSecs: "" }).valid).toBe(false);
-    expect(validate({ ...EMPTY_FORM, openaiResponseHeaderTimeoutSecs: "0" }).valid).toBe(true);
-    expect(validate({ ...EMPTY_FORM, openaiResponseHeaderTimeoutSecs: "45" }).valid).toBe(true);
+  it("validates synchronous response timeout as integer >= 1", () => {
+    expect(validate({ ...EMPTY_FORM, syncResponseTimeoutSecs: "-1" }).valid).toBe(false);
+    expect(validate({ ...EMPTY_FORM, syncResponseTimeoutSecs: "" }).valid).toBe(false);
+    expect(validate({ ...EMPTY_FORM, syncResponseTimeoutSecs: "0" }).valid).toBe(false);
+    expect(validate({ ...EMPTY_FORM, syncResponseTimeoutSecs: "1" }).valid).toBe(true);
+    expect(validate({ ...EMPTY_FORM, syncResponseTimeoutSecs: "300" }).valid).toBe(true);
   });
 
   it("requires upstream id for enabled upstreams", () => {
@@ -104,7 +104,13 @@ describe("config/form", () => {
 
   it("extracts and merges unknown config keys as extras", () => {
     const payload = toPayload(EMPTY_FORM);
-    const configWithExtras = { ...payload, foo: 1, bar: { nested: true } };
+    const configWithExtras = {
+      ...payload,
+      foo: 1,
+      bar: { nested: true },
+      upstream_no_data_timeout_secs: 120,
+      openai_response_header_timeout_secs: 0,
+    };
 
     const extras = extractConfigExtras(configWithExtras);
     expect(extras).toEqual({ foo: 1, bar: { nested: true } });
@@ -144,8 +150,10 @@ describe("config/form", () => {
     expect(payload.model_list_prefix).toBe(true);
     expect(payload.retryable_failure_cooldown_secs).toBe(15);
     expect(payload.codex_session_scoped_cooldown_enabled).toBe(false);
-    expect(payload.upstream_no_data_timeout_secs).toBe(120);
-    expect(payload.openai_response_header_timeout_secs).toBe(0);
+    expect(payload.stream_first_output_timeout_secs).toBe(60);
+    expect(payload.sync_response_timeout_secs).toBe(300);
+    expect("upstream_no_data_timeout_secs" in payload).toBe(false);
+    expect("openai_response_header_timeout_secs" in payload).toBe(false);
     expect("model_discovery_refresh_secs" in payload).toBe(false);
     expect(payload.upstreams[0]?.id).toBe("upstream-1");
     expect(payload.upstreams[0]?.providers).toEqual(["openai", "openai-response"]);
@@ -186,9 +194,9 @@ describe("config/form", () => {
     expect(payload.codex_session_scoped_cooldown_enabled).toBe(true);
   });
 
-  it("defaults upstream no data timeout seconds to 120 when config omits it", () => {
-    expect(EMPTY_FORM.upstreamNoDataTimeoutSecs).toBe("120");
-    expect(EMPTY_FORM.openaiResponseHeaderTimeoutSecs).toBe("0");
+  it("defaults split timeout seconds when config omits them", () => {
+    expect(EMPTY_FORM.streamFirstOutputTimeoutSecs).toBe("60");
+    expect(EMPTY_FORM.syncResponseTimeoutSecs).toBe("300");
 
     const form = toForm({
       host: "127.0.0.1",
@@ -219,8 +227,8 @@ describe("config/form", () => {
       },
     });
 
-    expect(form.upstreamNoDataTimeoutSecs).toBe("120");
-    expect(form.openaiResponseHeaderTimeoutSecs).toBe("0");
+    expect(form.streamFirstOutputTimeoutSecs).toBe("60");
+    expect(form.syncResponseTimeoutSecs).toBe("300");
     expect(form.corsEnabled).toBe(false);
     expect(form.modelListPrefix).toBe(false);
     expect(form.codexSessionScopedCooldownEnabled).toBe(false);
@@ -340,22 +348,15 @@ describe("config/form", () => {
     expect(upstreams).toEqual([regular]);
   });
 
-  it("serializes upstream no data timeout seconds", () => {
+  it("serializes split timeout seconds", () => {
     const payload = toPayload({
       ...EMPTY_FORM,
-      upstreamNoDataTimeoutSecs: "45",
+      streamFirstOutputTimeoutSecs: "45",
+      syncResponseTimeoutSecs: "180",
     });
 
-    expect(payload.upstream_no_data_timeout_secs).toBe(45);
-  });
-
-  it("serializes OpenAI response header timeout seconds", () => {
-    const payload = toPayload({
-      ...EMPTY_FORM,
-      openaiResponseHeaderTimeoutSecs: "45",
-    });
-
-    expect(payload.openai_response_header_timeout_secs).toBe(45);
+    expect(payload.stream_first_output_timeout_secs).toBe(45);
+    expect(payload.sync_response_timeout_secs).toBe(180);
   });
 
   it("serializes structured upstream strategy", () => {

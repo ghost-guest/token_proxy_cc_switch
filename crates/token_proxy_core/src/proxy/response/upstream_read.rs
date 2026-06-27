@@ -8,10 +8,10 @@ use super::upstream_stream::{self, UpstreamStreamError};
 pub(super) async fn read_upstream_bytes_with_ttfb(
     upstream_res: reqwest::Response,
     context: &mut LogContext,
-    upstream_no_data_timeout: Duration,
+    sync_response_timeout: Duration,
 ) -> Result<Bytes, UpstreamStreamError<reqwest::Error>> {
     let mut upstream =
-        upstream_stream::with_idle_timeout(upstream_res.bytes_stream(), upstream_no_data_timeout);
+        upstream_stream::with_idle_timeout(upstream_res.bytes_stream(), sync_response_timeout);
     let mut out = Vec::new();
 
     while let Some(item) = upstream.next().await {

@@ -164,7 +164,7 @@ async fn send_upstream_request_once(
         codex_openai_device_id,
     )
     .await?;
-    let response_header_timeout = response_header_timeout_for_provider(&state.config, provider);
+    let response_header_timeout = response_header_timeout_for_request(&state.config, meta);
     match send_request_once(
         client,
         &method,
@@ -313,7 +313,7 @@ async fn send_codex_attempt(
     )
     .await
     .map_err(CodexAttemptError::Fatal)?;
-    let response_header_timeout = response_header_timeout_for_provider(&state.config, provider);
+    let response_header_timeout = response_header_timeout_for_request(&state.config, meta);
     match send_request_once(
         client,
         method,
@@ -407,7 +407,7 @@ async fn send_request_once(
         .body(upstream_body)
         .send();
     let upstream_response = match response_header_timeout {
-        Some(duration) => timeout(duration, request).await,
+        Some(duration) => timeout(timeout_remaining(duration, start_time), request).await,
         None => Ok(request.await),
     };
     match upstream_response {
@@ -420,13 +420,19 @@ async fn send_request_once(
     }
 }
 
-fn response_header_timeout_for_provider(
+fn timeout_remaining(timeout_duration: Duration, start_time: Instant) -> Duration {
+    timeout_duration.saturating_sub(start_time.elapsed())
+}
+
+fn response_header_timeout_for_request(
     config: &crate::proxy::config::ProxyConfig,
-    provider: &str,
+    meta: &RequestMeta,
 ) -> Option<Duration> {
-    match provider {
-        "openai" | "openai-response" | "codex" => config.openai_response_header_timeout,
-        _ => Some(config.upstream_no_data_timeout),
+    // 只约束 headers 阶段；stream body 首个可见输出会用同一 attempt deadline 的剩余时间。
+    if meta.stream {
+        Some(config.stream_first_output_timeout)
+    } else {
+        Some(config.sync_response_timeout)
     }
 }
 
@@ -499,7 +505,7 @@ fn handle_upstream_timeout(
     cooldown_scope: &CooldownScope,
 ) -> AttemptOutcome {
     let timeout_secs = response_header_timeout
-        .unwrap_or(state.config.upstream_no_data_timeout)
+        .unwrap_or(state.config.sync_response_timeout)
         .as_secs();
     let message = format!("Upstream did not respond within {}s.", timeout_secs);
     mark_account_retryable_failure(
@@ -597,7 +603,7 @@ mod tests {
     use crate::proxy::config::{ProxyConfig, UpstreamStrategyRuntime};
     use std::collections::HashMap;
 
-    fn test_config(openai_response_header_timeout: Option<Duration>) -> ProxyConfig {
+    fn test_config() -> ProxyConfig {
         ProxyConfig {
             host: "127.0.0.1".to_string(),
             port: 9208,
@@ -608,8 +614,8 @@ mod tests {
             max_request_body_bytes: 1024,
             retryable_failure_cooldown: Duration::from_secs(15),
             codex_session_scoped_cooldown_enabled: false,
-            upstream_no_data_timeout: Duration::from_secs(120),
-            openai_response_header_timeout,
+            stream_first_output_timeout: Duration::from_secs(60),
+            sync_response_timeout: Duration::from_secs(120),
             upstream_strategy: UpstreamStrategyRuntime::default(),
             hot_model_mappings: HashMap::new(),
             upstreams: HashMap::new(),
@@ -618,38 +624,25 @@ mod tests {
     }
 
     #[test]
-    fn openai_response_header_timeout_defaults_to_disabled_for_openai_and_codex() {
-        let config = test_config(None);
+    fn response_header_timeout_uses_split_request_timeout() {
+        let config = test_config();
+        let mut meta = RequestMeta {
+            client_ip: None,
+            stream: true,
+            original_model: None,
+            mapped_model: None,
+            reasoning_effort: None,
+            response_format: None,
+            estimated_input_tokens: None,
+        };
 
         assert_eq!(
-            response_header_timeout_for_provider(&config, "openai"),
-            None
+            response_header_timeout_for_request(&config, &meta),
+            Some(Duration::from_secs(60))
         );
+        meta.stream = false;
         assert_eq!(
-            response_header_timeout_for_provider(&config, "openai-response"),
-            None
-        );
-        assert_eq!(response_header_timeout_for_provider(&config, "codex"), None);
-        assert_eq!(
-            response_header_timeout_for_provider(&config, "anthropic"),
-            Some(Duration::from_secs(120))
-        );
-    }
-
-    #[test]
-    fn openai_response_header_timeout_overrides_openai_and_codex_when_configured() {
-        let config = test_config(Some(Duration::from_secs(45)));
-
-        assert_eq!(
-            response_header_timeout_for_provider(&config, "openai-response"),
-            Some(Duration::from_secs(45))
-        );
-        assert_eq!(
-            response_header_timeout_for_provider(&config, "codex"),
-            Some(Duration::from_secs(45))
-        );
-        assert_eq!(
-            response_header_timeout_for_provider(&config, "anthropic"),
+            response_header_timeout_for_request(&config, &meta),
             Some(Duration::from_secs(120))
         );
     }

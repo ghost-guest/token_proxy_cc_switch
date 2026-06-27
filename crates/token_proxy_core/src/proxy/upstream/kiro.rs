@@ -223,7 +223,7 @@ async fn send_endpoint_request(
         context.is_idc,
         payload,
         context.upstream.header_overrides.as_deref(),
-        context.state.config.upstream_no_data_timeout,
+        context.state.config.sync_response_timeout,
     )
     .await
     {

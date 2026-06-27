@@ -43,16 +43,20 @@ fn is_default_retryable_failure_cooldown_secs(value: &u64) -> bool {
     *value == default_retryable_failure_cooldown_secs()
 }
 
-fn default_upstream_no_data_timeout_secs() -> u64 {
-    120
+fn default_stream_first_output_timeout_secs() -> u64 {
+    60
 }
 
-fn is_default_upstream_no_data_timeout_secs(value: &u64) -> bool {
-    *value == default_upstream_no_data_timeout_secs()
+fn is_default_stream_first_output_timeout_secs(value: &u64) -> bool {
+    *value == default_stream_first_output_timeout_secs()
 }
 
-fn is_zero(value: &u64) -> bool {
-    *value == 0
+fn default_sync_response_timeout_secs() -> u64 {
+    300
+}
+
+fn is_default_sync_response_timeout_secs(value: &u64) -> bool {
+    *value == default_sync_response_timeout_secs()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -241,13 +245,15 @@ pub struct ProxyConfigFile {
     #[serde(default, skip_serializing_if = "is_false")]
     pub codex_session_scoped_cooldown_enabled: bool,
     #[serde(
-        default = "default_upstream_no_data_timeout_secs",
-        skip_serializing_if = "is_default_upstream_no_data_timeout_secs"
+        default = "default_stream_first_output_timeout_secs",
+        skip_serializing_if = "is_default_stream_first_output_timeout_secs"
     )]
-    pub upstream_no_data_timeout_secs: u64,
-    /// OpenAI/Codex header wait cap. 0 disables this cap; body idle still uses upstream_no_data_timeout_secs.
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub openai_response_header_timeout_secs: u64,
+    pub stream_first_output_timeout_secs: u64,
+    #[serde(
+        default = "default_sync_response_timeout_secs",
+        skip_serializing_if = "is_default_sync_response_timeout_secs"
+    )]
+    pub sync_response_timeout_secs: u64,
     #[serde(default)]
     pub tray_token_rate: TrayTokenRateConfig,
     #[serde(default)]
@@ -272,8 +278,8 @@ impl Default for ProxyConfigFile {
             max_request_body_bytes: None,
             retryable_failure_cooldown_secs: default_retryable_failure_cooldown_secs(),
             codex_session_scoped_cooldown_enabled: false,
-            upstream_no_data_timeout_secs: default_upstream_no_data_timeout_secs(),
-            openai_response_header_timeout_secs: 0,
+            stream_first_output_timeout_secs: default_stream_first_output_timeout_secs(),
+            sync_response_timeout_secs: default_sync_response_timeout_secs(),
             tray_token_rate: TrayTokenRateConfig::default(),
             upstream_strategy: UpstreamStrategy::default(),
             hot_model_mappings: default_hot_model_mappings(),
@@ -321,8 +327,8 @@ pub struct ProxyConfig {
     pub max_request_body_bytes: usize,
     pub retryable_failure_cooldown: std::time::Duration,
     pub codex_session_scoped_cooldown_enabled: bool,
-    pub upstream_no_data_timeout: std::time::Duration,
-    pub openai_response_header_timeout: Option<std::time::Duration>,
+    pub stream_first_output_timeout: std::time::Duration,
+    pub sync_response_timeout: std::time::Duration,
     pub upstream_strategy: UpstreamStrategyRuntime,
     pub hot_model_mappings: HashMap<String, String>,
     pub upstreams: HashMap<String, ProviderUpstreams>,

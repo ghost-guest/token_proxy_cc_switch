@@ -34,17 +34,17 @@ impl<E: Error + 'static> Error for UpstreamStreamError<E> {
 
 pub(super) fn with_idle_timeout<E>(
     upstream: impl futures_util::stream::Stream<Item = Result<Bytes, E>> + Unpin + Send + 'static,
-    upstream_no_data_timeout: Duration,
+    sync_response_timeout: Duration,
 ) -> futures_util::stream::BoxStream<'static, Result<Bytes, UpstreamStreamError<E>>>
 where
     E: Error + Send + Sync + 'static,
 {
     try_unfold(upstream, move |mut upstream| async move {
-        match tokio::time::timeout(upstream_no_data_timeout, upstream.next()).await {
+        match tokio::time::timeout(sync_response_timeout, upstream.next()).await {
             Ok(Some(Ok(chunk))) => Ok(Some((chunk, upstream))),
             Ok(Some(Err(err))) => Err(UpstreamStreamError::Upstream(err)),
             Ok(None) => Ok(None),
-            Err(_) => Err(UpstreamStreamError::IdleTimeout(upstream_no_data_timeout)),
+            Err(_) => Err(UpstreamStreamError::IdleTimeout(sync_response_timeout)),
         }
     })
     .boxed()

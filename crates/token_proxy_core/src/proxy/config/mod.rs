@@ -9,7 +9,7 @@ use crate::paths::TokenProxyPaths;
 use std::time::{Duration, Instant};
 
 const DEFAULT_MAX_REQUEST_BODY_BYTES: u64 = 100 * 1024 * 1024;
-const MIN_UPSTREAM_NO_DATA_TIMEOUT_SECS: u64 = 3;
+const MIN_TIMEOUT_SECS: u64 = 1;
 
 pub use hot_model_mappings::default_hot_model_mappings;
 pub(crate) use hot_model_mappings::expand_model_ids_with_mappings;
@@ -83,11 +83,13 @@ fn build_runtime_config(config: ProxyConfigFile) -> Result<ProxyConfig, String> 
             config.retryable_failure_cooldown_secs,
         )?,
         codex_session_scoped_cooldown_enabled: config.codex_session_scoped_cooldown_enabled,
-        upstream_no_data_timeout: resolve_upstream_no_data_timeout(
-            config.upstream_no_data_timeout_secs,
+        stream_first_output_timeout: resolve_timeout_secs(
+            "stream_first_output_timeout_secs",
+            config.stream_first_output_timeout_secs,
         )?,
-        openai_response_header_timeout: resolve_openai_response_header_timeout(
-            config.openai_response_header_timeout_secs,
+        sync_response_timeout: resolve_timeout_secs(
+            "sync_response_timeout_secs",
+            config.sync_response_timeout_secs,
         )?,
         upstream_strategy: resolve_upstream_strategy(config.upstream_strategy)?,
         hot_model_mappings: config.hot_model_mappings,
@@ -104,28 +106,15 @@ fn resolve_retryable_failure_cooldown(value: u64) -> Result<Duration, String> {
     Ok(duration)
 }
 
-fn resolve_upstream_no_data_timeout(value: u64) -> Result<Duration, String> {
-    if value < MIN_UPSTREAM_NO_DATA_TIMEOUT_SECS {
-        return Err(format!(
-            "upstream_no_data_timeout_secs must be at least {MIN_UPSTREAM_NO_DATA_TIMEOUT_SECS}."
-        ));
+fn resolve_timeout_secs(field_name: &str, value: u64) -> Result<Duration, String> {
+    if value < MIN_TIMEOUT_SECS {
+        return Err(format!("{field_name} must be at least {MIN_TIMEOUT_SECS}."));
     }
     let duration = Duration::from_secs(value);
     if Instant::now().checked_add(duration).is_none() {
-        return Err("upstream_no_data_timeout_secs is too large.".to_string());
+        return Err(format!("{field_name} is too large."));
     }
     Ok(duration)
-}
-
-fn resolve_openai_response_header_timeout(value: u64) -> Result<Option<Duration>, String> {
-    if value == 0 {
-        return Ok(None);
-    }
-    let duration = Duration::from_secs(value);
-    if Instant::now().checked_add(duration).is_none() {
-        return Err("openai_response_header_timeout_secs is too large.".to_string());
-    }
-    Ok(Some(duration))
 }
 
 fn resolve_upstream_strategy(value: UpstreamStrategy) -> Result<UpstreamStrategyRuntime, String> {

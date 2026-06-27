@@ -9,7 +9,8 @@ use super::ProxyConfigFile;
 const DEFAULT_CONFIG_HEADER: &str = concat!(
     "// Token Proxy config (JSONC). Comments and trailing commas are supported.\n",
     "// log_level (optional): silent|error|warn|info|debug|trace. Default: silent.\n",
-    "// upstream_no_data_timeout_secs (optional): upstream no-data timeout in seconds. Minimum: 3. Default: 120.\n",
+    "// stream_first_output_timeout_secs (optional): stream first client-visible output timeout in seconds. Minimum: 1. Default: 60.\n",
+    "// sync_response_timeout_secs (optional): non-stream full response timeout in seconds. Minimum: 1. Default: 300.\n",
     "// codex_session_scoped_cooldown_enabled (optional): isolate Codex OpenAI Responses cooldown by session_id. Default: false.\n",
     "// upstream_strategy (optional): { order: \"fill_first\"|\"round_robin\", dispatch: { type: \"serial\"|\"hedged\"|\"race\", ... } }.\n",
     "//   Example hedged: { \"order\": \"round_robin\", \"dispatch\": { \"type\": \"hedged\", \"delay_ms\": 2000, \"max_parallel\": 2 } }\n",

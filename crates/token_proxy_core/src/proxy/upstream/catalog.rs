@@ -314,7 +314,7 @@ async fn fetch_upstream_model_catalog(
         .request(Method::GET, &prepared.upstream_url)
         .headers(prepared.request_headers)
         .body(request_body);
-    let response = tokio::time::timeout(state.config.upstream_no_data_timeout, request.send())
+    let response = tokio::time::timeout(state.config.sync_response_timeout, request.send())
         .await
         .map_err(|_| "Timed out fetching upstream model catalog.".to_string())?
         .map_err(|err| {

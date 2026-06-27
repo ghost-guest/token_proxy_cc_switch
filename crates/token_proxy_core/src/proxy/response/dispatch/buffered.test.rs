@@ -3,6 +3,7 @@ use super::buffered::{
     response_error_for_status, value_is_absent,
 };
 use crate::proxy::openai_compat::FormatTransform;
+use crate::proxy::response::RetryableStreamResponse;
 use crate::proxy::{
     log::{LogContext, LogWriter},
     token_rate::TokenRateTracker,
@@ -14,11 +15,14 @@ use axum::{
         HeaderMap, HeaderValue, StatusCode,
     },
 };
+use futures_util::stream;
 use serde_json::json;
 use std::{
+    io,
     sync::Arc,
     time::{Duration, Instant},
 };
+use tokio::time::sleep;
 
 fn test_context() -> LogContext {
     LogContext {
@@ -38,6 +42,25 @@ fn test_context() -> LogContext {
         timings: Default::default(),
         start: Instant::now(),
     }
+}
+
+fn reqwest_response_from_delayed_chunks(
+    chunks: Vec<(Duration, &'static str)>,
+) -> reqwest::Response {
+    let stream = stream::unfold((0usize, chunks), |(index, chunks)| async move {
+        let (delay, chunk) = chunks.get(index)?;
+        sleep(*delay).await;
+        Some((
+            Ok::<Bytes, io::Error>(Bytes::from_static(chunk.as_bytes())),
+            (index + 1, chunks),
+        ))
+    });
+    let body = reqwest::Body::wrap_stream(stream);
+    axum::http::Response::builder()
+        .status(StatusCode::OK)
+        .body(body)
+        .expect("http response")
+        .into()
 }
 
 #[test]
@@ -222,6 +245,41 @@ async fn buffered_non_stream_event_stream_chat_completion_returns_json() {
     assert!(parts.headers.get(CONTENT_LENGTH).is_none());
     assert_eq!(value["choices"][0]["message"]["content"], json!("ok"));
     assert!(!String::from_utf8_lossy(&body).contains("data:"));
+}
+
+#[tokio::test]
+async fn buffered_non_stream_total_body_timeout_returns_retryable_504() {
+    let upstream_res = reqwest_response_from_delayed_chunks(vec![
+        (Duration::ZERO, "{\"id\":\"chatcmpl_1\","),
+        (Duration::from_millis(80), "\"choices\":[]}"),
+    ]);
+    let tracker = TokenRateTracker::new().register(None, None).await;
+
+    let response = build_buffered_response(
+        StatusCode::OK,
+        upstream_res,
+        HeaderMap::new(),
+        test_context(),
+        Arc::new(LogWriter::new(None)),
+        tracker,
+        FormatTransform::None,
+        None,
+        None,
+        None,
+        Duration::from_millis(30),
+    )
+    .await;
+    let retryable = response
+        .extensions()
+        .get::<RetryableStreamResponse>()
+        .cloned();
+    let (parts, body) = response.into_parts();
+    let body = to_bytes(body, usize::MAX).await.expect("body");
+    let text = String::from_utf8_lossy(&body);
+
+    assert_eq!(parts.status, StatusCode::GATEWAY_TIMEOUT);
+    assert!(retryable.is_some());
+    assert!(text.contains("Upstream synchronous response timed out after 0s."));
 }
 
 #[tokio::test]

@@ -131,8 +131,8 @@ fn config_with_runtime_upstreams(
         log_level: LogLevel::Silent,
         max_request_body_bytes: 20 * 1024 * 1024,
         retryable_failure_cooldown: std::time::Duration::from_secs(15),
-        upstream_no_data_timeout: std::time::Duration::from_secs(120),
-        openai_response_header_timeout: None,
+        stream_first_output_timeout: std::time::Duration::from_secs(60),
+        sync_response_timeout: std::time::Duration::from_secs(120),
         upstream_strategy: UpstreamStrategyRuntime {
             order: UpstreamOrderStrategy::RoundRobin,
             dispatch: UpstreamDispatchRuntime::Serial,
@@ -165,6 +165,15 @@ struct MockRawUpstreamState {
     status: StatusCode,
     body: Bytes,
     content_type: String,
+    requests: Arc<Mutex<Vec<RecordedRequest>>>,
+}
+
+#[derive(Clone)]
+struct MockDelayedBodyUpstreamState {
+    status: StatusCode,
+    body: Bytes,
+    content_type: String,
+    body_delay_ms: u64,
     requests: Arc<Mutex<Vec<RecordedRequest>>>,
 }
 
@@ -428,6 +437,79 @@ async fn spawn_multipart_probe_upstream(response_body: Value) -> MultipartProbeU
             .expect("multipart probe server should run");
     });
     MultipartProbeUpstream {
+        base_url: format!("http://{addr}"),
+        requests,
+        task,
+    }
+}
+
+async fn mock_delayed_body_upstream_handler(
+    State(state): State<Arc<MockDelayedBodyUpstreamState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    body: Body,
+) -> axum::response::Response {
+    let bytes = to_bytes(body, usize::MAX).await.expect("read mock body");
+    let json_body = serde_json::from_slice::<Value>(&bytes).expect("mock request json");
+    state
+        .requests
+        .lock()
+        .expect("requests lock")
+        .push(RecordedRequest {
+            path: uri.path().to_string(),
+            body: json_body,
+            authorization: headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string),
+            chatgpt_account_id: headers
+                .get("chatgpt-account-id")
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string),
+        });
+    let response_body = state.body.clone();
+    let body_delay_ms = state.body_delay_ms;
+    let stream = futures_util::stream::once(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(body_delay_ms)).await;
+        Ok::<Bytes, std::convert::Infallible>(response_body)
+    });
+    axum::response::Response::builder()
+        .status(state.status)
+        .header(
+            axum::http::header::CONTENT_TYPE,
+            state.content_type.as_str(),
+        )
+        .body(Body::from_stream(stream))
+        .expect("build delayed body mock response")
+}
+
+async fn spawn_mock_upstream_with_delayed_body(
+    status: StatusCode,
+    body: Bytes,
+    content_type: &str,
+    body_delay_ms: u64,
+) -> MockUpstream {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let state = Arc::new(MockDelayedBodyUpstreamState {
+        status,
+        body,
+        content_type: content_type.to_string(),
+        body_delay_ms,
+        requests: requests.clone(),
+    });
+    let app = Router::new()
+        .route("/{*path}", any(mock_delayed_body_upstream_handler))
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind delayed body mock upstream");
+    let addr: SocketAddr = listener.local_addr().expect("mock local addr");
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("delayed body mock upstream server should run");
+    });
+    MockUpstream {
         base_url: format!("http://{addr}"),
         requests,
         task,
@@ -1593,6 +1675,164 @@ data: [DONE]\n\n",
     assert_eq!(primary_requests.len(), 1);
     assert_eq!(primary_requests[0].path, CODEX_RESPONSES_PATH);
     assert_eq!(fallback_requests.len(), 1);
+    assert_eq!(fallback_requests[0].path, RESPONSES_PATH);
+}
+
+async fn assert_responses_stream_fallbacks_after_pre_header_timeout() {
+    let primary = spawn_mock_upstream_with_delay(
+        StatusCode::OK,
+        json!({
+            "id": "resp_too_late",
+            "object": "response",
+            "status": "completed",
+            "output": []
+        }),
+        80,
+    )
+    .await;
+    let fallback = spawn_mock_raw_upstream(
+        StatusCode::OK,
+        Bytes::from(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"from responses fallback\"}\n\n\
+data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_fallback\",\"object\":\"response\",\"created_at\":123,\"model\":\"gpt-5\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"id\":\"msg_1\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"from responses fallback\"}]}],\"usage\":{\"input_tokens\":1,\"output_tokens\":2,\"total_tokens\":3}}}\n\n\
+data: [DONE]\n\n",
+        ),
+        "text/event-stream",
+    )
+    .await;
+
+    let mut config = config_with_runtime_upstreams(&[
+        (
+            PROVIDER_CODEX,
+            10,
+            "codex-primary-slow-headers",
+            primary.base_url.as_str(),
+            FORMATS_RESPONSES,
+        ),
+        (
+            PROVIDER_RESPONSES,
+            5,
+            "responses-fallback-after-header-timeout",
+            fallback.base_url.as_str(),
+            FORMATS_RESPONSES,
+        ),
+    ]);
+    config.stream_first_output_timeout = std::time::Duration::from_millis(20);
+    let data_dir = next_test_data_dir("responses_stream_header_timeout_fallback");
+    let state = build_test_state_handle(config, data_dir.clone()).await;
+
+    let response = proxy_request(
+        State(state),
+        Method::POST,
+        Uri::from_static(RESPONSES_PATH),
+        axum::http::HeaderMap::new(),
+        Body::from(
+            json!({
+                "model": "gpt-5",
+                "stream": true,
+                "input": "hi"
+            })
+            .to_string(),
+        ),
+    )
+    .await;
+
+    let response_status = response.status();
+    let response_bytes = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("proxy stream body");
+    let response_text = String::from_utf8_lossy(&response_bytes);
+    let primary_requests = primary.requests();
+    let fallback_requests = fallback.requests();
+
+    primary.abort();
+    fallback.abort();
+    let _ = std::fs::remove_dir_all(&data_dir);
+
+    assert_eq!(response_status, StatusCode::OK);
+    assert!(response_text.contains("from responses fallback"));
+    assert_eq!(primary_requests.len(), 1);
+    assert_eq!(fallback_requests.len(), 1);
+    assert_eq!(primary_requests[0].path, CODEX_RESPONSES_PATH);
+    assert_eq!(fallback_requests[0].path, RESPONSES_PATH);
+}
+
+async fn assert_responses_stream_fallbacks_after_attempt_first_output_deadline() {
+    let primary = spawn_mock_upstream_with_delayed_body(
+        StatusCode::OK,
+        Bytes::from(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"primary late output\"}\n\n\
+data: [DONE]\n\n",
+        ),
+        "text/event-stream",
+        80,
+    )
+    .await;
+    let fallback = spawn_mock_raw_upstream(
+        StatusCode::OK,
+        Bytes::from(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"from responses fallback\"}\n\n\
+data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_fallback\",\"object\":\"response\",\"created_at\":123,\"model\":\"gpt-5\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"id\":\"msg_1\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"from responses fallback\"}]}],\"usage\":{\"input_tokens\":1,\"output_tokens\":2,\"total_tokens\":3}}}\n\n\
+data: [DONE]\n\n",
+        ),
+        "text/event-stream",
+    )
+    .await;
+
+    let mut config = config_with_runtime_upstreams(&[
+        (
+            PROVIDER_CODEX,
+            10,
+            "codex-primary-slow-body",
+            primary.base_url.as_str(),
+            FORMATS_RESPONSES,
+        ),
+        (
+            PROVIDER_RESPONSES,
+            5,
+            "responses-fallback-after-body-deadline",
+            fallback.base_url.as_str(),
+            FORMATS_RESPONSES,
+        ),
+    ]);
+    config.stream_first_output_timeout = std::time::Duration::from_millis(40);
+    let data_dir = next_test_data_dir("responses_stream_first_output_deadline_fallback");
+    let state = build_test_state_handle(config, data_dir.clone()).await;
+
+    let response = proxy_request(
+        State(state),
+        Method::POST,
+        Uri::from_static(RESPONSES_PATH),
+        axum::http::HeaderMap::new(),
+        Body::from(
+            json!({
+                "model": "gpt-5",
+                "stream": true,
+                "input": "hi"
+            })
+            .to_string(),
+        ),
+    )
+    .await;
+
+    let response_status = response.status();
+    let response_bytes = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("proxy stream body");
+    let response_text = String::from_utf8_lossy(&response_bytes);
+    let primary_requests = primary.requests();
+    let fallback_requests = fallback.requests();
+
+    primary.abort();
+    fallback.abort();
+    let _ = std::fs::remove_dir_all(&data_dir);
+
+    assert_eq!(response_status, StatusCode::OK);
+    assert!(response_text.contains("from responses fallback"));
+    assert!(!response_text.contains("primary late output"));
+    assert_eq!(primary_requests.len(), 1);
+    assert_eq!(fallback_requests.len(), 1);
+    assert_eq!(primary_requests[0].path, CODEX_RESPONSES_PATH);
     assert_eq!(fallback_requests[0].path, RESPONSES_PATH);
 }
 
@@ -3864,6 +4104,20 @@ fn responses_stream_request_falls_back_from_codex_when_first_sse_event_is_error(
 fn responses_stream_request_falls_back_from_codex_when_created_then_failed_before_output() {
     run_async(async {
         assert_responses_stream_retry_fallback_from_codex_created_then_failed_before_output().await;
+    });
+}
+
+#[test]
+fn responses_stream_request_falls_back_from_codex_when_headers_timeout_before_output() {
+    run_async(async {
+        assert_responses_stream_fallbacks_after_pre_header_timeout().await;
+    });
+}
+
+#[test]
+fn responses_stream_request_falls_back_when_first_output_deadline_expires_after_headers() {
+    run_async(async {
+        assert_responses_stream_fallbacks_after_attempt_first_output_deadline().await;
     });
 }
 
