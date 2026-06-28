@@ -36,12 +36,18 @@ export function SectionCards({ summary }: SectionCardsProps) {
   const avgLatencyMs = summary?.avgLatencyMs ?? 0;
   const medianLatencyMs = summary?.medianLatencyMs ?? 0;
   const successRate = totalRequests > 0 ? successRequests / totalRequests : 0;
+  const cacheHitRate = inputTokens > 0 ? cachedTokens / inputTokens : 0;
 
-  // 缓存信息已在 Badge 中显示，footer 只展示输入/输出
-  const tokensHint = m.dashboard_tokens_hint_no_cache({
-    input: formatCompact(inputTokens),
-    output: formatCompact(outputTokens),
-  });
+  const tokensHint = cachedTokens
+    ? m.dashboard_tokens_hint_with_cache({
+        input: formatCompact(inputTokens),
+        cached: formatCompact(cachedTokens),
+        output: formatCompact(outputTokens),
+      })
+    : m.dashboard_tokens_hint_no_cache({
+        input: formatCompact(inputTokens),
+        output: formatCompact(outputTokens),
+      });
 
   return (
     <div className="*:data-[slot=card]:from-primary/5 *:data-[slot=card]:to-card dark:*:data-[slot=card]:bg-card grid grid-cols-1 gap-4 px-4 *:data-[slot=card]:bg-gradient-to-t *:data-[slot=card]:shadow-xs lg:px-6 @xl/main:grid-cols-2 @5xl/main:grid-cols-4">
@@ -83,7 +89,9 @@ export function SectionCards({ summary }: SectionCardsProps) {
           {cachedTokens ? (
             <CardAction>
               <Badge variant="outline">
-                {m.dashboard_cached({ count: formatCompact(cachedTokens) })}
+                {m.dashboard_cache_hit_rate({
+                  rate: PERCENT_FORMAT.format(cacheHitRate),
+                })}
               </Badge>
             </CardAction>
           ) : null}

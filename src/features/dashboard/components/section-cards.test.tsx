@@ -64,4 +64,21 @@ describe("dashboard/SectionCards", () => {
     expect(screen.queryByText("$1.21")).not.toBeInTheDocument();
     expect(screen.queryByText("Logged")).not.toBeInTheDocument();
   });
+
+  it("places cached tokens after input and shows cache hit rate in the badge", () => {
+    renderCards();
+
+    expect(
+      screen.getByText(m.dashboard_tokens_hint_with_cache({
+        input: "200K",
+        cached: "20K",
+        output: "10K",
+      }))
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(m.dashboard_cache_hit_rate({
+        rate: "10%",
+      }))
+    ).toBeInTheDocument();
+  });
 });
