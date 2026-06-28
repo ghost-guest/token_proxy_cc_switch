@@ -13,9 +13,13 @@ const TOKENS_PER_MILLION = 1_000_000;
 const NANO_USD_PER_USD_PER_MILLION_TOKEN =
   NANO_USD_PER_USD / TOKENS_PER_MILLION;
 const PRICE_DECIMAL_SCALE = 3;
+// Keep multiplier as fixed-point integer to match Rust pricing math.
+const PRICE_MULTIPLIER_SCALE = 1_000_000_000_000;
+const PRICE_MULTIPLIER_DECIMAL_SCALE = 12;
 const NANO_USD_PER_USD_PER_MILLION_TOKEN_BIG = new Big(
   NANO_USD_PER_USD_PER_MILLION_TOKEN,
 );
+const PRICE_MULTIPLIER_SCALE_BIG = new Big(PRICE_MULTIPLIER_SCALE);
 
 let rowCounter = 0;
 
@@ -23,6 +27,7 @@ export type ModelPricingFormRow = {
   id: string;
   modelId: string;
   aliasesText: string;
+  priceMultiplier: string;
   shortInputUsdPerMillion: string;
   shortCachedUsdPerMillion: string;
   shortOutputUsdPerMillion: string;
@@ -47,6 +52,7 @@ export function createEmptyPricingRow(): ModelPricingFormRow {
     id: createRowId(),
     modelId: "",
     aliasesText: "",
+    priceMultiplier: "1",
     shortInputUsdPerMillion: "0.000",
     shortCachedUsdPerMillion: "0.000",
     shortOutputUsdPerMillion: "0.000",
@@ -63,6 +69,7 @@ export function toPricingRows(settings: ModelPricingSettings): ModelPricingFormR
     id: createRowId(),
     modelId: model.modelId,
     aliasesText: model.aliases.join(", "),
+    priceMultiplier: formatPriceMultiplier(model.priceMultiplierScaled),
     shortInputUsdPerMillion: formatUsdPerMillion(model.short.inputNanoUsdPerToken),
     shortCachedUsdPerMillion: formatUsdPerMillion(model.short.cachedInputNanoUsdPerToken),
     shortOutputUsdPerMillion: formatUsdPerMillion(model.short.outputNanoUsdPerToken),
@@ -119,6 +126,10 @@ export function toPricingSettingsInput(
       }
       aliases.add(lookupKey);
     }
+    const priceMultiplierScaled = parsePriceMultiplier(row.priceMultiplier);
+    if (priceMultiplierScaled === null) {
+      return { ok: false, message: m.model_pricing_error_multiplier() };
+    }
 
     const short = parseTier({
       input: row.shortInputUsdPerMillion,
@@ -156,6 +167,7 @@ export function toPricingSettingsInput(
     models.push({
       modelId,
       aliases: rowAliases,
+      priceMultiplierScaled,
       short: short.tier,
       long: long?.tier ?? null,
       longContextInputTokenThreshold: threshold,
@@ -211,6 +223,13 @@ function formatUsdPerMillion(value: number) {
     .toFixed(PRICE_DECIMAL_SCALE);
 }
 
+function formatPriceMultiplier(value: number) {
+  const formatted = new Big(value)
+    .div(PRICE_MULTIPLIER_SCALE_BIG)
+    .toFixed(PRICE_MULTIPLIER_DECIMAL_SCALE);
+  return formatted.includes(".") ? formatted.replace(/0+$/, "").replace(/\.$/, "") : formatted;
+}
+
 function parseUsdPerMillion(value: string) {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -228,6 +247,26 @@ function parseUsdPerMillion(value: string) {
       return null;
     }
     return nanoUsdPerToken.toNumber();
+  } catch {
+    return null;
+  }
+}
+
+function parsePriceMultiplier(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  try {
+    const parsed = new Big(trimmed);
+    if (parsed.lte(0)) {
+      return null;
+    }
+    const scaled = parsed.times(PRICE_MULTIPLIER_SCALE_BIG).round(0, Big.roundHalfUp);
+    if (scaled.gt(Number.MAX_SAFE_INTEGER)) {
+      return null;
+    }
+    return scaled.toNumber();
   } catch {
     return null;
   }

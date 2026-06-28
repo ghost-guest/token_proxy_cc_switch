@@ -45,6 +45,7 @@ const snapshot: ModelPricingSettingsSnapshot = {
       {
         modelId: "gpt-5.5",
         aliases: ["openai/gpt-5.5", "gpt-5.5-latest"],
+        priceMultiplierScaled: 1_250_000_000_000,
         short: {
           inputNanoUsdPerToken: 5_000,
           cachedInputNanoUsdPerToken: 500,
@@ -99,6 +100,7 @@ describe("pricing/ModelPricingPage", () => {
     expect(
       screen.getByDisplayValue("openai/gpt-5.5, gpt-5.5-latest"),
     ).toBeInTheDocument();
+    expect(screen.getByDisplayValue("1.25")).toBeInTheDocument();
     expect(screen.getByDisplayValue("5.000")).toBeInTheDocument();
     expect(screen.getByDisplayValue("0.500")).toBeInTheDocument();
     expect(screen.getByDisplayValue("30.000")).toBeInTheDocument();
@@ -134,6 +136,7 @@ describe("pricing/ModelPricingPage", () => {
             short: expect.objectContaining({
               inputNanoUsdPerToken: 5_000,
             }),
+            priceMultiplierScaled: 1_250_000_000_000,
           }),
         ],
       });

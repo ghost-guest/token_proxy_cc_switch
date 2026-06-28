@@ -13,6 +13,7 @@ const settings: ModelPricingSettings = {
     {
       modelId: "gpt-5.5",
       aliases: ["openai/gpt-5.5", "gpt-5.5-latest"],
+      priceMultiplierScaled: 1_250_000_000_000,
       short: {
         inputNanoUsdPerToken: 5_000,
         cachedInputNanoUsdPerToken: 500,
@@ -35,6 +36,7 @@ describe("pricing/form", () => {
     expect(rows[0]).toMatchObject({
       modelId: "gpt-5.5",
       aliasesText: "openai/gpt-5.5, gpt-5.5-latest",
+      priceMultiplier: "1.25",
       shortInputUsdPerMillion: "5.000",
       shortCachedUsdPerMillion: "0.500",
       shortOutputUsdPerMillion: "30.000",
@@ -57,6 +59,7 @@ describe("pricing/form", () => {
           {
             modelId: "gpt-5.5",
             aliases: ["openai/gpt-5.5", "gpt-5.5-latest"],
+            priceMultiplierScaled: 1_250_000_000_000,
             short: {
               inputNanoUsdPerToken: 5_000,
               cachedInputNanoUsdPerToken: 500,
@@ -163,6 +166,7 @@ describe("pricing/form", () => {
           {
             modelId: "kimi-k2.6",
             aliases: ["moonshotai/kimi-k2.6"],
+            priceMultiplierScaled: 1_250_000_000_000,
             short: {
               inputNanoUsdPerToken: 750,
               cachedInputNanoUsdPerToken: 150,
@@ -174,5 +178,38 @@ describe("pricing/form", () => {
         ],
       },
     });
+  });
+
+  it("rounds multiplier input to scaled integer without changing base prices", () => {
+    const row: ModelPricingFormRow = {
+      ...toPricingRows(settings)[0],
+      priceMultiplier: "0.2166535361",
+    };
+    const result = toPricingSettingsInput([row]);
+
+    expect(result).toEqual({
+      ok: true,
+      input: {
+        models: [
+          expect.objectContaining({
+            priceMultiplierScaled: 216_653_536_100,
+            short: expect.objectContaining({
+              inputNanoUsdPerToken: 5_000,
+              outputNanoUsdPerToken: 30_000,
+            }),
+          }),
+        ],
+      },
+    });
+  });
+
+  it("rejects zero or invalid multipliers", () => {
+    const row: ModelPricingFormRow = {
+      ...toPricingRows(settings)[0],
+      priceMultiplier: "0",
+    };
+
+    expect(toPricingSettingsInput([row]).ok).toBe(false);
+    expect(toPricingSettingsInput([{ ...row, priceMultiplier: "abc" }]).ok).toBe(false);
   });
 });

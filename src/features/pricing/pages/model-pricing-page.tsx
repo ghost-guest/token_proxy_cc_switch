@@ -49,7 +49,7 @@ import { m } from "@/paraglide/messages.js";
 
 type LoadStatus = "loading" | "idle" | "saving";
 
-const TABLE_MIN_WIDTH_CLASS = "min-w-[78rem]";
+const TABLE_MIN_WIDTH_CLASS = "min-w-[84rem]";
 const STICKY_HEAD_CLASS = "sticky top-0 z-20 bg-background/95 backdrop-blur-xs";
 const STICKY_ACTION_CLASS =
   "sticky right-0 z-10 w-[4.5rem] border-l border-border/40 bg-background/95 text-right backdrop-blur-xs group-hover:bg-muted/50";
@@ -107,6 +107,14 @@ function ModelPricingRow({
           placeholder={m.model_pricing_aliases_placeholder()}
           className="h-8"
           onChange={(event) => onChange(row.id, { aliasesText: event.target.value })}
+        />
+      </TableCell>
+      <TableCell>
+        <PriceInput
+          value={row.priceMultiplier}
+          ariaLabel={m.model_pricing_column_multiplier()}
+          disabled={disabled}
+          onChange={(value) => onChange(row.id, { priceMultiplier: value })}
         />
       </TableCell>
       <TableCell>
@@ -382,6 +390,9 @@ export function ModelPricingPage() {
                     </TableHead>
                     <TableHead className={`${STICKY_HEAD_CLASS} w-[17rem]`}>
                       {m.model_pricing_column_aliases()}
+                    </TableHead>
+                    <TableHead className={`${STICKY_HEAD_CLASS} text-right`}>
+                      {m.model_pricing_column_multiplier()}
                     </TableHead>
                     <TableHead className={`${STICKY_HEAD_CLASS} text-right`}>
                       {m.model_pricing_column_short_input()}

@@ -538,6 +538,7 @@ mod tests {
                 models: vec![ModelPricingModel {
                     model_id: "custom-model".to_string(),
                     aliases: vec!["openai/custom-model".to_string()],
+                    price_multiplier_scaled: crate::proxy::pricing::PRICE_MULTIPLIER_SCALE,
                     short: ModelPricingTier {
                         input_nano_usd_per_token: 100,
                         cached_input_nano_usd_per_token: 10,

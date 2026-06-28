@@ -7,6 +7,7 @@ export type ModelPricingTier = {
 export type ModelPricingModel = {
   modelId: string;
   aliases: string[];
+  priceMultiplierScaled: number;
   short: ModelPricingTier;
   long: ModelPricingTier | null;
   longContextInputTokenThreshold: number | null;

@@ -6,6 +6,8 @@ use std::fmt::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const DEFAULT_PRICING_VERSION: &str = "2026-06-26.opus-4-8";
+// Multiplier is stored as a fixed-point decimal: 1_000_000_000_000 = 1x.
+pub const PRICE_MULTIPLIER_SCALE: u64 = 1_000_000_000_000;
 
 const DEFAULT_LONG_CONTEXT_INPUT_TOKEN_THRESHOLD: u64 = 272_000;
 const SETTINGS_ROW_ID: i64 = 1;
@@ -23,6 +25,7 @@ pub struct ModelPricingTier {
 pub struct ModelPricingModel {
     pub model_id: String,
     pub aliases: Vec<String>,
+    pub price_multiplier_scaled: u64,
     pub short: ModelPricingTier,
     pub long: Option<ModelPricingTier>,
     pub long_context_input_token_threshold: Option<u64>,
@@ -83,6 +86,7 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
             ModelPricingModel {
                 model_id: "gpt-5.5".to_string(),
                 aliases: alias_list(&["openai/gpt-5.5", "gpt-5.5-latest"]),
+                price_multiplier_scaled: PRICE_MULTIPLIER_SCALE,
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 5_000,
                     cached_input_nano_usd_per_token: 500,
@@ -100,6 +104,7 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
             ModelPricingModel {
                 model_id: "gpt-5.4".to_string(),
                 aliases: alias_list(&["openai/gpt-5.4"]),
+                price_multiplier_scaled: PRICE_MULTIPLIER_SCALE,
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 2_500,
                     cached_input_nano_usd_per_token: 250,
@@ -117,6 +122,7 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
             ModelPricingModel {
                 model_id: "gpt-5.4-mini".to_string(),
                 aliases: alias_list(&["openai/gpt-5.4-mini"]),
+                price_multiplier_scaled: PRICE_MULTIPLIER_SCALE,
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 750,
                     cached_input_nano_usd_per_token: 75,
@@ -129,6 +135,7 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
             ModelPricingModel {
                 model_id: "claude-sonnet-4.6".to_string(),
                 aliases: alias_list(&["anthropic/claude-sonnet-4.6"]),
+                price_multiplier_scaled: PRICE_MULTIPLIER_SCALE,
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 3_000,
                     cached_input_nano_usd_per_token: 300,
@@ -146,6 +153,7 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
                     "anthropic/claude-opus-4-8",
                     "anthropic/claude-opus-4.8",
                 ]),
+                price_multiplier_scaled: PRICE_MULTIPLIER_SCALE,
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 5_000,
                     cached_input_nano_usd_per_token: 500,
@@ -162,6 +170,7 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
                     "anthropic/claude-opus-4-7",
                     "anthropic/claude-opus-4.7",
                 ]),
+                price_multiplier_scaled: PRICE_MULTIPLIER_SCALE,
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 5_000,
                     cached_input_nano_usd_per_token: 500,
@@ -176,6 +185,7 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
                     "google/gemini-3-flash-preview",
                     "models/gemini-3-flash-preview",
                 ]),
+                price_multiplier_scaled: PRICE_MULTIPLIER_SCALE,
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 500,
                     cached_input_nano_usd_per_token: 50,
@@ -187,6 +197,7 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
             ModelPricingModel {
                 model_id: "gemini-3.5-flash".to_string(),
                 aliases: alias_list(&["google/gemini-3.5-flash", "models/gemini-3.5-flash"]),
+                price_multiplier_scaled: PRICE_MULTIPLIER_SCALE,
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 1_500,
                     cached_input_nano_usd_per_token: 150,
@@ -198,6 +209,7 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
             ModelPricingModel {
                 model_id: "deepseek-v4-flash".to_string(),
                 aliases: alias_list(&["deepseek/deepseek-v4-flash"]),
+                price_multiplier_scaled: PRICE_MULTIPLIER_SCALE,
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 140,
                     cached_input_nano_usd_per_token: 3,
@@ -209,6 +221,7 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
             ModelPricingModel {
                 model_id: "deepseek-v4-pro".to_string(),
                 aliases: alias_list(&["deepseek/deepseek-v4-pro"]),
+                price_multiplier_scaled: PRICE_MULTIPLIER_SCALE,
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 435,
                     cached_input_nano_usd_per_token: 4,
@@ -220,6 +233,7 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
             ModelPricingModel {
                 model_id: "gpt-5.3-codex".to_string(),
                 aliases: alias_list(&["openai/gpt-5.3-codex"]),
+                price_multiplier_scaled: PRICE_MULTIPLIER_SCALE,
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 1_750,
                     cached_input_nano_usd_per_token: 175,
@@ -231,6 +245,7 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
             ModelPricingModel {
                 model_id: "gpt-5.2".to_string(),
                 aliases: alias_list(&["openai/gpt-5.2"]),
+                price_multiplier_scaled: PRICE_MULTIPLIER_SCALE,
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 1_750,
                     cached_input_nano_usd_per_token: 175,
@@ -242,6 +257,7 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
             ModelPricingModel {
                 model_id: "gpt-5.2-codex".to_string(),
                 aliases: alias_list(&["openai/gpt-5.2-codex"]),
+                price_multiplier_scaled: PRICE_MULTIPLIER_SCALE,
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 1_750,
                     cached_input_nano_usd_per_token: 175,
@@ -253,6 +269,7 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
             ModelPricingModel {
                 model_id: "kimi-k2.6".to_string(),
                 aliases: alias_list(&["moonshotai/kimi-k2.6"]),
+                price_multiplier_scaled: PRICE_MULTIPLIER_SCALE,
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 750,
                     cached_input_nano_usd_per_token: 150,
@@ -268,6 +285,7 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
                     "gpt-image-2-2026-04-21",
                     "openai/gpt-image-2-2026-04-21",
                 ]),
+                price_multiplier_scaled: PRICE_MULTIPLIER_SCALE,
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 8_000,
                     cached_input_nano_usd_per_token: 2_000,
@@ -427,12 +445,22 @@ pub(crate) fn calculate_request_cost(
         PricingContextTier::Long => price.long.as_ref().unwrap_or(&price.short),
         PricingContextTier::Short => &price.short,
     };
+    let input_nano_usd_per_token =
+        apply_price_multiplier(tier.input_nano_usd_per_token, price.price_multiplier_scaled);
+    let cached_input_nano_usd_per_token = apply_price_multiplier(
+        tier.cached_input_nano_usd_per_token,
+        price.price_multiplier_scaled,
+    );
+    let output_nano_usd_per_token = apply_price_multiplier(
+        tier.output_nano_usd_per_token,
+        price.price_multiplier_scaled,
+    );
 
     Some(RequestCost {
         cost_nano_usd: uncached_input_tokens
-            .saturating_mul(tier.input_nano_usd_per_token)
-            .saturating_add(cached_tokens.saturating_mul(tier.cached_input_nano_usd_per_token))
-            .saturating_add(output_tokens.saturating_mul(tier.output_nano_usd_per_token)),
+            .saturating_mul(input_nano_usd_per_token)
+            .saturating_add(cached_tokens.saturating_mul(cached_input_nano_usd_per_token))
+            .saturating_add(output_tokens.saturating_mul(output_nano_usd_per_token)),
         pricing_version: settings.version.clone(),
         pricing_model: price.model_id.clone(),
         context_tier,
@@ -493,10 +521,16 @@ fn normalize_model_pricing_settings(
         } else {
             None
         };
+        if model.price_multiplier_scaled == 0 {
+            return Err(format!(
+                "Price multiplier must be positive for model {model_id}"
+            ));
+        }
 
         models.push(ModelPricingModel {
             model_id: model_id.to_string(),
             aliases,
+            price_multiplier_scaled: model.price_multiplier_scaled,
             short: model.short,
             long: model.long,
             long_context_input_token_threshold,
@@ -627,6 +661,14 @@ fn non_empty(value: &str) -> Option<&str> {
     }
 }
 
+fn apply_price_multiplier(nano_usd_per_token: u64, multiplier_scaled: u64) -> u64 {
+    let numerator = (nano_usd_per_token as u128)
+        .saturating_mul(multiplier_scaled as u128)
+        .saturating_add((PRICE_MULTIPLIER_SCALE / 2) as u128);
+    let value = numerator / PRICE_MULTIPLIER_SCALE as u128;
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
 fn find_model_price<'a>(
     settings: &'a ModelPricingSettings,
     model: &str,
@@ -705,6 +747,7 @@ mod tests {
             models: vec![ModelPricingModel {
                 model_id: "custom-model".to_string(),
                 aliases: vec!["openai/custom-model".to_string()],
+                price_multiplier_scaled: PRICE_MULTIPLIER_SCALE,
                 short: ModelPricingTier {
                     input_nano_usd_per_token: 100,
                     cached_input_nano_usd_per_token: 10,
@@ -865,6 +908,10 @@ mod tests {
         let settings = normalize_model_pricing_settings(custom_settings_input()).expect("settings");
         assert!(settings.version.starts_with("custom."));
         assert_eq!(settings.models[0].aliases, vec!["openai/custom-model"]);
+        assert_eq!(
+            settings.models[0].price_multiplier_scaled,
+            PRICE_MULTIPLIER_SCALE
+        );
 
         let cost = calculate_request_cost(
             &settings,
@@ -879,6 +926,36 @@ mod tests {
         assert_eq!(cost.cost_nano_usd, 10_200);
         assert_eq!(cost.pricing_model, "custom-model");
         assert_eq!(cost.context_tier, PricingContextTier::Short);
+    }
+
+    #[test]
+    fn applies_model_price_multiplier_to_request_cost() {
+        let mut input = custom_settings_input();
+        input.models[0].price_multiplier_scaled = PRICE_MULTIPLIER_SCALE * 5 / 2;
+        let settings = normalize_model_pricing_settings(input).expect("settings");
+        let cost = calculate_request_cost(
+            &settings,
+            Some("openai/custom-model"),
+            None,
+            Some(100),
+            Some(10),
+            Some(20),
+        )
+        .expect("cost");
+
+        assert_eq!(cost.cost_nano_usd, 25_500);
+        assert_eq!(cost.pricing_model, "custom-model");
+    }
+
+    #[test]
+    fn rejects_zero_price_multiplier() {
+        let mut input = custom_settings_input();
+        input.models[0].price_multiplier_scaled = 0;
+        let result = normalize_model_pricing_settings(input);
+
+        assert!(result
+            .expect_err("zero multiplier")
+            .contains("Price multiplier must be positive"));
     }
 
     #[test]
@@ -900,6 +977,7 @@ mod tests {
                 ModelPricingModel {
                     model_id: "left".to_string(),
                     aliases: vec!["shared".to_string()],
+                    price_multiplier_scaled: PRICE_MULTIPLIER_SCALE,
                     short: ModelPricingTier {
                         input_nano_usd_per_token: 1,
                         cached_input_nano_usd_per_token: 1,
@@ -911,6 +989,7 @@ mod tests {
                 ModelPricingModel {
                     model_id: "right".to_string(),
                     aliases: vec![" Shared ".to_string()],
+                    price_multiplier_scaled: PRICE_MULTIPLIER_SCALE,
                     short: ModelPricingTier {
                         input_nano_usd_per_token: 1,
                         cached_input_nano_usd_per_token: 1,
@@ -935,6 +1014,7 @@ mod tests {
                 ModelPricingModel {
                     model_id: "openai/custom-model".to_string(),
                     aliases: Vec::new(),
+                    price_multiplier_scaled: PRICE_MULTIPLIER_SCALE,
                     short: ModelPricingTier {
                         input_nano_usd_per_token: 1,
                         cached_input_nano_usd_per_token: 1,
@@ -946,6 +1026,7 @@ mod tests {
                 ModelPricingModel {
                     model_id: "custom-model".to_string(),
                     aliases: Vec::new(),
+                    price_multiplier_scaled: PRICE_MULTIPLIER_SCALE,
                     short: ModelPricingTier {
                         input_nano_usd_per_token: 1,
                         cached_input_nano_usd_per_token: 1,
@@ -971,6 +1052,10 @@ mod tests {
             .models
             .iter()
             .all(|model| !model.model_id.contains('/')));
+        assert!(settings
+            .models
+            .iter()
+            .all(|model| model.price_multiplier_scaled == PRICE_MULTIPLIER_SCALE));
 
         let gemini_flash = settings
             .models
