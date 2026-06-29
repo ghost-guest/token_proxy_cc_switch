@@ -35,6 +35,10 @@ export const MAIN_WINDOW_VISIBLE_EVENT = "main-window-visible";
 // Use a module-level guard to ensure we only auto-check once per app launch.
 let didRunAutoCheck = false;
 
+export function __resetUpdateNotifierAutoCheckForTests() {
+  didRunAutoCheck = false;
+}
+
 function buildDownloadProgressLabel(downloaded: number, total: number) {
   if (!total && !downloaded) {
     return "";

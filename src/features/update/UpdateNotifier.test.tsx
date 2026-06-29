@@ -1,10 +1,12 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { invoke } from "@tauri-apps/api/core";
 import { check } from "@tauri-apps/plugin-updater";
 import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   MAIN_WINDOW_VISIBLE_EVENT,
+  __resetUpdateNotifierAutoCheckForTests,
   UpdateNotifier,
 } from "@/features/update/UpdateNotifier";
 import { UpdaterProvider, useUpdater } from "@/features/update/updater";
@@ -111,8 +113,19 @@ function ManualUpdateHarness({ statusTestId }: { statusTestId: string }) {
   );
 }
 
+function ProxyUrlStateHarness() {
+  const { actions, state } = useUpdater();
+
+  useEffect(() => {
+    actions.setAppProxyUrl("http://127.0.0.1:7890");
+  }, [actions]);
+
+  return <output data-testid="app-proxy-url">{state.appProxyUrl}</output>;
+}
+
 describe("update/UpdateNotifier", () => {
   beforeEach(() => {
+    __resetUpdateNotifierAutoCheckForTests();
     eventHandlers.clear();
     consoleInfoMock = vi.spyOn(console, "info").mockImplementation(() => undefined);
     navigateMock.mockReset();
@@ -123,6 +136,8 @@ describe("update/UpdateNotifier", () => {
     toastLoadingMock.mockReturnValue("loading-toast");
     toastMock.mockClear();
     toastMock.mockReturnValue("available-toast");
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockResolvedValue({ config: { app_proxy_url: null } });
     vi.mocked(check).mockReset();
     vi.mocked(check).mockResolvedValue(null);
     listenMock.mockReset();
@@ -158,7 +173,68 @@ describe("update/UpdateNotifier", () => {
     await waitFor(() => {
       expect(vi.mocked(check)).toHaveBeenCalledTimes(2);
     });
-    expect(vi.mocked(check)).toHaveBeenLastCalledWith({ proxy: "http://127.0.0.1:7890" });
+    expect(vi.mocked(check)).toHaveBeenLastCalledWith(undefined);
+  });
+
+  it("does not wait for settings page to become ready before starting the startup update check", async () => {
+    render(
+      <UpdaterProvider>
+        <UpdateNotifier />
+      </UpdaterProvider>
+    );
+
+    await waitFor(() => {
+      expect(vi.mocked(check)).toHaveBeenCalledTimes(1);
+    });
+    expect(vi.mocked(check)).toHaveBeenLastCalledWith(undefined);
+  });
+
+  it("uses app proxy url loaded by the updater provider for the startup update check", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce({
+      config: { app_proxy_url: "socks5h://127.0.0.1:7891" },
+    });
+
+    render(
+      <UpdaterProvider>
+        <UpdateNotifier />
+      </UpdaterProvider>
+    );
+
+    await waitFor(() => {
+      expect(vi.mocked(check)).toHaveBeenCalledTimes(1);
+    });
+    expect(vi.mocked(check)).toHaveBeenLastCalledWith({
+      proxy: "socks5h://127.0.0.1:7891",
+    });
+  });
+
+  it("does not let the startup config read overwrite a newer app proxy url", async () => {
+    let resolveConfig:
+      | ((value: { config: { app_proxy_url: string | null } }) => void)
+      | null = null;
+    vi.mocked(invoke).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveConfig = resolve;
+        })
+    );
+
+    render(
+      <UpdaterProvider>
+        <ProxyUrlStateHarness />
+      </UpdaterProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("app-proxy-url")).toHaveTextContent("http://127.0.0.1:7890");
+    });
+
+    expect(resolveConfig).not.toBeNull();
+    resolveConfig!({ config: { app_proxy_url: "socks5h://127.0.0.1:9999" } });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("app-proxy-url")).toHaveTextContent("http://127.0.0.1:7890");
+    });
   });
 
   it("does not start parallel update checks for repeated visible events", async () => {

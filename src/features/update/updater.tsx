@@ -108,6 +108,18 @@ function toUpdateInfo(update: NonNullable<UpdaterCheckResult>): UpdateInfo {
   };
 }
 
+async function readAppProxyUrl() {
+  try {
+    const response = await invoke<{ config?: { app_proxy_url?: string | null } }>(
+      "read_proxy_config"
+    );
+    return response?.config?.app_proxy_url ?? "";
+  } catch (error) {
+    console.warn("[updater] failed to read app proxy url", { error });
+    return "";
+  }
+}
+
 type UpdaterProviderProps = {
   children: ReactNode;
 };
@@ -116,6 +128,7 @@ export function UpdaterProvider({ children }: UpdaterProviderProps) {
   const checkInFlightRef = useRef(false);
   const statusRef = useRef<UpdateStatus>("idle");
   const updateHandleRef = useRef<UpdaterCheckResult>(null);
+  const appProxyUrlRequestIdRef = useRef(0);
   const [state, setState] = useState<UpdateState>({
     status: "idle",
     statusMessage: "",
@@ -136,7 +149,28 @@ export function UpdaterProvider({ children }: UpdaterProviderProps) {
     updateHandleRef.current = state.updateHandle;
   }, [state.updateHandle]);
 
+  useEffect(() => {
+    const requestId = appProxyUrlRequestIdRef.current + 1;
+    appProxyUrlRequestIdRef.current = requestId;
+    void readAppProxyUrl().then((appProxyUrl) => {
+      if (appProxyUrlRequestIdRef.current !== requestId) {
+        return;
+      }
+      setState((prev) => {
+        if (prev.appProxyUrlReady && prev.appProxyUrl === appProxyUrl) {
+          return prev;
+        }
+        return {
+          ...prev,
+          appProxyUrl,
+          appProxyUrlReady: true,
+        };
+      });
+    });
+  }, []);
+
   const setAppProxyUrl = useCallback((value: string) => {
+    appProxyUrlRequestIdRef.current += 1;
     setState((prev) => {
       if (prev.appProxyUrlReady && prev.appProxyUrl === value) {
         return prev;
