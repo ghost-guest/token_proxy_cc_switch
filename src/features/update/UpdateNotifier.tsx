@@ -54,6 +54,7 @@ export function UpdateNotifier() {
   const { state, actions } = useUpdater();
   const { checkForUpdate, downloadAndInstall, relaunchApp } = actions;
   const [dismissedRestartPromptKey, setDismissedRestartPromptKey] = useState<string | null>(null);
+  const [windowVisible, setWindowVisible] = useState(false);
   const availableToastVersionRef = useRef<string | null>(null);
   const availableToastIdRef = useRef<ToastId | null>(null);
   const progressToastIdRef = useRef<ToastId | null>(null);
@@ -95,6 +96,20 @@ export function UpdateNotifier() {
     };
   }, [runAutoCheck, state.appProxyUrlReady, state.status]);
 
+  const triggerVisibleAutoCheck = useCallback((reason: string) => {
+    const visibleState = visibleWindowCheckRef.current;
+    if (!visibleState.appProxyUrlReady || !canStartUpdateCheck(visibleState.status)) {
+      console.info("[updater] skip visible-window update check", {
+        appProxyUrlReady: visibleState.appProxyUrlReady,
+        status: visibleState.status,
+        reason,
+      });
+      return;
+    }
+
+    visibleState.runAutoCheck(reason);
+  }, []);
+
   useEffect(() => {
     if (didRunAutoCheck || !state.appProxyUrlReady) {
       return;
@@ -109,21 +124,23 @@ export function UpdateNotifier() {
     let disposed = false;
     let unlisten: (() => void) | null = null;
 
+    const syncWindowVisibility = () => {
+      const focused = document.hasFocus() && document.visibilityState !== "hidden";
+      setWindowVisible(focused);
+      if (focused) {
+        triggerVisibleAutoCheck("main-window-focused");
+      }
+    };
+
+    syncWindowVisibility();
+
+    window.addEventListener("focus", syncWindowVisibility);
+    document.addEventListener("visibilitychange", syncWindowVisibility);
+
     // Tauri emits this whenever the tray or single-instance path shows the main window.
     listen(MAIN_WINDOW_VISIBLE_EVENT, () => {
-      const visibleState = visibleWindowCheckRef.current;
-      if (
-        !visibleState.appProxyUrlReady ||
-        !canStartUpdateCheck(visibleState.status)
-      ) {
-        console.info("[updater] skip visible-window update check", {
-          appProxyUrlReady: visibleState.appProxyUrlReady,
-          status: visibleState.status,
-        });
-        return;
-      }
-
-      visibleState.runAutoCheck("main-window-visible");
+      syncWindowVisibility();
+      triggerVisibleAutoCheck("main-window-visible");
     })
       .then((stopListening) => {
         if (disposed) {
@@ -138,17 +155,24 @@ export function UpdateNotifier() {
 
     return () => {
       disposed = true;
+      window.removeEventListener("focus", syncWindowVisibility);
+      document.removeEventListener("visibilitychange", syncWindowVisibility);
       if (unlisten) {
         unlisten();
       }
     };
-  }, []);
+  }, [triggerVisibleAutoCheck]);
 
   useEffect(() => {
     const previousStatus = lastStatusRef.current;
     lastStatusRef.current = state.status;
 
-    if (state.status === "available" && state.lastCheckSource === "auto" && state.updateInfo) {
+    if (
+      windowVisible &&
+      state.status === "available" &&
+      state.lastCheckSource === "auto" &&
+      state.updateInfo
+    ) {
       const version = state.updateInfo.version;
       if (availableToastVersionRef.current !== version) {
         availableToastVersionRef.current = version;
@@ -248,6 +272,7 @@ export function UpdateNotifier() {
     state.status,
     state.statusMessage,
     state.updateInfo,
+    windowVisible,
   ]);
 
   useEffect(() => {

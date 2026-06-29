@@ -136,6 +136,11 @@ describe("update/UpdateNotifier", () => {
     toastLoadingMock.mockReturnValue("loading-toast");
     toastMock.mockClear();
     toastMock.mockReturnValue("available-toast");
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "visible",
+    });
     vi.mocked(invoke).mockReset();
     vi.mocked(invoke).mockResolvedValue({ config: { app_proxy_url: null } });
     vi.mocked(check).mockReset();
