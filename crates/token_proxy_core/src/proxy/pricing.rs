@@ -25,6 +25,7 @@ pub struct ModelPricingTier {
 pub struct ModelPricingModel {
     pub model_id: String,
     pub aliases: Vec<String>,
+    #[serde(default = "default_price_multiplier_scaled")]
     pub price_multiplier_scaled: u64,
     pub short: ModelPricingTier,
     pub long: Option<ModelPricingTier>,
@@ -669,6 +670,10 @@ fn apply_price_multiplier(nano_usd_per_token: u64, multiplier_scaled: u64) -> u6
     u64::try_from(value).unwrap_or(u64::MAX)
 }
 
+fn default_price_multiplier_scaled() -> u64 {
+    PRICE_MULTIPLIER_SCALE
+}
+
 fn find_model_price<'a>(
     settings: &'a ModelPricingSettings,
     model: &str,
@@ -968,6 +973,27 @@ mod tests {
 
         assert_eq!(normalized.version, DEFAULT_PRICING_VERSION);
         assert_eq!(normalized.models, default_settings.models);
+    }
+
+    #[test]
+    fn deserializes_legacy_model_pricing_rows_without_multiplier_field() {
+        let json = r#"
+        {
+          "modelId": "legacy-model",
+          "aliases": [],
+          "short": {
+            "inputNanoUsdPerToken": 10,
+            "cachedInputNanoUsdPerToken": 5,
+            "outputNanoUsdPerToken": 20
+          },
+          "long": null,
+          "longContextInputTokenThreshold": null
+        }
+        "#;
+
+        let model = serde_json::from_str::<ModelPricingModel>(json).expect("legacy model");
+
+        assert_eq!(model.price_multiplier_scaled, PRICE_MULTIPLIER_SCALE);
     }
 
     #[test]
