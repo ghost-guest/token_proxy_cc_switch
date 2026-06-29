@@ -35,8 +35,8 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
         storageKey="token-proxy-theme"
         disableTransitionOnChange
       >
-        <RouterProvider router={router} />
         <Toaster position="bottom-right" closeButton richColors />
+        <RouterProvider router={router} />
         {/* Isolated language subscription - prevents global re-renders when language changes */}
         <LanguageObserver />
       </ThemeProvider>

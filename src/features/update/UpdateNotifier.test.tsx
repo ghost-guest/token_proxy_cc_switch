@@ -189,6 +189,28 @@ describe("update/UpdateNotifier", () => {
     expect(vi.mocked(check)).toHaveBeenLastCalledWith(undefined);
   });
 
+  it("shows the available update toast from the global notifier during startup", async () => {
+    const update = await createUpdateHandle("0.2.0");
+    resolveUpdateCheckWith(update);
+
+    render(
+      <UpdaterProvider>
+        <UpdateNotifier />
+      </UpdaterProvider>
+    );
+
+    await waitFor(() => {
+      expect(toastMock).toHaveBeenCalledTimes(1);
+    });
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        description: expect.stringContaining("0.2.0"),
+        duration: Infinity,
+      })
+    );
+  });
+
   it("uses app proxy url loaded by the updater provider for the startup update check", async () => {
     vi.mocked(invoke).mockResolvedValueOnce({
       config: { app_proxy_url: "socks5h://127.0.0.1:7891" },
