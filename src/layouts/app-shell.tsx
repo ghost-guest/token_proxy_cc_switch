@@ -17,7 +17,7 @@ export function AppShell({ title, children, actions }: AppShellProps) {
       className="h-full"
       style={
         {
-          "--sidebar-width": "calc(var(--spacing) * 48)",
+          "--sidebar-width": "calc(var(--spacing) * 37.7143)",
           "--header-height": "calc(var(--spacing) * 12)",
         } as CSSProperties
       }
