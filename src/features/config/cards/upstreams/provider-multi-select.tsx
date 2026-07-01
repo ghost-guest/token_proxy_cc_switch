@@ -7,6 +7,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { isAccountBackedProvider } from "@/features/config/cards/upstreams/upstream-editor-helpers";
 
 type ProviderMultiSelectProps = {
   providerOptions: readonly string[];
@@ -30,10 +31,6 @@ function normalizeProviders(values: readonly string[]) {
     output.push(trimmed);
   }
   return output;
-}
-
-function isSpecialProvider(provider: string) {
-  return provider === "kiro" || provider === "codex";
 }
 
 function orderProviders(values: readonly string[], providerOptions: readonly string[]) {
@@ -64,10 +61,10 @@ function toggleProvider(
     return next.length ? next : normalized;
   }
 
-  if (isSpecialProvider(provider)) {
+  if (isAccountBackedProvider(provider)) {
     return [provider];
   }
-  const specialSelected = normalized.find(isSpecialProvider);
+  const specialSelected = normalized.find(isAccountBackedProvider);
   const next = specialSelected ? [provider] : [...normalized, provider];
   return orderProviders(next, providerOptions);
 }

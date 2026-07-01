@@ -11,6 +11,11 @@ import {
   type UpstreamStrategy,
   TRAY_TOKEN_RATE_FORMATS,
 } from "@/features/config/types";
+import {
+  ACCOUNT_BACKED_PROVIDERS,
+  isAccountBackedProvider,
+  isAccountBackedProviderSet,
+} from "@/features/config/cards/upstreams/upstream-editor-helpers";
 import { createNativeInboundFormatSet, removeInboundFormatsInSet } from "@/features/config/inbound-formats";
 import { m } from "@/paraglide/messages.js";
 
@@ -30,8 +35,7 @@ const SUPPORTED_PROVIDERS = new Set([
   "openai-response",
   "anthropic",
   "gemini",
-  "kiro",
-  "codex",
+  ...ACCOUNT_BACKED_PROVIDERS,
 ]);
 const DEFAULT_UPSTREAM_PROVIDERS = [
   "openai",
@@ -61,13 +65,6 @@ function normalizeKiroPreferredEndpoint(value: string) {
     return trimmed;
   }
   return null;
-}
-
-function isAccountBackedProviderSet(providers: readonly string[]) {
-  return (
-    providers.length === 1 &&
-    (providers[0] === "kiro" || providers[0] === "codex")
-  );
 }
 
 function joinListInput(values: string[] | null | undefined) {
@@ -279,7 +276,7 @@ export function toPayload(form: ConfigForm): ProxyConfigFile {
         id: upstream.id.trim(),
         providers,
         base_url: omitNetworkFields ? "" : upstream.baseUrl.trim(),
-        api_keys: apiKeys.length ? apiKeys : undefined,
+        api_keys: !omitNetworkFields && apiKeys.length ? apiKeys : undefined,
         kiro_account_id: null,
         codex_account_id: null,
         filter_prompt_cache_retention: upstream.filterPromptCacheRetention,
@@ -398,9 +395,7 @@ export function validate(form: ConfigForm) {
     if (!providers.length) {
       return { valid: false, message: m.error_upstream_provider_required({ id }) };
     }
-    const specialProviders = providers.filter((provider) =>
-      provider === "kiro" || provider === "codex",
-    );
+    const specialProviders = providers.filter(isAccountBackedProvider);
     if (specialProviders.length && providers.length > 1) {
       return {
         valid: false,
@@ -417,9 +412,7 @@ export function validate(form: ConfigForm) {
       return { valid: false, message: m.error_upstream_provider_required({ id }) };
     }
 
-    const canOmitBaseUrl =
-      providers.length === 1 &&
-      (providers[0] === "kiro" || providers[0] === "codex");
+    const canOmitBaseUrl = isAccountBackedProviderSet(providers);
     if (!canOmitBaseUrl && !upstream.baseUrl.trim()) {
       return { valid: false, message: m.error_upstream_base_url_required({ id }) };
     }

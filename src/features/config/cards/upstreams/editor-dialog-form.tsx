@@ -21,6 +21,7 @@ import {
   ModelMappingsEditor,
 } from "@/features/config/cards/upstreams/editor-fields";
 import { ProviderMultiSelect } from "@/features/config/cards/upstreams/provider-multi-select";
+import { isAccountBackedProviderSet } from "@/features/config/cards/upstreams/upstream-editor-helpers";
 import { createModelMapping } from "@/features/config/form";
 import type {
   HeaderOverrideForm,
@@ -566,9 +567,7 @@ export function UpstreamEditorFields({
   onChangeDraft,
 }: UpstreamEditorFieldsProps) {
   const providers = draft.providers.map((value) => value.trim()).filter(Boolean);
-  const isKiro = providers.includes("kiro");
-  const isCodex = providers.includes("codex");
-  const isAccountBackedProvider = isKiro || isCodex;
+  const isAccountBackedProvider = isAccountBackedProviderSet(providers);
   return (
     <div
       data-slot="upstream-editor-fields"
@@ -582,7 +581,7 @@ export function UpstreamEditorFields({
         showProxyUrl={!isAccountBackedProvider}
         onChangeDraft={onChangeDraft}
       />
-      {isKiro || isCodex ? null : (
+      {isAccountBackedProvider ? null : (
         <UpstreamAuthFields
           draft={draft}
           showApiKeys={showApiKeys}

@@ -10,6 +10,7 @@ import {
   cloneUpstreamDraft,
   coerceProviderSelection,
   createCopiedUpstreamId,
+  isAccountBackedProviderSet,
   normalizeProviders,
   pruneConvertFromMap,
   providersEqual,
@@ -70,7 +71,7 @@ export function UpstreamsCard({
   const apiKeyVisible = columnVisibility.apiKeys;
   const isSpecialAccountBackedUpstream = useCallback((upstream: UpstreamForm) => {
     const providers = normalizeProviders(upstream.providers);
-    return providers.length === 1 && (providers[0] === "kiro" || providers[0] === "codex");
+    return isAccountBackedProviderSet(providers);
   }, []);
 
   // 更新 draft，处理 provider 变化时的自动逻辑
@@ -110,12 +111,10 @@ export function UpstreamsCard({
           if (!nextProviders.some((provider) => provider === "openai" || provider === "openai-response")) {
             rewriteDeveloperRoleToSystem = false;
           }
-          if (
-            nextProviders.length === 1 &&
-            (nextProviders[0] === "kiro" || nextProviders[0] === "codex")
-          ) {
+          if (isAccountBackedProviderSet(nextProviders)) {
             baseUrl = "";
             proxyUrl = "";
+            patch.apiKeys = "";
           }
           if (patch.filterPromptCacheRetention !== undefined) {
             filterPromptCacheRetention = patch.filterPromptCacheRetention;

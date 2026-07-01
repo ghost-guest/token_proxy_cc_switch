@@ -66,7 +66,7 @@ describe("config/form", () => {
     expect(result.valid).toBe(false);
   });
 
-  it("allows enabled kiro and codex upstreams without binding account ids", () => {
+  it("allows enabled account-backed upstreams without base urls", () => {
     const kiroUpstream = createEmptyUpstream();
     kiroUpstream.id = "kiro-1";
     kiroUpstream.enabled = true;
@@ -77,8 +77,15 @@ describe("config/form", () => {
     codexUpstream.enabled = true;
     codexUpstream.providers = ["codex"];
 
+    const antigravityUpstream = createEmptyUpstream();
+    antigravityUpstream.id = "antigravity-1";
+    antigravityUpstream.enabled = true;
+    antigravityUpstream.providers = ["antigravity"];
+    antigravityUpstream.baseUrl = "";
+
     expect(validate({ ...EMPTY_FORM, upstreams: [kiroUpstream] }).valid).toBe(true);
     expect(validate({ ...EMPTY_FORM, upstreams: [codexUpstream] }).valid).toBe(true);
+    expect(validate({ ...EMPTY_FORM, upstreams: [antigravityUpstream] }).valid).toBe(true);
   });
 
   it("treats disabled upstream as draft (still requires id)", () => {
@@ -314,6 +321,24 @@ describe("config/form", () => {
     expect(payload.upstreams[0]?.proxy_url).toBeNull();
     expect(payload.upstreams[1]?.base_url).toBe("");
     expect(payload.upstreams[1]?.proxy_url).toBeNull();
+  });
+
+  it("drops api keys and network fields for account-backed providers", () => {
+    const upstream = createEmptyUpstream();
+    upstream.id = "antigravity-default";
+    upstream.providers = ["antigravity"];
+    upstream.baseUrl = "https://should-not-survive.example.com";
+    upstream.apiKeys = "key-a, key-b";
+    upstream.proxyUrl = "http://127.0.0.1:7890";
+
+    const payload = toPayload({
+      ...EMPTY_FORM,
+      upstreams: [upstream],
+    });
+
+    expect(payload.upstreams[0]?.base_url).toBe("");
+    expect(payload.upstreams[0]?.api_keys).toBeUndefined();
+    expect(payload.upstreams[0]?.proxy_url).toBeNull();
   });
 
   it("auto-generates kiro and codex upstreams when accounts exist", () => {

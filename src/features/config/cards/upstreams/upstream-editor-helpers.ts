@@ -1,6 +1,16 @@
 import { createNativeInboundFormatSet, removeInboundFormatsInSet } from "@/features/config/inbound-formats";
 import type { UpstreamForm } from "@/features/config/types";
 
+export const ACCOUNT_BACKED_PROVIDERS = ["kiro", "codex", "antigravity"] as const;
+
+export function isAccountBackedProvider(provider: string) {
+  return ACCOUNT_BACKED_PROVIDERS.some((value) => value === provider);
+}
+
+export function isAccountBackedProviderSet(providers: readonly string[]) {
+  return providers.length === 1 && providers.some(isAccountBackedProvider);
+}
+
 export function createCopiedUpstreamId(sourceId: string, upstreams: readonly UpstreamForm[]) {
   const base = sourceId.trim() || "upstream";
   const taken = new Set(
@@ -78,9 +88,7 @@ export function providersEqual(left: readonly string[], right: readonly string[]
 
 export function coerceProviderSelection(next: readonly string[]) {
   const normalized = normalizeProviders(next);
-  const special = normalized.find((provider) =>
-    provider === "kiro" || provider === "codex",
-  );
+  const special = normalized.find(isAccountBackedProvider);
   if (!special) {
     return normalized;
   }

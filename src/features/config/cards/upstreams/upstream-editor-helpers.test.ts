@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { createEmptyUpstream } from "@/features/config/form";
-import { resolveUpstreamIdForProviderChange } from "@/features/config/cards/upstreams/upstream-editor-helpers";
+import {
+  coerceProviderSelection,
+  isAccountBackedProviderSet,
+  resolveUpstreamIdForProviderChange,
+} from "@/features/config/cards/upstreams/upstream-editor-helpers";
 
 describe("upstreams/upstream-editor-helpers", () => {
   it("keeps id stable when editing and switching non-special provider", () => {
@@ -45,6 +49,16 @@ describe("upstreams/upstream-editor-helpers", () => {
       editingIndex: 0,
     });
     expect(codexId).toBe("custom-1");
+
+    const antigravityId = resolveUpstreamIdForProviderChange({
+      mode: "edit",
+      currentId: upstream.id,
+      currentProviders: ["openai"],
+      nextProviders: ["antigravity"],
+      upstreams: [upstream],
+      editingIndex: 0,
+    });
+    expect(antigravityId).toBe("custom-1");
   });
 
   it("keeps id when editing and switching away from special provider", () => {
@@ -78,5 +92,18 @@ describe("upstreams/upstream-editor-helpers", () => {
     });
 
     expect(id).toBe("gemini-1");
+  });
+
+  it("treats account-backed providers as single-provider selections", () => {
+    expect(isAccountBackedProviderSet(["kiro"])).toBe(true);
+    expect(isAccountBackedProviderSet(["codex"])).toBe(true);
+    expect(isAccountBackedProviderSet(["antigravity"])).toBe(true);
+    expect(isAccountBackedProviderSet(["openai"])).toBe(false);
+    expect(isAccountBackedProviderSet(["antigravity", "openai"])).toBe(false);
+  });
+
+  it("coerces account-backed providers to exclusive selections", () => {
+    expect(coerceProviderSelection(["openai", "antigravity"])).toEqual(["antigravity"]);
+    expect(coerceProviderSelection(["codex", "antigravity"])).toEqual(["codex"]);
   });
 });
