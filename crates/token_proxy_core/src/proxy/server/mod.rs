@@ -60,6 +60,8 @@ pub(super) async fn refresh_model_discovery(state: Arc<ProxyState>) {
     super::upstream::refresh_model_discovery(state).await;
 }
 
+#[cfg(test)]
+// 测试直接调用 handler；真实 router 走 ConnectInfo 版本以记录客户端 IP。
 async fn proxy_request(
     State(state): State<ProxyStateHandle>,
     method: Method,
