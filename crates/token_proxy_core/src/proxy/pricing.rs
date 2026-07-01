@@ -279,6 +279,19 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
                 long: None,
                 long_context_input_token_threshold: None,
             },
+            // Z.AI lists GLM-5.2 text pricing as $1.4 input, $0.26 cached input, and $4.4 output per 1M tokens.
+            ModelPricingModel {
+                model_id: "glm-5.2".to_string(),
+                aliases: alias_list(&["z-ai/glm-5.2"]),
+                price_multiplier_scaled: PRICE_MULTIPLIER_SCALE,
+                short: ModelPricingTier {
+                    input_nano_usd_per_token: 1_400,
+                    cached_input_nano_usd_per_token: 260,
+                    output_nano_usd_per_token: 4_400,
+                },
+                long: None,
+                long_context_input_token_threshold: None,
+            },
             ModelPricingModel {
                 model_id: "gpt-image-2".to_string(),
                 aliases: alias_list(&[
@@ -817,6 +830,7 @@ mod tests {
             ("models/gemini-3.5-flash", "gemini-3.5-flash"),
             ("deepseek/deepseek-v4-pro", "deepseek-v4-pro"),
             ("moonshotai/kimi-k2.6", "kimi-k2.6"),
+            ("z-ai/glm-5.2", "glm-5.2"),
             ("openai/gpt-5.5", "gpt-5.5"),
             ("gpt-5.5-latest", "gpt-5.5"),
             ("openai/gpt-5.2", "gpt-5.2"),
@@ -1125,6 +1139,16 @@ mod tests {
         assert_eq!(gpt_5_2_codex.short.cached_input_nano_usd_per_token, 175);
         assert_eq!(gpt_5_2_codex.short.output_nano_usd_per_token, 14_000);
         assert_eq!(gpt_5_2_codex.aliases, vec!["openai/gpt-5.2-codex"]);
+
+        let glm_5_2 = settings
+            .models
+            .iter()
+            .find(|model| model.model_id == "glm-5.2")
+            .expect("glm-5.2 should exist");
+        assert_eq!(glm_5_2.short.input_nano_usd_per_token, 1_400);
+        assert_eq!(glm_5_2.short.cached_input_nano_usd_per_token, 260);
+        assert_eq!(glm_5_2.short.output_nano_usd_per_token, 4_400);
+        assert_eq!(glm_5_2.aliases, vec!["z-ai/glm-5.2"]);
 
         let claude_sonnet = settings
             .models

@@ -53,6 +53,7 @@ fn default_hot_model_mappings_include_popular_namespaced_aliases() {
         mappings.get("moonshotai/kimi-k2.6"),
         Some(&"kimi-k2.6".to_string())
     );
+    assert_eq!(mappings.get("z-ai/glm-5.2"), Some(&"glm-5.2".to_string()));
     assert_eq!(mappings.get("z-ai/glm-5.1"), Some(&"glm-5.1".to_string()));
     assert_eq!(
         mappings.get("minimax/minimax-m2.7"),

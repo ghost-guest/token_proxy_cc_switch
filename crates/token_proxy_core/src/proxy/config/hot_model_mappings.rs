@@ -80,6 +80,7 @@ const DEFAULT_HOT_MODEL_MAPPING_PAIRS: &[(&str, &str)] = &[
     ("moonshotai/kimi-k2.6", "kimi-k2.6"),
     ("moonshotai/kimi-k2.5", "kimi-k2.5"),
     ("moonshotai/kimi-k2", "kimi-k2"),
+    ("z-ai/glm-5.2", "glm-5.2"),
     ("z-ai/glm-5.1", "glm-5.1"),
     ("z-ai/glm-5", "glm-5"),
     ("z-ai/glm-4.7", "glm-4.7"),
