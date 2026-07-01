@@ -745,7 +745,8 @@ fn extract_system_messages_from_input(items: Vec<Value>) -> (Vec<Value>, Vec<Str
     let mut instructions = Vec::new();
 
     for item in items {
-        let Some(object) = item.as_object() else {
+        let mut item = item;
+        let Some(object) = item.as_object_mut() else {
             output.push(item);
             continue;
         };
@@ -753,9 +754,11 @@ fn extract_system_messages_from_input(items: Vec<Value>) -> (Vec<Value>, Vec<Str
             output.push(item);
             continue;
         }
+        object.insert("role".to_string(), Value::String("developer".to_string()));
         if let Some(text) = extract_text_from_content(object.get("content")) {
             instructions.push(text);
         }
+        output.push(item);
     }
 
     (output, instructions)

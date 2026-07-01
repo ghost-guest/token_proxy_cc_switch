@@ -13,7 +13,8 @@ use crate::proxy::log::{build_log_entry, LogContext, LogWriter, RequestTimings, 
 use crate::proxy::openai_compat::FormatTransform;
 use crate::proxy::request_detail::RequestDetailSnapshot;
 use crate::proxy::response::{
-    build_proxy_response, build_proxy_response_buffered, RetryableStreamResponse,
+    build_proxy_response, build_proxy_response_buffered, NonRetryableSemanticResponse,
+    RetryableStreamResponse,
 };
 use crate::proxy::token_rate::TokenRateTracker;
 use crate::proxy::ProxyState;
@@ -86,6 +87,13 @@ pub(super) async fn handle_upstream_result(
                 state.config.sync_response_timeout,
             )
             .await;
+            if response
+                .extensions()
+                .get::<NonRetryableSemanticResponse>()
+                .is_some()
+            {
+                return AttemptOutcome::Success(response);
+            }
             AttemptOutcome::Retryable {
                 message: format!("Upstream responded with {}", response.status()),
                 response: Some(response),

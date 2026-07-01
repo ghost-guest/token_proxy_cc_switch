@@ -6109,6 +6109,90 @@ fn responses_request_does_not_cooldown_same_provider_upstream_after_400() {
 }
 
 #[test]
+fn responses_context_window_error_does_not_failover_same_request() {
+    run_async(async {
+        let primary = spawn_mock_upstream(
+            StatusCode::BAD_GATEWAY,
+            json!({
+                "error": {
+                    "message": "Your input exceeds the context window of this model. Please adjust your input and try again.",
+                    "type": "upstream_error"
+                }
+            }),
+        )
+        .await;
+        let secondary = spawn_mock_upstream(
+            StatusCode::OK,
+            json!({
+                "id": "resp_from_secondary",
+                "object": "response",
+                "created_at": 123,
+                "model": "gpt-5",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "id": "msg_1",
+                        "status": "completed",
+                        "role": "assistant",
+                        "content": [
+                            { "type": "output_text", "text": "from secondary" }
+                        ]
+                    }
+                ],
+                "usage": { "input_tokens": 1, "output_tokens": 2, "total_tokens": 3 }
+            }),
+        )
+        .await;
+
+        let mut config = config_with_runtime_upstreams(&[
+            (
+                PROVIDER_RESPONSES,
+                10,
+                "responses-primary",
+                primary.base_url.as_str(),
+                FORMATS_RESPONSES,
+            ),
+            (
+                PROVIDER_RESPONSES,
+                10,
+                "responses-secondary",
+                secondary.base_url.as_str(),
+                FORMATS_RESPONSES,
+            ),
+        ]);
+        config.upstream_strategy = UpstreamStrategyRuntime {
+            order: UpstreamOrderStrategy::FillFirst,
+            dispatch: UpstreamDispatchRuntime::Serial,
+        };
+
+        let data_dir = next_test_data_dir("responses_context_window_no_failover");
+        let state = build_test_state_handle(config, data_dir.clone()).await;
+
+        let (status, body) = send_responses_request(state).await;
+        let primary_requests = primary.requests();
+        let secondary_requests = secondary.requests();
+
+        primary.abort();
+        secondary.abort();
+        let _ = std::fs::remove_dir_all(&data_dir);
+
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(
+            body["error"]["message"].as_str(),
+            Some(
+                "Your input exceeds the context window of this model. Please adjust your input and try again."
+            )
+        );
+        assert_eq!(primary_requests.len(), 1);
+        assert!(
+            secondary_requests.is_empty(),
+            "context-window semantic errors must not switch accounts"
+        );
+    });
+}
+
+#[test]
 fn responses_request_reload_resets_existing_cooldown_and_applies_new_duration() {
     run_async(async {
         let primary = spawn_mock_upstream(
@@ -6706,6 +6790,22 @@ fn gemini_count_tokens_route_dispatches_to_gemini() {
 }
 
 #[test]
+fn anthropic_count_tokens_bridges_to_responses_input_tokens() {
+    let config = config_with_providers(&[(PROVIDER_RESPONSES, FORMATS_ALL)]);
+    let plan = resolve_dispatch_plan(&config, "/v1/messages/count_tokens").expect("should bridge");
+    assert_eq!(plan.provider, PROVIDER_RESPONSES);
+    assert_eq!(plan.outbound_path, Some("/v1/responses/input_tokens"));
+    assert_eq!(
+        plan.request_transform,
+        FormatTransform::AnthropicCountTokensToResponsesInputTokens
+    );
+    assert_eq!(
+        plan.response_transform,
+        FormatTransform::ResponsesInputTokensToAnthropicCountTokens
+    );
+}
+
+#[test]
 fn anthropic_count_tokens_preserves_authorization_header_name_for_upstream() {
     run_async(async {
         let upstream = spawn_mock_upstream(StatusCode::OK, json!({ "input_tokens": 12 })).await;
@@ -6739,6 +6839,56 @@ fn anthropic_count_tokens_preserves_authorization_header_name_for_upstream() {
             requests[0].authorization.as_deref(),
             Some("Bearer test-key")
         );
+    });
+}
+
+#[test]
+fn anthropic_count_tokens_request_bridges_to_responses_input_tokens_upstream() {
+    run_async(async {
+        let upstream = spawn_mock_upstream(StatusCode::OK, json!({ "input_tokens": 12 })).await;
+        let config = config_with_runtime_upstreams(&[(
+            PROVIDER_RESPONSES,
+            0,
+            "responses-count-tokens",
+            upstream.base_url.as_str(),
+            FORMATS_ALL,
+        )]);
+        let data_dir = next_test_data_dir("anthropic_count_tokens_responses_bridge");
+        let state = build_test_state_handle(config, data_dir.clone()).await;
+        let mut headers = HeaderMap::new();
+        headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
+
+        let (status, body) = send_anthropic_count_tokens_request_with_body(
+            state,
+            headers,
+            json!({
+                "model": "gpt-5.4",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [{ "type": "text", "text": "hi from claude" }]
+                    }
+                ],
+                "system": "count only",
+                "temperature": 0.7,
+                "stream": true
+            }),
+        )
+        .await;
+        let requests = upstream.requests();
+
+        upstream.abort();
+        let _ = std::fs::remove_dir_all(&data_dir);
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["input_tokens"].as_u64(), Some(12));
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].path, "/v1/responses/input_tokens");
+        assert_eq!(requests[0].body["model"], json!("gpt-5.4"));
+        assert_eq!(requests[0].body["instructions"], json!("count only"));
+        assert_eq!(requests[0].body["input"][0]["role"], json!("user"));
+        assert!(requests[0].body.get("stream").is_none());
+        assert!(requests[0].body.get("temperature").is_none());
     });
 }
 

@@ -27,7 +27,8 @@ use super::super::super::{
 };
 use super::super::{
     kiro_to_anthropic, kiro_to_responses, token_count, upstream_read, upstream_stream,
-    RetryableStreamResponse, PROVIDER_GEMINI, RESPONSE_ERROR_LIMIT_BYTES,
+    NonRetryableSemanticResponse, RetryableStreamResponse, PROVIDER_GEMINI,
+    RESPONSE_ERROR_LIMIT_BYTES,
 };
 
 const DEBUG_BODY_LOG_LIMIT_BYTES: usize = usize::MAX;
@@ -88,6 +89,8 @@ pub(super) async fn build_buffered_response(
     };
     let mut usage = extract_usage_from_response(&bytes);
     let response_error = response_error_for_status(status, &bytes);
+    let is_non_retryable_semantic_error =
+        !status.is_success() && is_context_window_error(response_error.as_deref(), &bytes);
     let request_body = context.request_body.clone();
     let output = if status.is_success() {
         match convert_success_body(
@@ -140,7 +143,13 @@ pub(super) async fn build_buffered_response(
     token_count::apply_output_tokens_from_response(&request_tracker, provider_for_tokens, &output)
         .await;
 
-    http::build_response(status, headers, Body::from(output))
+    let mut response = http::build_response(status, headers, Body::from(output));
+    if is_non_retryable_semantic_error {
+        response
+            .extensions_mut()
+            .insert(NonRetryableSemanticResponse);
+    }
+    response
 }
 
 #[cfg(test)]
@@ -1003,6 +1012,54 @@ pub(super) fn response_error_for_status(status: StatusCode, bytes: &Bytes) -> Op
     } else {
         None
     }
+}
+
+fn is_context_window_error(response_error: Option<&str>, bytes: &Bytes) -> bool {
+    fn matches_text(text: &str) -> bool {
+        let lower = text.trim().to_ascii_lowercase();
+        if lower.is_empty() {
+            return false;
+        }
+        if lower.contains("context_too_large") || lower.contains("context_length_exceeded") {
+            return true;
+        }
+        if lower.contains("maximum context length") || lower.contains("max context length") {
+            return true;
+        }
+        let has_exceeded =
+            lower.contains("exceed") || lower.contains("too large") || lower.contains("too long");
+        if lower.contains("context window") && has_exceeded {
+            return true;
+        }
+        if lower.contains("context length") && has_exceeded {
+            return true;
+        }
+        lower.contains("token limit") && lower.contains("context") && has_exceeded
+    }
+
+    if response_error.is_some_and(matches_text) {
+        return true;
+    }
+    let Ok(value) = serde_json::from_slice::<Value>(bytes) else {
+        return matches_text(String::from_utf8_lossy(bytes).as_ref());
+    };
+    for pointer in [
+        "/error/message",
+        "/response/error/message",
+        "/message",
+        "/error/code",
+        "/response/error/code",
+        "/code",
+    ] {
+        if value
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .is_some_and(matches_text)
+        {
+            return true;
+        }
+    }
+    false
 }
 
 fn provider_for_tokens(transform: FormatTransform, provider: &str) -> &str {

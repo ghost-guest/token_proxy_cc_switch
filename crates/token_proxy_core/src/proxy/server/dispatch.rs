@@ -34,6 +34,9 @@ struct ProviderRank {
 
 const OPENAI_MODELS_PATH: &str = "/v1/models";
 const OPENAI_COMPATIBLE_MODELS_PATH: &str = "/v1beta/openai/models";
+const RESPONSES_INPUT_TOKENS_PATH: &str = "/v1/responses/input_tokens";
+const ANTHROPIC_MESSAGES_PATH: &str = "/v1/messages";
+const ANTHROPIC_COUNT_TOKENS_PATH: &str = "/v1/messages/count_tokens";
 
 fn base_plan(provider: &'static str) -> DispatchPlan {
     DispatchPlan {
@@ -231,7 +234,7 @@ fn resolve_anthropic_plan(
         return None;
     }
     let inbound_format = Some(InboundApiFormat::AnthropicMessages);
-    if path == "/v1/messages" {
+    if path == ANTHROPIC_MESSAGES_PATH {
         if let Some(selected) = choose_provider_by_priority(
             config,
             inbound_format,
@@ -288,6 +291,19 @@ fn resolve_anthropic_plan(
             },
             _ => base_plan(PROVIDER_RESPONSES),
         }));
+    }
+    if path == ANTHROPIC_COUNT_TOKENS_PATH {
+        if provider_rank_for_inbound(config, PROVIDER_ANTHROPIC, inbound_format).is_some() {
+            return Some(Ok(base_plan(PROVIDER_ANTHROPIC)));
+        }
+        if provider_rank_for_inbound(config, PROVIDER_RESPONSES, inbound_format).is_some() {
+            return Some(Ok(DispatchPlan {
+                provider: PROVIDER_RESPONSES,
+                outbound_path: Some(RESPONSES_INPUT_TOKENS_PATH),
+                request_transform: FormatTransform::AnthropicCountTokensToResponsesInputTokens,
+                response_transform: FormatTransform::ResponsesInputTokensToAnthropicCountTokens,
+            }));
+        }
     }
     if provider_rank_for_inbound(config, PROVIDER_ANTHROPIC, inbound_format).is_some() {
         return Some(Ok(base_plan(PROVIDER_ANTHROPIC)));
@@ -608,7 +624,7 @@ fn build_retry_fallback_plan(path: &str, provider: &'static str) -> Option<Dispa
         };
     }
 
-    if path == "/v1/messages" {
+    if path == ANTHROPIC_MESSAGES_PATH {
         return Some(match provider {
             PROVIDER_ANTHROPIC => base_plan(PROVIDER_ANTHROPIC),
             PROVIDER_KIRO => DispatchPlan {
@@ -680,7 +696,7 @@ fn resolve_retry_fallback_provider(
         };
     }
 
-    if path == "/v1/messages" {
+    if path == ANTHROPIC_MESSAGES_PATH {
         let fallback = match primary_provider {
             PROVIDER_ANTHROPIC => PROVIDER_KIRO,
             PROVIDER_KIRO => PROVIDER_ANTHROPIC,

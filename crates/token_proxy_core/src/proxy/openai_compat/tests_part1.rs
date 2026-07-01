@@ -128,6 +128,54 @@ fn chat_request_to_responses_accepts_responses_shaped_body_when_transforming() {
 }
 
 #[test]
+fn anthropic_count_tokens_request_to_responses_input_tokens_filters_generation_fields() {
+    let http_clients = ProxyHttpClients::new().expect("http clients");
+    let input = bytes_from_json(json!({
+        "model": "gpt-5.4",
+        "system": "count only",
+        "messages": [
+            {
+                "role": "user",
+                "content": [{ "type": "text", "text": "hi from claude" }]
+            }
+        ],
+        "temperature": 0.7,
+        "top_p": 0.9,
+        "stream": true
+    }));
+
+    let output = run_async(async {
+        transform_request_body(
+            FormatTransform::AnthropicCountTokensToResponsesInputTokens,
+            &input,
+            &http_clients,
+            None,
+        )
+        .await
+        .expect("transform")
+    });
+    let value = json_from_bytes(output);
+
+    assert_eq!(value["model"], json!("gpt-5.4"));
+    assert_eq!(value["instructions"], json!("count only"));
+    assert_eq!(value["input"][0]["role"], json!("user"));
+    assert!(value.get("temperature").is_none());
+    assert!(value.get("top_p").is_none());
+    assert!(value.get("stream").is_none());
+}
+
+#[test]
+fn responses_input_tokens_response_to_anthropic_count_tokens_maps_shape() {
+    let value = transform_response_value(
+        FormatTransform::ResponsesInputTokensToAnthropicCountTokens,
+        json!({ "input_tokens": 42 }),
+        None,
+    );
+
+    assert_eq!(value, json!({ "input_tokens": 42 }));
+}
+
+#[test]
 fn responses_request_to_chat_maps_tools_and_tool_choice() {
     let http_clients = ProxyHttpClients::new().expect("http clients");
     let parameters = json!({

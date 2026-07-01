@@ -34,6 +34,9 @@ pub(super) struct RetryableStreamResponse {
     pub(super) should_cooldown: bool,
 }
 
+#[derive(Clone)]
+pub(crate) struct NonRetryableSemanticResponse;
+
 pub(super) async fn build_proxy_response(
     meta: &RequestMeta,
     provider: &str,
@@ -94,7 +97,10 @@ pub(super) async fn build_proxy_response(
     let request_tracker = token_rate
         .register(model_for_tokens, meta.estimated_input_tokens)
         .await;
-    let should_stream = meta.stream && !status.is_client_error() && !status.is_server_error();
+    let should_stream = meta.stream
+        && !status.is_client_error()
+        && !status.is_server_error()
+        && response_transform != FormatTransform::ResponsesInputTokensToAnthropicCountTokens;
     if should_stream {
         dispatch::build_stream_response(
             status,

@@ -34,6 +34,8 @@ pub(crate) enum FormatTransform {
     ResponsesToChat,
     ResponsesToAnthropic,
     AnthropicToResponses,
+    AnthropicCountTokensToResponsesInputTokens,
+    ResponsesInputTokensToAnthropicCountTokens,
     AnthropicToCodex,
     ChatToAnthropic,
     AnthropicToChat,
@@ -97,6 +99,9 @@ pub(crate) async fn transform_request_body_with_prompt_cache_key(
         FormatTransform::AnthropicToResponses => {
             anthropic_compat::anthropic_request_to_responses(body, http_clients).await
         }
+        FormatTransform::AnthropicCountTokensToResponsesInputTokens => {
+            anthropic_count_tokens_request_to_responses_input_tokens(body, http_clients).await
+        }
         FormatTransform::AnthropicToCodex => {
             let intermediate =
                 anthropic_compat::anthropic_request_to_responses(body, http_clients).await?;
@@ -154,7 +159,8 @@ pub(crate) async fn transform_request_body_with_prompt_cache_key(
         FormatTransform::CodexToChat
         | FormatTransform::CodexToResponses
         | FormatTransform::CodexToImagesGenerations
-        | FormatTransform::CodexToAnthropic => Ok(body.clone()),
+        | FormatTransform::CodexToAnthropic
+        | FormatTransform::ResponsesInputTokensToAnthropicCountTokens => Ok(body.clone()),
     }
 }
 
@@ -172,6 +178,9 @@ pub(crate) fn transform_response_body(
         }
         FormatTransform::AnthropicToResponses => {
             anthropic_compat::anthropic_response_to_responses(bytes)
+        }
+        FormatTransform::ResponsesInputTokensToAnthropicCountTokens => {
+            responses_input_tokens_response_to_anthropic_count_tokens(bytes)
         }
         FormatTransform::AnthropicToCodex => {
             Err("Codex response conversion is handled upstream.".to_string())
@@ -206,10 +215,51 @@ pub(crate) fn transform_response_body(
         FormatTransform::ChatToCodex
         | FormatTransform::ResponsesToCodex
         | FormatTransform::ResponsesCompactToCodex
-        | FormatTransform::ImagesGenerationsToCodex => {
+        | FormatTransform::ImagesGenerationsToCodex
+        | FormatTransform::AnthropicCountTokensToResponsesInputTokens => {
             Err("Codex response conversion is handled upstream.".to_string())
         }
     }
+}
+
+async fn anthropic_count_tokens_request_to_responses_input_tokens(
+    body: &Bytes,
+    http_clients: &ProxyHttpClients,
+) -> Result<Bytes, String> {
+    let responses = anthropic_compat::anthropic_request_to_responses(body, http_clients).await?;
+    let value: Value = serde_json::from_slice(&responses)
+        .map_err(|_| "Converted count_tokens body must be JSON.".to_string())?;
+    let Some(object) = value.as_object() else {
+        return Err("Converted count_tokens body must be a JSON object.".to_string());
+    };
+
+    let mut output = Map::new();
+    copy_keys(
+        object,
+        &mut output,
+        &["model", "instructions", "input", "tools", "tool_choice"],
+    );
+    if !output.contains_key("model") || !output.contains_key("input") {
+        return Err("Count tokens request must include model and messages.".to_string());
+    }
+
+    serde_json::to_vec(&Value::Object(output))
+        .map(Bytes::from)
+        .map_err(|err| format!("Failed to serialize count_tokens request: {err}"))
+}
+
+fn responses_input_tokens_response_to_anthropic_count_tokens(
+    bytes: &Bytes,
+) -> Result<Bytes, String> {
+    let value: Value =
+        serde_json::from_slice(bytes).map_err(|_| "Response body must be JSON.".to_string())?;
+    let input_tokens = value
+        .get("input_tokens")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "Responses input_tokens response missing input_tokens.".to_string())?;
+    serde_json::to_vec(&json!({ "input_tokens": input_tokens }))
+        .map(Bytes::from)
+        .map_err(|err| format!("Failed to serialize count_tokens response: {err}"))
 }
 
 fn chat_request_to_responses(body: &Bytes) -> Result<Bytes, String> {

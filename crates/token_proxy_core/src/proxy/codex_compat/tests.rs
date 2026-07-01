@@ -139,8 +139,9 @@ fn responses_request_to_codex_normalizes_gpt_5_5_and_sanitizes_oauth_payload() {
     assert_eq!(value["stream"], true);
     assert_eq!(value["store"], false);
     assert_eq!(value["instructions"], "system rules");
-    assert_eq!(value["input"].as_array().expect("input").len(), 1);
-    assert_eq!(value["input"][0]["role"], "user");
+    assert_eq!(value["input"].as_array().expect("input").len(), 2);
+    assert_eq!(value["input"][0]["role"], "developer");
+    assert_eq!(value["input"][1]["role"], "user");
     assert!(
         value["prompt_cache_key"]
             .as_str()
@@ -150,6 +151,38 @@ fn responses_request_to_codex_normalizes_gpt_5_5_and_sanitizes_oauth_payload() {
     assert!(value.get("frequency_penalty").is_none());
     assert!(value.get("presence_penalty").is_none());
     assert!(value.get("prompt_cache_retention").is_none());
+}
+
+#[test]
+fn responses_request_to_codex_preserves_system_input_as_developer() {
+    let input = json!({
+        "model": "gpt-5.5",
+        "input": [
+            {
+                "type": "message",
+                "role": "system",
+                "content": [
+                    { "type": "input_text", "text": "system rules" }
+                ]
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "hi" }
+                ]
+            }
+        ]
+    });
+
+    let output = responses_request_to_codex(&Bytes::from(input.to_string()), None)
+        .expect("convert responses request");
+    let value: serde_json::Value = serde_json::from_slice(&output).expect("json");
+
+    assert_eq!(value["instructions"], "system rules");
+    assert_eq!(value["input"].as_array().expect("input").len(), 2);
+    assert_eq!(value["input"][0]["role"], "developer");
+    assert_eq!(value["input"][1]["role"], "user");
 }
 
 #[test]
