@@ -16,6 +16,7 @@ use super::{
     responses_compact_request_to_codex, responses_request_to_codex,
     responses_request_to_codex_with_prompt_cache_key, stream_codex_to_chat,
     stream_codex_to_responses, stream_codex_to_responses_with_semantic_timeout,
+    supported_codex_model_ids,
 };
 
 #[test]
@@ -151,6 +152,30 @@ fn responses_request_to_codex_normalizes_gpt_5_5_and_sanitizes_oauth_payload() {
     assert!(value.get("frequency_penalty").is_none());
     assert!(value.get("presence_penalty").is_none());
     assert!(value.get("prompt_cache_retention").is_none());
+}
+
+#[test]
+fn responses_request_to_codex_preserves_gpt_5_5_pro_model() {
+    for incoming_model in ["openai/gpt5.5-pro", "gpt-5.5-pro-high"] {
+        let input = json!({
+            "model": incoming_model,
+            "input": "hi"
+        });
+
+        let output = responses_request_to_codex(&Bytes::from(input.to_string()), None)
+            .expect("convert responses request");
+        let value: serde_json::Value = serde_json::from_slice(&output).expect("json");
+
+        assert_eq!(value["model"], "gpt-5.5-pro", "model={incoming_model}");
+    }
+}
+
+#[test]
+fn supported_codex_models_include_gpt_5_5_pro() {
+    let models = supported_codex_model_ids();
+
+    assert!(models.contains(&"gpt-5.5-pro".to_string()));
+    assert!(models.contains(&"gpt-5.5-pro-high".to_string()));
 }
 
 #[test]

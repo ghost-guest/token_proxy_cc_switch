@@ -28,6 +28,7 @@ const DEFAULT_HOT_MODEL_MAPPING_PAIRS: &[(&str, &str)] = &[
     ("anthropic/claude-opus-4.7", "claude-opus-4-7"),
     ("anthropic/claude-opus-4.6", "claude-opus-4.6"),
     ("anthropic/claude-opus-4.6-fast", "claude-opus-4.6-fast"),
+    ("anthropic/claude-sonnet-5", "claude-sonnet-5"),
     ("anthropic/claude-sonnet-4.6", "claude-sonnet-4.6"),
     ("anthropic/claude-sonnet-4.5", "claude-sonnet-4.5"),
     ("anthropic/claude-haiku-4.5", "claude-haiku-4.5"),

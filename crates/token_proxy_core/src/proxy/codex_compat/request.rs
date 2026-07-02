@@ -602,6 +602,9 @@ fn normalize_codex_model(model: &str) -> String {
         }
     }
 
+    if compact.contains("gpt-5.5-pro") || compact.contains("gpt5.5-pro") {
+        return "gpt-5.5-pro".to_string();
+    }
     if compact.contains("gpt-5.5") {
         return "gpt-5.5".to_string();
     }
@@ -685,6 +688,12 @@ fn value_contains_image_generation_tool(value: Option<&Value>) -> bool {
 }
 
 const CODEX_MODEL_ALIASES: &[(&str, &str)] = &[
+    ("gpt-5.5-pro", "gpt-5.5-pro"),
+    ("gpt-5.5-pro-none", "gpt-5.5-pro"),
+    ("gpt-5.5-pro-low", "gpt-5.5-pro"),
+    ("gpt-5.5-pro-medium", "gpt-5.5-pro"),
+    ("gpt-5.5-pro-high", "gpt-5.5-pro"),
+    ("gpt-5.5-pro-xhigh", "gpt-5.5-pro"),
     ("gpt-5.5", "gpt-5.5"),
     ("gpt-5.5-none", "gpt-5.5"),
     ("gpt-5.5-low", "gpt-5.5"),

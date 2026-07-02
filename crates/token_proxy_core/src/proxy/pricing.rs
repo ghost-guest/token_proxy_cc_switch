@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::fmt::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const DEFAULT_PRICING_VERSION: &str = "2026-06-26.opus-4-8";
+pub const DEFAULT_PRICING_VERSION: &str = "2026-07-01.sonnet-5";
 // Multiplier is stored as a fixed-point decimal: 1_000_000_000_000 = 1x.
 pub const PRICE_MULTIPLIER_SCALE: u64 = 1_000_000_000_000;
 
@@ -85,6 +85,24 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
         models: vec![
             // Default ids stay providerless; aliases keep common provider and spelling variants visible.
             ModelPricingModel {
+                model_id: "gpt-5.5-pro".to_string(),
+                aliases: alias_list(&["openai/gpt-5.5-pro"]),
+                price_multiplier_scaled: PRICE_MULTIPLIER_SCALE,
+                short: ModelPricingTier {
+                    input_nano_usd_per_token: 5_000,
+                    cached_input_nano_usd_per_token: 500,
+                    output_nano_usd_per_token: 30_000,
+                },
+                long: Some(ModelPricingTier {
+                    input_nano_usd_per_token: 10_000,
+                    cached_input_nano_usd_per_token: 1_000,
+                    output_nano_usd_per_token: 45_000,
+                }),
+                long_context_input_token_threshold: Some(
+                    DEFAULT_LONG_CONTEXT_INPUT_TOKEN_THRESHOLD,
+                ),
+            },
+            ModelPricingModel {
                 model_id: "gpt-5.5".to_string(),
                 aliases: alias_list(&["openai/gpt-5.5", "gpt-5.5-latest"]),
                 price_multiplier_scaled: PRICE_MULTIPLIER_SCALE,
@@ -133,6 +151,19 @@ pub fn default_model_pricing_settings() -> ModelPricingSettings {
                 long_context_input_token_threshold: None,
             },
             // Pricing snapshot sourced from official vendor pages where available, plus OpenRouter for catalog-only models.
+            // Claude Sonnet 5 introductory price through 2026-08-31 is $2 input, $0.20 cache hit, and $10 output per 1M tokens.
+            ModelPricingModel {
+                model_id: "claude-sonnet-5".to_string(),
+                aliases: alias_list(&["anthropic/claude-sonnet-5"]),
+                price_multiplier_scaled: PRICE_MULTIPLIER_SCALE,
+                short: ModelPricingTier {
+                    input_nano_usd_per_token: 2_000,
+                    cached_input_nano_usd_per_token: 200,
+                    output_nano_usd_per_token: 10_000,
+                },
+                long: None,
+                long_context_input_token_threshold: None,
+            },
             ModelPricingModel {
                 model_id: "claude-sonnet-4.6".to_string(),
                 aliases: alias_list(&["anthropic/claude-sonnet-4.6"]),
@@ -810,6 +841,19 @@ mod tests {
         assert_eq!(cost.pricing_version, DEFAULT_PRICING_VERSION);
         assert_eq!(cost.pricing_model, "gpt-5.5");
         assert_eq!(cost.context_tier, PricingContextTier::Short);
+
+        let pro_cost = calculate_request_cost(
+            &settings,
+            Some("openai/gpt-5.5-pro"),
+            None,
+            Some(200_000),
+            Some(10_000),
+            Some(20_000),
+        )
+        .expect("pro cost");
+
+        assert_eq!(pro_cost.cost_nano_usd, 1_210_000_000);
+        assert_eq!(pro_cost.pricing_model, "gpt-5.5-pro");
     }
 
     #[test]
@@ -824,6 +868,7 @@ mod tests {
             ("anthropic/claude-opus-4.7", "claude-opus-4-7"),
             ("claude-opus-4.7", "claude-opus-4-7"),
             ("opus-4-7", "claude-opus-4-7"),
+            ("anthropic/claude-sonnet-5", "claude-sonnet-5"),
             ("anthropic/claude-sonnet-4.6", "claude-sonnet-4.6"),
             ("models/gemini-3-flash-preview", "gemini-3-flash-preview"),
             ("google/gemini-3.5-flash", "gemini-3.5-flash"),
@@ -831,6 +876,7 @@ mod tests {
             ("deepseek/deepseek-v4-pro", "deepseek-v4-pro"),
             ("moonshotai/kimi-k2.6", "kimi-k2.6"),
             ("z-ai/glm-5.2", "glm-5.2"),
+            ("openai/gpt-5.5-pro", "gpt-5.5-pro"),
             ("openai/gpt-5.5", "gpt-5.5"),
             ("gpt-5.5-latest", "gpt-5.5"),
             ("openai/gpt-5.2", "gpt-5.2"),
