@@ -278,7 +278,9 @@ async fn buffered_non_stream_total_body_timeout_returns_retryable_504() {
     let text = String::from_utf8_lossy(&body);
 
     assert_eq!(parts.status, StatusCode::GATEWAY_TIMEOUT);
-    assert!(retryable.is_some());
+    let retryable = retryable.expect("timeout must be retryable");
+    assert!(retryable.should_cooldown);
+    assert!(retryable.retry_same_upstream_once);
     assert!(text.contains("Upstream synchronous response timed out after 0s."));
 }
 

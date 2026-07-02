@@ -896,7 +896,7 @@ async fn read_upstream_bytes(
             response.extensions_mut().insert(RetryableStreamResponse {
                 message,
                 should_cooldown: true,
-                retry_same_upstream_once: false,
+                retry_same_upstream_once: true,
             });
             return Err(response);
         }
@@ -938,7 +938,7 @@ async fn read_upstream_bytes(
                 response.extensions_mut().insert(RetryableStreamResponse {
                     message,
                     should_cooldown: true,
-                    retry_same_upstream_once: false,
+                    retry_same_upstream_once: true,
                 });
             }
             return Err(response);

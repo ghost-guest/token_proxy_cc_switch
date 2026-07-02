@@ -973,7 +973,7 @@ fn stream_first_output_timeout_response(
     response.extensions_mut().insert(RetryableStreamResponse {
         message,
         should_cooldown: true,
-        retry_same_upstream_once: false,
+        retry_same_upstream_once: true,
     });
     response
 }
@@ -1082,7 +1082,7 @@ fn stream_error_response(
         response.extensions_mut().insert(RetryableStreamResponse {
             message,
             should_cooldown: true,
-            retry_same_upstream_once: false,
+            retry_same_upstream_once: true,
         });
     }
     response

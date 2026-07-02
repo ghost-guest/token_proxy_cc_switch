@@ -555,7 +555,7 @@ async fn retry_same_upstream_once(
     tracing::info!(
         provider,
         upstream = %upstream.id,
-        "retrying same upstream once after transient capacity response"
+        "retrying same upstream once before upstream failover"
     );
     attempt::attempt_upstream(
         state,

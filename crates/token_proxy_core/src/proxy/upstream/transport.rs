@@ -532,7 +532,7 @@ fn handle_upstream_timeout(
         response: None,
         is_timeout: true,
         should_cooldown: true,
-        retry_same_upstream_once: false,
+        retry_same_upstream_once: true,
     }
 }
 

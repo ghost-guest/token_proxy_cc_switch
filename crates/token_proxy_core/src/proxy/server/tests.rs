@@ -1950,9 +1950,10 @@ data: [DONE]\n\n",
 
     assert_eq!(response_status, StatusCode::OK);
     assert!(response_text.contains("from responses fallback"));
-    assert_eq!(primary_requests.len(), 1);
+    assert_eq!(primary_requests.len(), 2);
     assert_eq!(fallback_requests.len(), 1);
     assert_eq!(primary_requests[0].path, CODEX_RESPONSES_PATH);
+    assert_eq!(primary_requests[1].path, CODEX_RESPONSES_PATH);
     assert_eq!(fallback_requests[0].path, RESPONSES_PATH);
 }
 
@@ -2029,9 +2030,10 @@ data: [DONE]\n\n",
     assert_eq!(response_status, StatusCode::OK);
     assert!(response_text.contains("from responses fallback"));
     assert!(!response_text.contains("primary late output"));
-    assert_eq!(primary_requests.len(), 1);
+    assert_eq!(primary_requests.len(), 2);
     assert_eq!(fallback_requests.len(), 1);
     assert_eq!(primary_requests[0].path, CODEX_RESPONSES_PATH);
+    assert_eq!(primary_requests[1].path, CODEX_RESPONSES_PATH);
     assert_eq!(fallback_requests[0].path, RESPONSES_PATH);
 }
 
