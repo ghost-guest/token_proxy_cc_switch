@@ -34,13 +34,12 @@ impl CodexPreludeInspector {
     pub(crate) fn inspect_chunk(&mut self, chunk: &[u8]) -> CodexPreludeDecision {
         let mut events = Vec::new();
         self.parser.push_chunk(chunk, |data| events.push(data));
-        let mut saw_releasable_preamble = false;
         for data in events {
             let decision = inspect_codex_prelude_event(&data);
             match decision {
-                CodexPreludeDecision::Pending => {
-                    saw_releasable_preamble = true;
-                }
+                // `response.created` / `response.in_progress` are not client-visible work.
+                // Keep buffering so a later pre-output capacity error can still retry.
+                CodexPreludeDecision::Pending => {}
                 CodexPreludeDecision::RetryableError(message) => {
                     return CodexPreludeDecision::RetryableError(message);
                 }
@@ -48,9 +47,6 @@ impl CodexPreludeInspector {
                     return CodexPreludeDecision::ReadyForPassThrough;
                 }
             }
-        }
-        if saw_releasable_preamble {
-            return CodexPreludeDecision::ReadyForPassThrough;
         }
         CodexPreludeDecision::Pending
     }
@@ -744,6 +740,12 @@ fn malformed_event_message(value: &Value) -> String {
 }
 
 fn stream_error_message(value: &Value) -> String {
+    if let Some(error) = value.pointer("/response/error") {
+        return format!(
+            "Codex upstream stream failed: {}",
+            error_value_message(error)
+        );
+    }
     if let Some(error) = value.get("error") {
         return format!(
             "Codex upstream stream failed: {}",
@@ -763,11 +765,21 @@ fn stream_error_message(value: &Value) -> String {
 }
 
 fn error_value_message(value: &Value) -> String {
+    if let Some(error) = value.as_object() {
+        let code = error.get("code").and_then(Value::as_str);
+        let message = error.get("message").and_then(Value::as_str);
+        match (code, message) {
+            (Some(code), Some(message)) if !message.trim().is_empty() => {
+                return format!("{code}: {message}");
+            }
+            (Some(code), _) => return code.to_string(),
+            (_, Some(message)) if !message.trim().is_empty() => return message.to_string(),
+            _ => {}
+        }
+    }
     value
-        .get("message")
-        .and_then(Value::as_str)
+        .as_str()
         .map(ToString::to_string)
-        .or_else(|| value.as_str().map(ToString::to_string))
         .unwrap_or_else(|| value.to_string())
 }
 

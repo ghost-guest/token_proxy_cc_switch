@@ -182,6 +182,19 @@ struct MockRawSequenceUpstreamState {
 }
 
 #[derive(Clone)]
+struct MockRawChunkedSequenceResponse {
+    status: StatusCode,
+    chunks: Vec<Bytes>,
+    content_type: String,
+}
+
+#[derive(Clone)]
+struct MockRawChunkedSequenceUpstreamState {
+    responses: Arc<Mutex<Vec<MockRawChunkedSequenceResponse>>>,
+    requests: Arc<Mutex<Vec<RecordedRequest>>>,
+}
+
+#[derive(Clone)]
 struct MockDelayedBodyUpstreamState {
     status: StatusCode,
     body: Bytes,
@@ -470,6 +483,99 @@ async fn spawn_mock_raw_sequence_upstream(
         axum::serve(listener, app)
             .await
             .expect("raw sequence mock upstream server should run");
+    });
+    MockUpstream {
+        base_url: format!("http://{addr}"),
+        requests,
+        task,
+    }
+}
+
+async fn mock_raw_chunked_sequence_upstream_handler(
+    State(state): State<Arc<MockRawChunkedSequenceUpstreamState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    body: Body,
+) -> axum::response::Response {
+    let bytes = to_bytes(body, usize::MAX).await.expect("read mock body");
+    let json_body = serde_json::from_slice::<Value>(&bytes).expect("mock request json");
+    state
+        .requests
+        .lock()
+        .expect("requests lock")
+        .push(RecordedRequest {
+            path: uri.path().to_string(),
+            body: json_body,
+            authorization: headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string),
+            chatgpt_account_id: headers
+                .get("chatgpt-account-id")
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string),
+        });
+    let response = {
+        let mut responses = state.responses.lock().expect("responses lock");
+        if responses.len() > 1 {
+            responses.remove(0)
+        } else {
+            responses
+                .first()
+                .cloned()
+                .expect("chunked sequence mock must keep fallback response")
+        }
+    };
+    let stream =
+        futures_util::stream::unfold((0usize, response.chunks), |(index, chunks)| async move {
+            let chunk = chunks.get(index).cloned()?;
+            if index > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+            Some((
+                Ok::<Bytes, std::convert::Infallible>(chunk),
+                (index + 1, chunks),
+            ))
+        });
+    axum::response::Response::builder()
+        .status(response.status)
+        .header(
+            axum::http::header::CONTENT_TYPE,
+            response.content_type.as_str(),
+        )
+        .body(Body::from_stream(stream))
+        .expect("build raw chunked sequence mock response")
+}
+
+async fn spawn_mock_raw_chunked_sequence_upstream(
+    responses: Vec<(StatusCode, Vec<Bytes>, &'static str)>,
+) -> MockUpstream {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let responses = responses
+        .into_iter()
+        .map(
+            |(status, chunks, content_type)| MockRawChunkedSequenceResponse {
+                status,
+                chunks,
+                content_type: content_type.to_string(),
+            },
+        )
+        .collect::<Vec<_>>();
+    let state = Arc::new(MockRawChunkedSequenceUpstreamState {
+        responses: Arc::new(Mutex::new(responses)),
+        requests: requests.clone(),
+    });
+    let app = Router::new()
+        .route("/{*path}", any(mock_raw_chunked_sequence_upstream_handler))
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind raw chunked sequence mock upstream");
+    let addr: SocketAddr = listener.local_addr().expect("mock local addr");
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("raw chunked sequence mock upstream server should run");
     });
     MockUpstream {
         base_url: format!("http://{addr}"),
@@ -2093,6 +2199,97 @@ async fn assert_responses_request_retries_same_upstream_once_after_capacity_erro
             Some("gpt-5"),
             "capacity retry must keep the caller-requested model"
         );
+    }
+}
+
+async fn assert_responses_stream_retries_same_upstream_once_after_split_prelude_capacity_error() {
+    let primary = spawn_mock_raw_chunked_sequence_upstream(vec![
+        (
+            StatusCode::OK,
+            vec![
+                Bytes::from(
+                    "event: response.created\n\
+data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_capacity\",\"model\":\"gpt-5\"}}\n\n",
+                ),
+                Bytes::from(
+                    "event: response.failed\n\
+data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_capacity\",\"object\":\"response\",\"status\":\"failed\",\"error\":{\"code\":\"server_is_overloaded\",\"message\":\"capacity test uses codex server overloaded code\"}}}\n\n",
+                ),
+            ],
+            "text/event-stream",
+        ),
+        (
+            StatusCode::OK,
+            vec![Bytes::from(
+                "event: response.output_text.delta\n\
+data: {\"type\":\"response.output_text.delta\",\"delta\":\"same upstream stream recovered\"}\n\n\
+event: response.completed\n\
+data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_recovered\",\"object\":\"response\",\"created_at\":123,\"model\":\"gpt-5\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"id\":\"msg_1\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"same upstream stream recovered\"}]}],\"usage\":{\"input_tokens\":1,\"output_tokens\":2,\"total_tokens\":3}}}\n\n\
+data: [DONE]\n\n",
+            )],
+            "text/event-stream",
+        ),
+    ])
+    .await;
+    let mut config = config_with_runtime_upstreams(&[(
+        PROVIDER_CODEX,
+        10,
+        "codex-capacity-split-prelude",
+        primary.base_url.as_str(),
+        FORMATS_RESPONSES,
+    )]);
+    config.upstream_strategy = UpstreamStrategyRuntime {
+        order: UpstreamOrderStrategy::FillFirst,
+        dispatch: UpstreamDispatchRuntime::Serial,
+    };
+    let data_dir = next_test_data_dir("responses_capacity_split_prelude_same_upstream_retry");
+    let state = build_test_state_handle(config, data_dir.clone()).await;
+
+    let response = proxy_request(
+        State(state),
+        Method::POST,
+        Uri::from_static(RESPONSES_PATH),
+        axum::http::HeaderMap::new(),
+        Body::from(
+            json!({
+                "model": "gpt-5",
+                "input": "hi",
+                "stream": true
+            })
+            .to_string(),
+        ),
+    )
+    .await;
+
+    let response_status = response.status();
+    let response_bytes = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("proxy stream response bytes");
+    let response_text = String::from_utf8(response_bytes.to_vec()).expect("response text");
+    let primary_requests = primary.requests();
+
+    primary.abort();
+    let _ = std::fs::remove_dir_all(&data_dir);
+
+    assert_eq!(response_status, StatusCode::OK);
+    assert!(response_text.contains("same upstream stream recovered"));
+    assert!(
+        !response_text.contains("Selected model is at capacity"),
+        "capacity prelude error must not leak to client after retry: {response_text}"
+    );
+    assert_eq!(
+        primary_requests.len(),
+        2,
+        "split prelude capacity response should retry the same upstream once"
+    );
+    for request in primary_requests {
+        assert_eq!(request.path, CODEX_RESPONSES_PATH);
+        assert_eq!(
+            request.body["model"].as_str(),
+            Some("gpt-5"),
+            "capacity retry must keep the caller-requested model"
+        );
+        assert_eq!(request.body["stream"].as_bool(), Some(true));
     }
 }
 
@@ -4364,6 +4561,14 @@ fn responses_stream_request_falls_back_from_codex_when_first_sse_event_is_error(
 fn responses_stream_request_falls_back_from_codex_when_created_then_failed_before_output() {
     run_async(async {
         assert_responses_stream_retry_fallback_from_codex_created_then_failed_before_output().await;
+    });
+}
+
+#[test]
+fn responses_stream_request_retries_same_upstream_once_after_split_prelude_capacity_error() {
+    run_async(async {
+        assert_responses_stream_retries_same_upstream_once_after_split_prelude_capacity_error()
+            .await;
     });
 }
 

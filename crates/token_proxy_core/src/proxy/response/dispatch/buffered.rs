@@ -1084,6 +1084,9 @@ pub(super) fn is_capacity_retry_error(response_error: &str, body: &str) -> bool 
         if lower.contains("selected model is at capacity") {
             return true;
         }
+        if lower.contains("server_is_overloaded") || lower.contains("slow_down") {
+            return true;
+        }
         lower.contains("model")
             && lower.contains("capacity")
             && (lower.contains("try a different model")
