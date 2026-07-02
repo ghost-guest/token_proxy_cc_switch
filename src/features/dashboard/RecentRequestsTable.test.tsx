@@ -287,12 +287,12 @@ describe("dashboard/RecentRequestsTable", () => {
     const widthTrack = table.querySelector(
       '[data-slot="recent-requests-table-width-track"]',
     ) as HTMLElement | null;
-    expect(widthTrack?.style.minWidth).toBe("850px");
+    expect(widthTrack?.style.minWidth).toBe("817px");
     expect(widthTrack?.parentElement).toBe(scrollArea);
 
     const header = table.querySelector('[data-slot="recent-requests-table-header"]');
     expect(header).toHaveClass("sticky", "top-0", "z-10");
-    expect(header?.className).toContain("85px_79px_140px");
+    expect(header?.className).toContain("85px_79px_140px_99px");
 
     const rowsLayer = table.querySelector(
       '[data-slot="recent-requests-table-rows-layer"]',

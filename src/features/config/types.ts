@@ -142,6 +142,26 @@ export type SaveProxyConfigResult = {
 
 export type ProxyServiceRequestState = "idle" | "working" | "error";
 
+export type AgentNodeConfig = {
+  enabled: boolean;
+  server_url: string;
+  api_key: string;
+  hostname: string | null;
+};
+
+export type AgentNodeServiceState = "running" | "stopped";
+
+export type AgentNodeServiceStatus = {
+  state: AgentNodeServiceState;
+  enabled: boolean;
+  server_url: string | null;
+  hostname: string | null;
+  last_error: string | null;
+  started_at_ms: number | null;
+};
+
+export type AgentNodeRequestState = "idle" | "working" | "error";
+
 export type UpstreamForm = {
   id: string;
   providers: string[];

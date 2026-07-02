@@ -11,6 +11,7 @@ pub mod oauth_util;
 pub mod paths;
 pub mod provider_accounts;
 
+pub mod agent_node;
 pub mod codex;
 pub mod kiro;
 pub mod proxy;

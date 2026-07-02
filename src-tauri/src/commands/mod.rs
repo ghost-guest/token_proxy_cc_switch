@@ -1,3 +1,4 @@
+pub mod agent_node;
 pub mod codex;
 pub mod config;
 pub mod dashboard;
@@ -7,6 +8,10 @@ pub mod pricing;
 pub mod providers;
 pub mod proxy;
 
+pub use agent_node::{
+    agent_node_read_config, agent_node_restart, agent_node_save_config, agent_node_start,
+    agent_node_status, agent_node_stop,
+};
 pub use codex::{
     codex_fetch_quotas, codex_import_file, codex_import_refresh_tokens, codex_import_text,
     codex_list_accounts, codex_logout, codex_poll_login, codex_refresh_account,

@@ -9,6 +9,7 @@ import { Route as ConfigRouteRouteImport } from "./routes/config/route"
 import { Route as IndexRouteImport } from "./routes/index"
 import { Route as ConfigIndexRouteImport } from "./routes/config/index"
 
+const AgentNodeLazyRouteImport = createFileRoute("/agent-node")()
 const ConfigUpstreamsLazyRouteImport = createFileRoute("/config/upstreams")()
 const ConfigSettingsLazyRouteImport = createFileRoute("/config/settings")()
 const ConfigProvidersLazyRouteImport = createFileRoute("/config/providers")()
@@ -18,6 +19,11 @@ const ConfigDashboardLazyRouteImport = createFileRoute("/config/dashboard")()
 const ConfigCoreLazyRouteImport = createFileRoute("/config/core")()
 const ConfigAgentsLazyRouteImport = createFileRoute("/config/agents")()
 
+const AgentNodeLazyRoute = AgentNodeLazyRouteImport.update({
+  id: "/agent-node",
+  path: "/agent-node",
+  getParentRoute: () => rootRouteImport,
+} as any).lazy(() => import("./routes/agent-node.lazy").then((d) => d.Route))
 const ConfigRouteRoute = ConfigRouteRouteImport.update({
   id: "/config",
   path: "/config",
@@ -87,6 +93,7 @@ const ConfigAgentsLazyRoute = ConfigAgentsLazyRouteImport.update({
 export interface FileRoutesByFullPath {
   "/": typeof IndexRoute
   "/config": typeof ConfigRouteRouteWithChildren
+  "/agent-node": typeof AgentNodeLazyRoute
   "/config/agents": typeof ConfigAgentsLazyRoute
   "/config/core": typeof ConfigCoreLazyRoute
   "/config/dashboard": typeof ConfigDashboardLazyRoute
@@ -99,6 +106,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   "/": typeof IndexRoute
+  "/agent-node": typeof AgentNodeLazyRoute
   "/config/agents": typeof ConfigAgentsLazyRoute
   "/config/core": typeof ConfigCoreLazyRoute
   "/config/dashboard": typeof ConfigDashboardLazyRoute
@@ -113,6 +121,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   "/": typeof IndexRoute
   "/config": typeof ConfigRouteRouteWithChildren
+  "/agent-node": typeof AgentNodeLazyRoute
   "/config/agents": typeof ConfigAgentsLazyRoute
   "/config/core": typeof ConfigCoreLazyRoute
   "/config/dashboard": typeof ConfigDashboardLazyRoute
@@ -128,6 +137,7 @@ export interface FileRouteTypes {
   fullPaths:
     | "/"
     | "/config"
+    | "/agent-node"
     | "/config/agents"
     | "/config/core"
     | "/config/dashboard"
@@ -140,6 +150,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | "/"
+    | "/agent-node"
     | "/config/agents"
     | "/config/core"
     | "/config/dashboard"
@@ -153,6 +164,7 @@ export interface FileRouteTypes {
     | "__root__"
     | "/"
     | "/config"
+    | "/agent-node"
     | "/config/agents"
     | "/config/core"
     | "/config/dashboard"
@@ -167,10 +179,18 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ConfigRouteRoute: typeof ConfigRouteRouteWithChildren
+  AgentNodeLazyRoute: typeof AgentNodeLazyRoute
 }
 
 declare module "@tanstack/react-router" {
   interface FileRoutesByPath {
+    "/agent-node": {
+      id: "/agent-node"
+      path: "/agent-node"
+      fullPath: "/agent-node"
+      preLoaderRoute: typeof AgentNodeLazyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     "/config": {
       id: "/config"
       path: "/config"
@@ -282,6 +302,7 @@ const ConfigRouteRouteWithChildren = ConfigRouteRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ConfigRouteRoute: ConfigRouteRouteWithChildren,
+  AgentNodeLazyRoute: AgentNodeLazyRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
