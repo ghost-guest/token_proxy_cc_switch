@@ -241,7 +241,7 @@ async fn responses_input_item_to_claude_messages(
     if item.get("role").and_then(Value::as_str).is_some() {
         let role = item.get("role").and_then(Value::as_str).unwrap_or("user");
         let content = item.get("content");
-        if role == "system" {
+        if matches!(role, "system" | "developer") {
             if let Some(text) = extract_text_from_any_content(content) {
                 if !text.trim().is_empty() {
                     system_texts.push(text);
@@ -262,7 +262,7 @@ async fn responses_input_item_to_claude_messages(
         "message" => {
             let role = object.get("role").and_then(Value::as_str).unwrap_or("user");
             let content = object.get("content");
-            if role == "system" {
+            if matches!(role, "system" | "developer") {
                 if let Some(text) = extract_text_from_any_content(content) {
                     if !text.trim().is_empty() {
                         system_texts.push(text);

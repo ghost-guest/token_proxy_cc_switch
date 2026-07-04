@@ -46,6 +46,12 @@ const DEFAULT_UPSTREAM_PROVIDERS = [
 const DEFAULT_UPSTREAM_ID = "airouter.mxyhi.com";
 const DEFAULT_UPSTREAM_BASE_URL = "https://airouter.mxyhi.com";
 const DEFAULT_UPSTREAM_PRIORITY = "19";
+const DEFAULT_CODEX_CATALOG = {
+  imageInput: false,
+  webSearch: false,
+  parallelToolCalls: false,
+  applyPatch: false,
+};
 const INTEGER_PATTERN = /^-?\d+$/;
 const NON_NEGATIVE_INTEGER_PATTERN = /^\d+$/;
 const POSITIVE_INTEGER_PATTERN = /^[1-9]\d*$/;
@@ -149,6 +155,7 @@ export function createEmptyUpstream(): UpstreamForm {
     // 新增上游默认作为草稿，避免用户尚未填完必填项时被“无法保存”阻塞。
     enabled: false,
     modelMappings: [],
+    codexCatalog: { ...DEFAULT_CODEX_CATALOG },
     convertFromMap: {},
     overrides: { header: [] },
   };
@@ -235,6 +242,7 @@ export function toForm(config: ProxyConfigFile): ConfigForm {
         priority: upstream.priority === null ? "" : String(upstream.priority),
         enabled: upstream.enabled,
         modelMappings: toModelMappingForm(upstream.model_mappings),
+        codexCatalog: toCodexCatalogForm(upstream.codex_catalog),
         convertFromMap: upstream.convert_from_map ?? {},
         overrides: normalizeOverrides(upstream.overrides),
       };
@@ -292,6 +300,7 @@ export function toPayload(form: ConfigForm): ProxyConfigFile {
         priority: parseOptionalInt(upstream.priority),
         enabled: upstream.enabled,
         model_mappings: toModelMappingPayload(upstream.modelMappings),
+        codex_catalog: toCodexCatalogPayload(upstream.codexCatalog),
         convert_from_map: normalizeConvertFromMap(upstream.convertFromMap, providers),
         overrides: toOverridesPayload(upstream.overrides),
       };
@@ -466,6 +475,25 @@ function isValidProxyUrl(value: string) {
   } catch (_) {
     return false;
   }
+}
+
+
+function toCodexCatalogForm(value: ProxyConfigFile["upstreams"][number]["codex_catalog"] | undefined) {
+  return {
+    imageInput: value?.image_input ?? false,
+    webSearch: value?.web_search ?? false,
+    parallelToolCalls: value?.parallel_tool_calls ?? false,
+    applyPatch: value?.apply_patch ?? false,
+  };
+}
+
+function toCodexCatalogPayload(value: ConfigForm["upstreams"][number]["codexCatalog"]) {
+  return {
+    image_input: value.imageInput,
+    web_search: value.webSearch,
+    parallel_tool_calls: value.parallelToolCalls,
+    apply_patch: value.applyPatch,
+  };
 }
 
 function toModelMappingForm(mappings: Record<string, string>): ModelMappingForm[] {

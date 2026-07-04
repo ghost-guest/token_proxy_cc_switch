@@ -7699,6 +7699,51 @@ fn openai_compatible_models_index_route_prefers_openai_provider_and_rewrites_pat
 }
 
 #[test]
+fn openai_compatible_models_index_falls_back_to_anthropic_models_when_no_openai_provider() {
+    let config = config_with_upstreams(&[(
+        PROVIDER_ANTHROPIC,
+        10,
+        "company-claude-relay",
+        FORMATS_MESSAGES,
+    )]);
+    let headers = HeaderMap::new();
+
+    let plan = resolve_dispatch_plan_with_request(&config, "/v1beta/openai/models", &headers, None)
+        .expect("should dispatch");
+
+    assert_eq!(plan.provider, PROVIDER_ANTHROPIC);
+    let outbound = resolve_outbound_path(
+        "/v1beta/openai/models",
+        &plan,
+        &RequestMeta {
+            client_ip: None,
+            stream: false,
+            original_model: None,
+            mapped_model: None,
+            reasoning_effort: None,
+            response_format: None,
+            estimated_input_tokens: None,
+        },
+    );
+    assert_eq!(outbound, "/v1/models");
+}
+
+#[test]
+fn openai_models_index_falls_back_to_anthropic_models_when_no_openai_provider() {
+    let config = config_with_upstreams(&[(
+        PROVIDER_ANTHROPIC,
+        10,
+        "company-claude-relay",
+        FORMATS_MESSAGES,
+    )]);
+    let headers = HeaderMap::new();
+
+    let plan = resolve_dispatch_plan_with_request(&config, "/v1/models", &headers, None)
+        .expect("should dispatch");
+
+    assert_eq!(plan.provider, PROVIDER_ANTHROPIC);
+}
+#[test]
 fn openai_compatible_model_detail_route_rewrites_to_openai_models_detail() {
     let config = config_with_upstreams(&[
         (PROVIDER_ANTHROPIC, 10, "anthropic", FORMATS_MESSAGES),

@@ -171,6 +171,19 @@ impl Default for TrayTokenRateConfig {
     }
 }
 
+
+#[derive(Clone, Serialize, Deserialize, Default)]
+pub struct UpstreamCodexCatalogConfig {
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub image_input: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub web_search: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub parallel_tool_calls: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub apply_patch: bool,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct UpstreamConfig {
     pub id: String,
@@ -207,6 +220,15 @@ pub struct UpstreamConfig {
     pub convert_from_map: HashMap<String, Vec<InboundApiFormat>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub overrides: Option<UpstreamOverrides>,
+    #[serde(default, skip_serializing_if = "UpstreamCodexCatalogConfig::is_default")]
+    pub codex_catalog: UpstreamCodexCatalogConfig,
+}
+
+
+impl UpstreamCodexCatalogConfig {
+    fn is_default(value: &Self) -> bool {
+        !value.image_input && !value.web_search && !value.parallel_tool_calls && !value.apply_patch
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Default)]

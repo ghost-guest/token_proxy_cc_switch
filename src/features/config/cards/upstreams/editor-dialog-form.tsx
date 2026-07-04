@@ -505,6 +505,72 @@ const provider = draft.providers[0]?.trim() || "";
   );
 }
 
+
+type UpstreamCodexCatalogFieldsProps = {
+  draft: UpstreamForm;
+  onChangeDraft: (patch: Partial<UpstreamForm>) => void;
+};
+
+function UpstreamCodexCatalogFields({
+  draft,
+  onChangeDraft,
+}: UpstreamCodexCatalogFieldsProps) {
+  const update = (patch: Partial<UpstreamForm["codexCatalog"]>) => {
+    onChangeDraft({ codexCatalog: { ...draft.codexCatalog, ...patch } });
+  };
+  return (
+    <div data-slot="upstream-codex-catalog-fields" className="col-span-2 space-y-2 rounded-md border border-border/60 p-3">
+      <div className="flex items-center gap-2">
+        <Label className="inline-flex items-center gap-1">
+          {m.field_codex_catalog_capabilities()}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <HelpCircle className="size-3.5 text-muted-foreground cursor-help" />
+            </TooltipTrigger>
+            <TooltipContent side="right" className="max-w-xs">
+              {m.field_codex_catalog_capabilities_tip()}
+            </TooltipContent>
+          </Tooltip>
+        </Label>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <Label className="flex items-center justify-between gap-3 rounded-md border border-border/40 px-3 py-2 text-sm">
+          <span>{m.field_codex_catalog_image_input()}</span>
+          <Switch
+            checked={draft.codexCatalog.imageInput}
+            onCheckedChange={(checked) => update({ imageInput: checked })}
+            aria-label={m.field_codex_catalog_image_input()}
+          />
+        </Label>
+        <Label className="flex items-center justify-between gap-3 rounded-md border border-border/40 px-3 py-2 text-sm">
+          <span>{m.field_codex_catalog_web_search()}</span>
+          <Switch
+            checked={draft.codexCatalog.webSearch}
+            onCheckedChange={(checked) => update({ webSearch: checked })}
+            aria-label={m.field_codex_catalog_web_search()}
+          />
+        </Label>
+        <Label className="flex items-center justify-between gap-3 rounded-md border border-border/40 px-3 py-2 text-sm">
+          <span>{m.field_codex_catalog_parallel_tools()}</span>
+          <Switch
+            checked={draft.codexCatalog.parallelToolCalls}
+            onCheckedChange={(checked) => update({ parallelToolCalls: checked })}
+            aria-label={m.field_codex_catalog_parallel_tools()}
+          />
+        </Label>
+        <Label className="flex items-center justify-between gap-3 rounded-md border border-border/40 px-3 py-2 text-sm">
+          <span>{m.field_codex_catalog_apply_patch()}</span>
+          <Switch
+            checked={draft.codexCatalog.applyPatch}
+            onCheckedChange={(checked) => update({ applyPatch: checked })}
+            aria-label={m.field_codex_catalog_apply_patch()}
+          />
+        </Label>
+      </div>
+    </div>
+  );
+}
+
 type UpstreamHeaderOverrideFieldsProps = {
   draft: UpstreamForm;
   onChangeDraft: (patch: Partial<UpstreamForm>) => void;
@@ -597,6 +663,7 @@ export function UpstreamEditorFields({
         onChange={(convertFromMap) => onChangeDraft({ convertFromMap })}
       />
       <UpstreamModelMappingFields draft={draft} onChangeDraft={onChangeDraft} />
+      <UpstreamCodexCatalogFields draft={draft} onChangeDraft={onChangeDraft} />
       <UpstreamHeaderOverrideFields draft={draft} onChangeDraft={onChangeDraft} />
       <UpstreamOpenAIResponsesFields draft={draft} onChangeDraft={onChangeDraft} />
     </div>

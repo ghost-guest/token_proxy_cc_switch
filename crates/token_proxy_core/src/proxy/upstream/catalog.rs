@@ -125,6 +125,38 @@ fn merge_model_catalog_ids(target: &mut Vec<String>, extra: Vec<String>) {
     }
 }
 
+pub(super) async fn aggregate_all_model_catalog_request(state: Arc<ProxyState>) -> Response {
+    let mut sources: Vec<(String, Vec<String>)> = Vec::new();
+    for provider_upstreams in state.config.upstreams.values() {
+        for group in &provider_upstreams.groups {
+            for upstream in &group.items {
+                let mut models = upstream.advertised_model_ids.clone();
+                expand_model_ids_with_mappings(&mut models, &state.config.hot_model_mappings);
+                if !models.is_empty() {
+                    sources.push((upstream.id.clone(), models));
+                }
+            }
+        }
+    }
+    if sources.is_empty() {
+        return http::error_response(
+            StatusCode::BAD_GATEWAY,
+            "No upstream model catalog available.",
+        );
+    }
+    let response_body = build_model_catalog_response_body(&sources, state.config.model_list_prefix);
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/json"),
+    );
+    http::build_response(
+        StatusCode::OK,
+        response_headers,
+        Body::from(response_body.to_string()),
+    )
+}
+
 pub(super) async fn refresh_model_discovery(state: Arc<ProxyState>) {
     let jobs = collect_model_discovery_jobs(&state);
     let pending = jobs

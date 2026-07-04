@@ -120,6 +120,7 @@
   "upstreams_hide_api_keys": "Hide API Keys",
   "upstreams_column_id": "Id",
   "upstreams_column_provider": "Provider",
+  "upstreams_column_models": "Models",
   "upstreams_column_account": "Account",
   "upstreams_column_base_url": "Base URL",
   "upstreams_column_api_key": "API Keys",
@@ -129,8 +130,8 @@
   "upstreams_upstream_n": "Upstream {number}",
   "upstreams_row_edit": "Edit {rowLabel}",
   "upstreams_row_copy": "Copy {rowLabel}",
-  "upstreams_row_enable": "Enable {rowLabel}",
-  "upstreams_row_disable": "Disable {rowLabel}",
+  "upstreams_row_enable": "Switch to {rowLabel}",
+  "upstreams_row_disable": "Active {rowLabel}",
   "upstreams_row_delete": "Delete {rowLabel}",
   "upstreams_editor_title_add": "Add Upstream",
   "upstreams_editor_title_edit": "Edit Upstream",
@@ -532,5 +533,11 @@
   "providers_save_proxy_url": "Save proxy URL",
   "providers_accounts_delete_title": "Delete accounts?",
   "providers_accounts_delete_description": "This will delete {count} accounts.",
-  "providers_accounts_delete_success": "Successfully deleted {count} accounts."
+  "providers_accounts_delete_success": "Successfully deleted {count} accounts.",
+  "field_codex_catalog_capabilities": "Codex model capabilities",
+  "field_codex_catalog_capabilities_tip": "Controls capabilities written to the local Codex /model catalog. Only enable capabilities this upstream really supports; wrong values may make upstream reject tool/image/search parameters.",
+  "field_codex_catalog_image_input": "Image input",
+  "field_codex_catalog_web_search": "Web search",
+  "field_codex_catalog_parallel_tools": "Parallel tool calls",
+  "field_codex_catalog_apply_patch": "apply_patch tool"
 }

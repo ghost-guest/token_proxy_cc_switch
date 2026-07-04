@@ -48,6 +48,21 @@ export type InboundApiFormat =
   | "anthropic_messages"
   | "gemini";
 
+
+export type CodexCatalogCapabilities = {
+  imageInput: boolean;
+  webSearch: boolean;
+  parallelToolCalls: boolean;
+  applyPatch: boolean;
+};
+
+export type CodexCatalogConfig = {
+  image_input?: boolean;
+  web_search?: boolean;
+  parallel_tool_calls?: boolean;
+  apply_patch?: boolean;
+};
+
 export type UpstreamConfig = {
   id: string;
   /**
@@ -88,6 +103,7 @@ export type UpstreamConfig = {
   priority: number | null;
   enabled: boolean;
   model_mappings: Record<string, string>;
+  codex_catalog?: CodexCatalogConfig;
   /**
    * 允许从哪些“入站 API 格式”转换后再使用该 provider。
    * key 必须在 `providers[]` 内。
@@ -176,6 +192,7 @@ export type UpstreamForm = {
   priority: string;
   enabled: boolean;
   modelMappings: ModelMappingForm[];
+  codexCatalog: CodexCatalogCapabilities;
   convertFromMap: Record<string, InboundApiFormat[]>;
   overrides: {
     header: HeaderOverrideForm[];

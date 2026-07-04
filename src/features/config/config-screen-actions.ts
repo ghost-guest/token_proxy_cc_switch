@@ -162,6 +162,9 @@ async function writeConfigIfDirty({
     const result = await invoke<SaveProxyConfigResult>("save_proxy_config", {
       config: currentPayload,
     });
+    if (!result.apply_error) {
+      await invoke("write_codex_config");
+    }
     setProxyServiceStatus(result.status);
     setLastConfig(currentPayload);
     setSavedAt(new Date().toLocaleString());

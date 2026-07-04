@@ -120,6 +120,7 @@
   "upstreams_hide_api_keys": "隐藏 API Key",
   "upstreams_column_id": "ID",
   "upstreams_column_provider": "提供商",
+  "upstreams_column_models": "模型",
   "upstreams_column_account": "账户",
   "upstreams_column_base_url": "Base URL",
   "upstreams_column_api_key": "API Keys",
@@ -129,8 +130,8 @@
   "upstreams_upstream_n": "上游 {number}",
   "upstreams_row_edit": "编辑 {rowLabel}",
   "upstreams_row_copy": "复制 {rowLabel}",
-  "upstreams_row_enable": "启用 {rowLabel}",
-  "upstreams_row_disable": "禁用 {rowLabel}",
+  "upstreams_row_enable": "切换到 {rowLabel}",
+  "upstreams_row_disable": "当前启用 {rowLabel}",
   "upstreams_row_delete": "删除 {rowLabel}",
   "upstreams_editor_title_add": "添加上游",
   "upstreams_editor_title_edit": "编辑上游",
@@ -532,5 +533,11 @@
   "providers_account_delete_description": "将删除账户 {label}。",
   "providers_accounts_delete_title": "删除多个账户？",
   "providers_accounts_delete_description": "将删除 {count} 个账户。",
-  "providers_accounts_delete_success": "成功删除 {count} 个账户。"
+  "providers_accounts_delete_success": "成功删除 {count} 个账户。",
+  "field_codex_catalog_capabilities": "Codex 模型能力",
+  "field_codex_catalog_capabilities_tip": "控制写入 Codex /model 本地目录的能力声明。只勾选该上游真实支持的能力；勾错可能导致上游返回 tool/image/search 参数错误。",
+  "field_codex_catalog_image_input": "图片输入",
+  "field_codex_catalog_web_search": "网页搜索",
+  "field_codex_catalog_parallel_tools": "并行工具调用",
+  "field_codex_catalog_apply_patch": "apply_patch 工具"
 }

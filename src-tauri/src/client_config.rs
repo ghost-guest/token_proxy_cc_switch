@@ -1,5 +1,6 @@
 use serde::Serialize;
 use std::{
+    collections::BTreeSet,
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
@@ -7,7 +8,7 @@ use std::{
 use tauri::AppHandle;
 use tauri::Manager;
 
-use crate::proxy::config::ProxyConfigFile;
+use crate::proxy::config::{ProxyConfigFile, UpstreamCodexCatalogConfig};
 
 const CODEX_DISABLE_RESPONSE_STORAGE: bool = true;
 const CLAUDE_MODEL: &str = "claude-sonnet-4-6";
@@ -17,8 +18,9 @@ const CODEX_MODEL_REASONING_EFFORT: &str = "xhigh";
 const CODEX_NETWORK_ACCESS: &str = "enabled";
 const CODEX_PREFERRED_AUTH_METHOD: &str = "apikey";
 const CODEX_PROVIDER_NAME: &str = "token_proxy";
-const CODEX_PROVIDER_REQUIRES_OPENAI_AUTH: bool = true;
+const CODEX_PROVIDER_REQUIRES_OPENAI_AUTH: bool = false;
 const CODEX_PROVIDER_WIRE_API: &str = "responses";
+const CODEX_MODEL_CATALOG_JSON: &str = "token-proxy-model-catalog.json";
 
 #[derive(Clone, Serialize)]
 pub(crate) struct ClientSetupInfo {
@@ -56,9 +58,7 @@ pub(crate) async fn preview(app: AppHandle) -> Result<ClientSetupInfo, String> {
     let claude_settings_path = resolve_claude_settings_path(&app)?;
     let codex_config_path = resolve_codex_config_path(&app)?;
     let codex_auth_path = resolve_codex_auth_path(&app)?;
-    let codex_config_input = read_text_or_empty(&codex_config_path).await?;
-    let (codex_model_provider, codex_provider_name) =
-        resolve_codex_target_provider_and_name(&codex_config_input);
+    let codex_target = resolve_codex_target_from_config(&config);
     let has_local_key = config
         .local_api_key
         .as_ref()
@@ -74,13 +74,13 @@ pub(crate) async fn preview(app: AppHandle) -> Result<ClientSetupInfo, String> {
         codex_config_path: codex_config_path.to_string_lossy().to_string(),
         codex_auth_path: codex_auth_path.to_string_lossy().to_string(),
         codex_disable_response_storage: CODEX_DISABLE_RESPONSE_STORAGE,
-        codex_model: CODEX_MODEL.to_string(),
-        codex_model_provider,
+        codex_model: codex_target.model.clone(),
+        codex_model_provider: codex_target.provider_id.clone(),
         codex_model_reasoning_effort: CODEX_MODEL_REASONING_EFFORT.to_string(),
         codex_network_access: CODEX_NETWORK_ACCESS.to_string(),
         codex_preferred_auth_method: CODEX_PREFERRED_AUTH_METHOD.to_string(),
         codex_provider_base_url: openai_compat_base_url.clone(),
-        codex_provider_name,
+        codex_provider_name: codex_target.provider_name.clone(),
         codex_provider_requires_openai_auth: CODEX_PROVIDER_REQUIRES_OPENAI_AUTH,
         codex_provider_wire_api: CODEX_PROVIDER_WIRE_API.to_string(),
         codex_api_key_configured: has_local_key,
@@ -139,6 +139,7 @@ pub(crate) async fn write_codex_config(app: AppHandle) -> Result<ClientConfigWri
     let proxy_http_base_url = build_proxy_http_base_url(&config)?;
     let config_path = resolve_codex_config_path(&app)?;
     let auth_path = resolve_codex_auth_path(&app)?;
+    let catalog_path = resolve_codex_model_catalog_path(&app)?;
     let codex_provider_base_url = build_openai_compat_base_url(&proxy_http_base_url);
 
     // Codex 默认 config 路径为 $CODEX_HOME/config.toml，其中 CODEX_HOME 默认是 ~/.codex。
@@ -150,12 +151,12 @@ pub(crate) async fn write_codex_config(app: AppHandle) -> Result<ClientConfigWri
     let input = read_text_or_empty(&config_path).await?;
     let mut doc = toml_edit::DocumentMut::from_str(&input)
         .map_err(|err| format!("Failed to parse Codex config.toml: {err}"))?;
-    let (codex_model_provider, codex_provider_name) =
-        resolve_codex_target_provider_and_name_from_doc(&doc);
+    let codex_target = resolve_codex_target_from_config(&config);
+    let catalog = build_codex_model_catalog(&config);
+    write_json_with_backup(&catalog_path, &catalog).await?;
     apply_codex_proxy_settings(
         &mut doc,
-        &codex_model_provider,
-        &codex_provider_name,
+        &codex_target,
         &codex_provider_base_url,
     )?;
 
@@ -184,6 +185,7 @@ pub(crate) async fn write_codex_config(app: AppHandle) -> Result<ClientConfigWri
         paths: vec![
             config_path.to_string_lossy().to_string(),
             auth_path.to_string_lossy().to_string(),
+            catalog_path.to_string_lossy().to_string(),
         ],
     })
 }
@@ -222,6 +224,10 @@ fn resolve_codex_auth_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(resolve_codex_home_dir(app)?.join("auth.json"))
 }
 
+fn resolve_codex_model_catalog_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(resolve_codex_home_dir(app)?.join(CODEX_MODEL_CATALOG_JSON))
+}
+
 fn resolve_codex_home_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let home = resolve_home_dir(app)?;
     Ok(std::env::var_os("CODEX_HOME")
@@ -250,72 +256,187 @@ fn build_openai_compat_base_url(proxy_http_base_url: &str) -> String {
     format!("{proxy_http_base_url}/v1")
 }
 
-fn resolve_codex_target_provider_and_name(input: &str) -> (String, String) {
-    let Ok(doc) = toml_edit::DocumentMut::from_str(input) else {
-        return default_codex_provider_identity();
-    };
-    resolve_codex_target_provider_and_name_from_doc(&doc)
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CodexTarget {
+    model: String,
+    provider_id: String,
+    provider_name: String,
 }
 
-fn resolve_codex_target_provider_and_name_from_doc(
-    doc: &toml_edit::DocumentMut,
-) -> (String, String) {
-    let provider = doc
-        .as_table()
-        .get("model_provider")
-        .and_then(toml_edit::Item::as_str)
+fn resolve_codex_target_from_config(config: &ProxyConfigFile) -> CodexTarget {
+    config
+        .upstreams
+        .iter()
+        .enumerate()
+        .filter(|(_, upstream)| upstream.enabled)
+        .max_by(|(left_index, left), (right_index, right)| {
+            let left_priority = left.priority.unwrap_or(0);
+            let right_priority = right.priority.unwrap_or(0);
+            left_priority
+                .cmp(&right_priority)
+                .then_with(|| right_index.cmp(left_index))
+        })
+        .map(|(_, upstream)| {
+            let provider_id = codex_safe_upstream_id(upstream.id.as_str());
+            CodexTarget {
+                model: build_codex_catalog_model_id(upstream.id.as_str(), &resolve_codex_model_from_upstream(upstream)),
+                provider_id,
+                provider_name: upstream.id.clone(),
+            }
+        })
+        .unwrap_or_else(default_codex_target)
+}
+
+fn resolve_codex_model_from_upstream(upstream: &crate::proxy::config::UpstreamConfig) -> String {
+    let mut exact_patterns: Vec<&str> = upstream
+        .model_mappings
+        .keys()
+        .map(String::as_str)
         .map(str::trim)
-        .filter(|value| !value.is_empty())
+        .filter(|pattern| !pattern.is_empty() && *pattern != "*" && !pattern.ends_with('*'))
+        .collect();
+    exact_patterns.sort_unstable();
+    exact_patterns
+        .into_iter()
+        .next()
         .map(ToString::to_string)
-        .unwrap_or_else(|| CODEX_DEFAULT_MODEL_PROVIDER.to_string());
-    let name = doc
-        .as_table()
-        .get("model_providers")
-        .and_then(toml_edit::Item::as_table_like)
-        .and_then(|table| table.get(&provider))
-        .and_then(toml_edit::Item::as_table_like)
-        .and_then(|table| table.get("name"))
-        .and_then(toml_edit::Item::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
-        .unwrap_or_else(|| default_codex_provider_name(&provider));
-    (provider, name)
+        .unwrap_or_else(|| CODEX_MODEL.to_string())
 }
 
-fn default_codex_provider_identity() -> (String, String) {
-    (
-        CODEX_DEFAULT_MODEL_PROVIDER.to_string(),
-        CODEX_PROVIDER_NAME.to_string(),
-    )
-}
-
-fn default_codex_provider_name(provider: &str) -> String {
-    if provider == CODEX_DEFAULT_MODEL_PROVIDER {
-        return CODEX_PROVIDER_NAME.to_string();
+fn default_codex_target() -> CodexTarget {
+    CodexTarget {
+        model: CODEX_MODEL.to_string(),
+        provider_id: CODEX_DEFAULT_MODEL_PROVIDER.to_string(),
+        provider_name: CODEX_PROVIDER_NAME.to_string(),
     }
-    provider.to_string()
+}
+
+fn build_codex_model_catalog(config: &ProxyConfigFile) -> serde_json::Value {
+    let mut seen = BTreeSet::new();
+    let mut models = Vec::new();
+    for upstream in config.upstreams.iter().filter(|upstream| upstream.enabled) {
+        let mut upstream_models: Vec<String> = upstream
+            .model_mappings
+            .keys()
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|model| !model.is_empty() && *model != "*" && !model.ends_with('*'))
+            .map(|model| build_codex_catalog_model_id(upstream.id.as_str(), model))
+            .collect();
+        upstream_models.sort();
+        for model in upstream_models {
+            if seen.insert(model.clone()) {
+                models.push(build_codex_model_catalog_item(model, &upstream.codex_catalog));
+            }
+        }
+    }
+    if models.is_empty() {
+        models.push(build_codex_model_catalog_item(CODEX_MODEL.to_string(), &UpstreamCodexCatalogConfig::default()));
+    }
+    serde_json::json!({ "models": models })
+}
+
+fn build_codex_catalog_model_id(upstream_id: &str, model: &str) -> String {
+    let upstream_id = codex_safe_upstream_id(upstream_id);
+    let model = model.trim();
+    if upstream_id.is_empty() || model.starts_with(&format!("{upstream_id}/")) {
+        return model.to_string();
+    }
+    format!("{upstream_id}/{model}")
+}
+
+fn codex_safe_upstream_id(value: &str) -> String {
+    let mut output = String::new();
+    let mut last_dash = false;
+    for ch in value.trim().chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+            output.push(ch.to_ascii_lowercase());
+            last_dash = false;
+        } else if !last_dash {
+            output.push('-');
+            last_dash = true;
+        }
+    }
+    let output = output.trim_matches('-').to_string();
+    if output.is_empty() { CODEX_DEFAULT_MODEL_PROVIDER.to_string() } else { output }
+}
+
+fn build_codex_model_catalog_item(model: String, capabilities: &UpstreamCodexCatalogConfig) -> serde_json::Value {
+    let input_modalities = if capabilities.image_input {
+        serde_json::json!(["text", "image"])
+    } else {
+        serde_json::json!(["text"])
+    };
+    let web_search_tool_type = if capabilities.web_search {
+        serde_json::json!("text_and_image")
+    } else {
+        serde_json::json!("text")
+    };
+    let apply_patch_tool_type = serde_json::json!("freeform");
+    serde_json::json!({
+        "slug": model,
+        "display_name": model,
+        "description": "Token Proxy upstream model",
+        "base_instructions": "",
+        "model_messages": {},
+        "context_window": 1000000,
+        "max_context_window": 1000000,
+        "default_reasoning_level": "medium",
+        "default_reasoning_summary": "none",
+        "default_verbosity": "low",
+        "supported_reasoning_levels": [
+            { "effort": "low", "description": "Fast responses with lighter reasoning" },
+            { "effort": "medium", "description": "Balances speed and reasoning depth for everyday tasks" },
+            { "effort": "high", "description": "Greater reasoning depth for complex problems" },
+            { "effort": "xhigh", "description": "Extra high reasoning depth for complex problems" }
+        ],
+        "supports_reasoning_summaries": true,
+        "supports_parallel_tool_calls": capabilities.parallel_tool_calls,
+        "supports_search_tool": capabilities.web_search,
+        "supports_image_detail_original": capabilities.image_input,
+        "shell_type": "shell_command",
+        "support_verbosity": true,
+        "supported_in_api": true,
+        "additional_speed_tiers": [],
+        "availability_nux": null,
+        "effective_context_window_percent": 95,
+        "experimental_supported_tools": [],
+        "service_tiers": [],
+        "upgrade": null,
+        "web_search_tool_type": web_search_tool_type,
+        "input_modalities": input_modalities,
+        "visibility": "list",
+        "priority": 0,
+        "use_responses_lite": false,
+        "apply_patch_tool_type": apply_patch_tool_type,
+        "truncation_policy": { "mode": "tokens", "limit": 10000 }
+    })
 }
 
 fn apply_codex_proxy_settings(
     doc: &mut toml_edit::DocumentMut,
-    codex_model_provider: &str,
-    codex_provider_name: &str,
+    codex_target: &CodexTarget,
     codex_provider_base_url: &str,
 ) -> Result<(), String> {
+    let codex_model_provider = codex_target.provider_id.as_str();
     doc["disable_response_storage"] = toml_edit::value(CODEX_DISABLE_RESPONSE_STORAGE);
-    doc["model"] = toml_edit::value(CODEX_MODEL);
+    doc["model"] = toml_edit::value(codex_target.model.as_str());
     doc["model_provider"] = toml_edit::value(codex_model_provider);
     doc["model_reasoning_effort"] = toml_edit::value(CODEX_MODEL_REASONING_EFFORT);
     doc["network_access"] = toml_edit::value(CODEX_NETWORK_ACCESS);
     doc["preferred_auth_method"] = toml_edit::value(CODEX_PREFERRED_AUTH_METHOD);
+
+    // Codex TUI 的 /model 使用本地 catalog 文件；这里写入由 Token Proxy 配置生成的目录，
+    // 让所有已启用上游的模型都能出现在 /model 中。
+    doc["model_catalog_json"] = toml_edit::value(CODEX_MODEL_CATALOG_JSON);
 
     ensure_toml_table_path(doc, &["model_providers"])?;
     ensure_toml_table_path(doc, &["model_providers", codex_model_provider])?;
 
     doc["model_providers"][codex_model_provider]["base_url"] =
         toml_edit::value(codex_provider_base_url);
-    doc["model_providers"][codex_model_provider]["name"] = toml_edit::value(codex_provider_name);
+    doc["model_providers"][codex_model_provider]["name"] =
+        toml_edit::value(codex_target.provider_name.as_str());
     doc["model_providers"][codex_model_provider]["requires_openai_auth"] =
         toml_edit::value(CODEX_PROVIDER_REQUIRES_OPENAI_AUTH);
     doc["model_providers"][codex_model_provider]["wire_api"] =
@@ -418,32 +539,10 @@ async fn write_text_with_backup(path: &Path, contents: String) -> Result<(), Str
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_codex_proxy_settings, resolve_codex_target_provider_and_name};
+    use super::{apply_codex_proxy_settings, resolve_codex_target_from_config, CodexTarget};
+    use crate::proxy::config::{ProxyConfigFile, UpstreamConfig};
     use std::str::FromStr;
     use toml_edit::DocumentMut;
-
-    #[test]
-    fn resolve_codex_target_provider_preserves_existing_model_provider() {
-        let existing = r#"
-model_provider = "openai"
-
-[model_providers.openai]
-name = "OpenAI"
-"#;
-
-        let (provider, name) = resolve_codex_target_provider_and_name(existing);
-
-        assert_eq!(provider, "openai");
-        assert_eq!(name, "OpenAI");
-    }
-
-    #[test]
-    fn resolve_codex_target_provider_falls_back_to_token_proxy_for_empty_config() {
-        let (provider, name) = resolve_codex_target_provider_and_name("");
-
-        assert_eq!(provider, "token_proxy");
-        assert_eq!(name, "token_proxy");
-    }
 
     #[test]
     fn apply_codex_proxy_settings_keeps_existing_provider_id() {
@@ -456,7 +555,12 @@ base_url = "https://api.openai.com/v1"
 "#;
         let mut doc = DocumentMut::from_str(input).expect("parse config");
 
-        apply_codex_proxy_settings(&mut doc, "openai", "OpenAI", "http://127.0.0.1:9208/v1")
+        let target = CodexTarget {
+            model: "gpt-5.5".to_string(),
+            provider_id: "openai".to_string(),
+            provider_name: "OpenAI".to_string(),
+        };
+        apply_codex_proxy_settings(&mut doc, &target, "http://127.0.0.1:9208/v1")
             .expect("apply codex proxy settings");
 
         assert_eq!(doc["model_provider"].as_str(), Some("openai"));
@@ -476,15 +580,91 @@ base_url = "https://api.openai.com/v1"
     fn apply_codex_proxy_settings_writes_current_default_model() {
         let mut doc = DocumentMut::new();
 
-        apply_codex_proxy_settings(
-            &mut doc,
-            "token_proxy",
-            "token_proxy",
-            "http://127.0.0.1:9208/v1",
-        )
-        .expect("apply codex proxy settings");
+        let target = CodexTarget {
+            model: "gpt-5.5".to_string(),
+            provider_id: "token_proxy".to_string(),
+            provider_name: "token_proxy".to_string(),
+        };
+        apply_codex_proxy_settings(&mut doc, &target, "http://127.0.0.1:9208/v1")
+            .expect("apply codex proxy settings");
 
         assert_eq!(doc["model"].as_str(), Some("gpt-5.5"));
+        assert_eq!(doc["model_catalog_json"].as_str(), Some(super::CODEX_MODEL_CATALOG_JSON));
+    }
+
+    #[test]
+    fn apply_codex_proxy_settings_removes_stale_model_catalog() {
+        let input = r#"
+model = "LongCat-2.0"
+model_catalog_json = "cc-switch-model-catalog.json"
+model_provider = "tokenproxy"
+"#;
+        let mut doc = DocumentMut::from_str(input).expect("parse config");
+
+        let target = CodexTarget {
+            model: "gpt-5.5".to_string(),
+            provider_id: "tokenskingdom-openai-responses".to_string(),
+            provider_name: "tokenskingdom-openai-responses".to_string(),
+        };
+        apply_codex_proxy_settings(&mut doc, &target, "http://127.0.0.1:19208/v1")
+            .expect("apply codex proxy settings");
+
+        assert_eq!(doc["model"].as_str(), Some("gpt-5.5"));
+        assert_eq!(
+            doc["model_provider"].as_str(),
+            Some("tokenskingdom-openai-responses")
+        );
+        assert_eq!(doc["model_catalog_json"].as_str(), Some(super::CODEX_MODEL_CATALOG_JSON));
+    }
+
+    fn upstream_config(id: &str, priority: i32, model: &str) -> UpstreamConfig {
+        let mut model_mappings = std::collections::HashMap::new();
+        model_mappings.insert(model.to_string(), model.to_string());
+        UpstreamConfig {
+            id: id.to_string(),
+            providers: vec!["openai-response".to_string()],
+            base_url: "https://example.test/v1".to_string(),
+            api_keys: Vec::new(),
+            filter_prompt_cache_retention: false,
+            filter_safety_identifier: false,
+            use_chat_completions_for_responses: false,
+            rewrite_developer_role_to_system: false,
+            kiro_account_id: None,
+            codex_account_id: None,
+            preferred_endpoint: None,
+            proxy_url: None,
+            priority: Some(priority),
+            enabled: true,
+            model_mappings,
+            convert_from_map: std::collections::HashMap::new(),
+            overrides: None,
+            codex_catalog: super::UpstreamCodexCatalogConfig::default(),
+        }
+    }
+
+    #[test]
+    fn resolve_codex_target_uses_enabled_highest_priority_upstream() {
+        let mut config = ProxyConfigFile::default();
+        let old = upstream_config("company-claude-relay", 0, "claude-sonnet-4.6");
+        let current = upstream_config("tokenskingdom-openai-responses", 20, "gpt-5.5");
+        config.upstreams = vec![old, current];
+
+        let target = resolve_codex_target_from_config(&config);
+
+        assert_eq!(target.model, "tokenskingdom-openai-responses/gpt-5.5");
+        assert_eq!(target.provider_id, "tokenskingdom-openai-responses");
+        assert_eq!(target.provider_name, "tokenskingdom-openai-responses");
+    }
+
+    #[test]
+    fn resolve_codex_target_falls_back_without_enabled_upstream() {
+        let config = ProxyConfigFile::default();
+
+        let target = resolve_codex_target_from_config(&config);
+
+        assert_eq!(target.model, "gpt-5.5");
+        assert_eq!(target.provider_id, "token_proxy");
+        assert_eq!(target.provider_name, "token_proxy");
     }
 }
 

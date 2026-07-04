@@ -27,6 +27,12 @@ function buildUpstream(): UpstreamForm {
     priority: "10",
     enabled: true,
     modelMappings: [],
+    codexCatalog: {
+      imageInput: false,
+      webSearch: false,
+      parallelToolCalls: false,
+      applyPatch: false,
+    },
     convertFromMap: {},
     overrides: { header: [] },
   };

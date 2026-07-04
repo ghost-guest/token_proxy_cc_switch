@@ -60,6 +60,10 @@ pub(super) async fn aggregate_model_catalog_request(
     .await
 }
 
+pub(super) async fn aggregate_all_model_catalog_request(state: Arc<ProxyState>) -> Response {
+    catalog::aggregate_all_model_catalog_request(state).await
+}
+
 pub(super) async fn refresh_model_discovery(state: Arc<ProxyState>) {
     catalog::refresh_model_discovery(state).await;
 }

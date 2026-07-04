@@ -240,7 +240,14 @@ export function UpstreamsCard({
               if (!upstream) {
                 return;
               }
-              onChange(index, { enabled: !upstream.enabled });
+              const maxPriority = Math.max(
+                0,
+                ...upstreams.map((item) => Number.parseInt(item.priority.trim(), 10)).filter(Number.isFinite)
+              );
+              const nextPriority = String(maxPriority + 1);
+              if (!upstream.enabled || upstream.priority !== nextPriority) {
+                onChange(index, { enabled: true, priority: nextPriority });
+              }
             }}
             onDelete={(index) => setDeleteDialog({ open: true, index })}
           />

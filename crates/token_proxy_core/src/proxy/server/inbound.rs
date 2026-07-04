@@ -54,19 +54,6 @@ pub(super) async fn prepare_inbound_request(
         state.config.max_request_body_bytes,
     )
     .await?;
-    let (plan, body) = resolve_plan_or_respond(
-        &state.config,
-        &state.log,
-        headers,
-        body,
-        capture_request_detail_enabled,
-        client_ip.clone(),
-        &path,
-        query.as_deref(),
-        request_start,
-        state.config.max_request_body_bytes,
-    )
-    .await?;
     let body = read_body_or_respond(
         &state.log,
         headers,
@@ -86,6 +73,17 @@ pub(super) async fn prepare_inbound_request(
         .unwrap_or_else(|| path.clone());
     let mut meta = parse_request_meta_best_effort(&path_with_query, &body).await;
     meta.client_ip = client_ip.clone();
+    let plan = resolve_plan_or_respond(
+        &state.config,
+        &state.log,
+        headers,
+        client_ip.clone(),
+        &path,
+        query.as_deref(),
+        request_start,
+        Some(&meta),
+    )
+    .await?;
     let request_detail = if capture_request_detail_enabled {
         Some(capture_request_detail(headers, &body, state.config.max_request_body_bytes).await)
     } else {
@@ -141,29 +139,22 @@ pub(super) async fn resolve_plan_or_respond(
     config: &ProxyConfig,
     log: &Arc<LogWriter>,
     headers: &HeaderMap,
-    body: Body,
-    capture_request_detail_enabled: bool,
     client_ip: Option<String>,
     path: &str,
     query: Option<&str>,
     request_start: Instant,
-    max_body_bytes: usize,
-) -> Result<(DispatchPlan, Body), Response> {
-    match resolve_dispatch_plan_with_request(config, path, headers, query) {
+    meta: Option<&RequestMeta>,
+) -> Result<DispatchPlan, Response> {
+    match super::dispatch::resolve_dispatch_plan_with_meta(config, path, headers, query, meta) {
         Ok(plan) => {
             tracing::debug!(provider = %plan.provider, "dispatch plan resolved");
-            Ok((plan, body))
+            Ok(plan)
         }
         Err(message) => {
             tracing::warn!("no dispatch plan found");
-            let detail = if capture_request_detail_enabled {
-                Some(capture_detail_from_body(headers, body, max_body_bytes).await)
-            } else {
-                None
-            };
             log_request_error(
                 log,
-                detail,
+                None,
                 client_ip,
                 path,
                 PROVIDER_PROXY,

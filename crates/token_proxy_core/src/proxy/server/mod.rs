@@ -12,7 +12,7 @@ use std::{
 use tokio::sync::RwLock;
 
 use super::{
-    http, server_helpers::extract_request_path, upstream::aggregate_model_catalog_request,
+    http, server_helpers::extract_request_path, upstream::aggregate_all_model_catalog_request,
     ProxyState, RequestMeta,
 };
 
@@ -148,56 +148,7 @@ async fn proxy_request_inner(
             Ok(body) => body,
             Err(response) => return http::with_cors_headers(&state.config, &headers, response),
         };
-        let (plan, _body) = match resolve_plan_or_respond(
-            &state.config,
-            &state.log,
-            &headers,
-            body,
-            capture_request_detail_enabled,
-            client_ip.clone(),
-            &path,
-            query.as_deref(),
-            request_start,
-            state.config.max_request_body_bytes,
-        )
-        .await
-        {
-            Ok(result) => result,
-            Err(response) => return http::with_cors_headers(&state.config, &headers, response),
-        };
-        let request_auth = match resolve_request_auth_or_respond(
-            &state.config,
-            &headers,
-            &state.log,
-            None,
-            client_ip.clone(),
-            &path,
-            plan.provider,
-            request_start,
-        ) {
-            Ok(request_auth) => request_auth,
-            Err(response) => return http::with_cors_headers(&state.config, &headers, response),
-        };
-        let meta = RequestMeta {
-            client_ip: client_ip.clone(),
-            stream: false,
-            original_model: None,
-            mapped_model: None,
-            reasoning_effort: None,
-            response_format: None,
-            estimated_input_tokens: None,
-        };
-        let outbound_path = resolve_outbound_path(&path, &plan, &meta);
-        let outbound_path_with_query = build_outbound_path_with_query(&outbound_path, &uri);
-        let response = aggregate_model_catalog_request(
-            state.clone(),
-            plan.provider,
-            &path,
-            &outbound_path_with_query,
-            &headers,
-            &request_auth,
-        )
-        .await;
+        let response = aggregate_all_model_catalog_request(state.clone()).await;
         return http::with_cors_headers(&state.config, &headers, response);
     }
 

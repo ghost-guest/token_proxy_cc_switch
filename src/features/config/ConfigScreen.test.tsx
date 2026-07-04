@@ -147,6 +147,9 @@ describe("config/ConfigScreen auto save", () => {
       if (command === "save_proxy_config") {
         return { ...createSaveResult(), args };
       }
+      if (command === "write_codex_config") {
+        return { paths: ["/tmp/codex-config.toml", "/tmp/codex-auth.json"] };
+      }
       throw new Error(`unexpected command: ${command}`);
     });
 
@@ -192,6 +195,9 @@ describe("config/ConfigScreen auto save", () => {
       }
       if (command === "save_proxy_config") {
         throw new Error("disk full");
+      }
+      if (command === "write_codex_config") {
+        return { paths: ["/tmp/codex-config.toml", "/tmp/codex-auth.json"] };
       }
       throw new Error(`unexpected command: ${command}`);
     });
@@ -281,6 +287,9 @@ describe("config/ConfigScreen auto save", () => {
       if (command === "save_proxy_config") {
         throw new Error("disk full");
       }
+      if (command === "write_codex_config") {
+        return { paths: ["/tmp/codex-config.toml", "/tmp/codex-auth.json"] };
+      }
       throw new Error(`unexpected command: ${command}`);
     });
 
@@ -331,6 +340,9 @@ describe("config/ConfigScreen auto save", () => {
           last_error: null,
         });
       }
+      if (command === "write_codex_config") {
+        return { paths: ["/tmp/codex-config.toml", "/tmp/codex-auth.json"] };
+      }
       throw new Error(`unexpected command: ${command}`);
     });
 
@@ -373,6 +385,9 @@ describe("config/ConfigScreen auto save", () => {
           },
           "Failed to bind 127.0.0.1:9300"
         );
+      }
+      if (command === "write_codex_config") {
+        return { paths: ["/tmp/codex-config.toml", "/tmp/codex-auth.json"] };
       }
       throw new Error(`unexpected command: ${command}`);
     });

@@ -1,0 +1,79 @@
+// Token Proxy: multiple Claude/Anthropic relays for Codex/OpenAI clients.
+// Fill each base_url/api_keys with your real relay. Keep one upstream per relay
+// when each relay has its own host/key/quota/priority.
+{
+  "host": "127.0.0.1",
+  "port": 9208,
+  "local_api_key": null,
+
+  // Same-priority relays can be used as failover or balanced pool.
+  // order=round_robin rotates the first candidate across requests.
+  // dispatch=serial tries one at a time; change to hedged/race if you want parallel failover.
+  "upstream_strategy": {
+    "order": "round_robin",
+    "dispatch": { "type": "serial" }
+  },
+
+  "upstreams": [
+    {
+      "id": "claude-relay-a",
+      "enabled": true,
+      "priority": 10,
+      "providers": ["anthropic"],
+      "base_url": "https://RELAY_A_BASE_URL",
+      "api_keys": ["RELAY_A_KEY"],
+      "convert_from_map": {
+        "anthropic": ["openai_responses", "openai_chat"]
+      },
+      "model_mappings": {
+        "*": "DeepSeekv4flash"
+      },
+      "overrides": {
+        "header": {
+          "user-agent": "claude-cli/1.0.0 (external, cli)",
+          "anthropic-version": "2023-06-01"
+        }
+      }
+    },
+    {
+      "id": "claude-relay-b",
+      "enabled": true,
+      "priority": 10,
+      "providers": ["anthropic"],
+      "base_url": "https://RELAY_B_BASE_URL",
+      "api_keys": ["RELAY_B_KEY"],
+      "convert_from_map": {
+        "anthropic": ["openai_responses", "openai_chat"]
+      },
+      "model_mappings": {
+        "*": "DeepSeekv4flash"
+      },
+      "overrides": {
+        "header": {
+          "user-agent": "claude-cli/1.0.0 (external, cli)",
+          "anthropic-version": "2023-06-01"
+        }
+      }
+    },
+    {
+      "id": "claude-relay-backup-low-priority",
+      "enabled": true,
+      "priority": 0,
+      "providers": ["anthropic"],
+      "base_url": "https://BACKUP_RELAY_BASE_URL",
+      "api_keys": ["BACKUP_RELAY_KEY"],
+      "convert_from_map": {
+        "anthropic": ["openai_responses", "openai_chat"]
+      },
+      "model_mappings": {
+        "*": "DeepSeekv4flash"
+      },
+      "overrides": {
+        "header": {
+          "user-agent": "claude-cli/1.0.0 (external, cli)",
+          "anthropic-version": "2023-06-01"
+        }
+      }
+    }
+  ]
+}

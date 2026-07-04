@@ -276,6 +276,20 @@ function renderProxyUrlCell(upstream: UpstreamForm, showApiKeys: boolean) {
   return renderTextCell(value, m.upstreams_proxy_direct());
 }
 
+function renderModelMappingsCell(upstream: UpstreamForm) {
+  const models = upstream.modelMappings
+    .map((mapping) => mapping.pattern.trim())
+    .filter(Boolean);
+  const label = models.length ? models.join(", ") : CELL_PLACEHOLDER;
+  return (
+    <CellTooltip content={models.join("\n")} disabled={!models.length}>
+      <span className={models.length ? "block w-full truncate text-foreground" : "block w-full truncate text-muted-foreground"}>
+        {label}
+      </span>
+    </CellTooltip>
+  );
+}
+
 function renderUpstreamCell(
   columnId: UpstreamColumnId,
   upstream: UpstreamForm,
@@ -290,6 +304,8 @@ function renderUpstreamCell(
       return renderTextCell(upstream.id, "openai-default");
     case "provider":
       return renderTextCell(providerLabel, "openai");
+    case "models":
+      return renderModelMappingsCell(upstream);
     case "baseUrl":
       return renderTextCell(upstream.baseUrl, "https://api.openai.com");
     case "apiKeys":

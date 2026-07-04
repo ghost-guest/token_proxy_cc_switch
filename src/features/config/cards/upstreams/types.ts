@@ -3,6 +3,7 @@ import type { UpstreamForm } from "@/features/config/types";
 export type UpstreamColumnId =
   | "id"
   | "provider"
+  | "models"
   | "baseUrl"
   | "apiKeys"
   | "proxyUrl"

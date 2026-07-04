@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import { m } from "@/paraglide/messages.js";
+import type { ConfigForm, UpstreamForm } from "@/features/config/types";
 
 import {
   PlaintextWarning,
@@ -23,6 +24,7 @@ import {
 type ClientSetupCardProps = {
   savedAt: string;
   isDirty: boolean;
+  form: ConfigForm;
 };
 
 type ToolListItem = {
@@ -49,6 +51,53 @@ type ToolBuildActionArgs = {
   action: ActionState;
   onApply: () => void;
 };
+
+function parsePriority(value: string) {
+  const parsed = Number.parseInt(value.trim(), 10);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function firstMappedModel(upstream: UpstreamForm) {
+  return upstream.modelMappings
+    .map((mapping) => mapping.pattern.trim())
+    .find((model) => model.length > 0);
+}
+
+function findActiveUpstream(form: ConfigForm) {
+  return form.upstreams
+    .map((upstream, index) => ({ upstream, index, priority: parsePriority(upstream.priority) }))
+    .filter((entry) => entry.upstream.enabled)
+    .sort((left, right) => {
+      if (left.priority !== right.priority) {
+        return right.priority - left.priority;
+      }
+      return left.index - right.index;
+    })[0]?.upstream;
+}
+
+export function deriveClientSetupFromForm(
+  setup: ClientSetupInfo | null,
+  form: ConfigForm
+): ClientSetupInfo | null {
+  if (!setup) {
+    return null;
+  }
+  const activeUpstream = findActiveUpstream(form);
+  if (!activeUpstream) {
+    return setup;
+  }
+  const activeModel = firstMappedModel(activeUpstream) ?? setup.codex_model;
+  const providerId = activeUpstream.id.trim();
+  if (!providerId) {
+    return { ...setup, codex_model: activeModel };
+  }
+  return {
+    ...setup,
+    codex_model: activeModel,
+    codex_model_provider: providerId,
+    codex_provider_name: providerId,
+  };
+}
 
 function buildClaudeTool({
   setup,
@@ -133,9 +182,10 @@ function ToolCards({ tools }: { tools: readonly ToolListItem[] }) {
   );
 }
 
-export function ClientSetupCard({ savedAt, isDirty }: ClientSetupCardProps) {
+export function ClientSetupCard({ savedAt, isDirty, form }: ClientSetupCardProps) {
   const canApply = !isDirty;
   const { previewState, previewMessage, setup, loadPreview } = useClientSetupPreview(savedAt);
+  const derivedSetup = deriveClientSetupFromForm(setup, form);
 
   const claude = useWriteAction("write_claude_code_settings", loadPreview);
   const codex = useWriteAction("write_codex_config", loadPreview);
@@ -146,7 +196,7 @@ export function ClientSetupCard({ savedAt, isDirty }: ClientSetupCardProps) {
     codex.action.state === "working";
 
   const baseArgs: ToolBuildBaseArgs = {
-    setup,
+    setup: derivedSetup,
     previewState,
     previewMessage,
     canApply,

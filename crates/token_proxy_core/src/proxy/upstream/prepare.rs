@@ -301,16 +301,34 @@ pub(super) fn requested_target_upstream_id(
         .groups
         .iter()
         .flat_map(|group| group.items.iter())
-        .find(|upstream| upstream.id == prefix)
+        .find(|upstream| upstream.id == prefix || safe_upstream_prefix(upstream.id.as_str()) == prefix)
         .map(|upstream| upstream.id.clone())
 }
 
 fn strip_target_upstream_prefix(model: &str, upstream_id: &str) -> Option<String> {
     let (prefix, rest) = model.split_once('/')?;
-    if prefix != upstream_id || rest.trim().is_empty() {
+    if rest.trim().is_empty() {
         return None;
     }
-    Some(rest.to_string())
+    if prefix == upstream_id || prefix == safe_upstream_prefix(upstream_id) {
+        return Some(rest.to_string());
+    }
+    None
+}
+
+fn safe_upstream_prefix(value: &str) -> String {
+    let mut output = String::new();
+    let mut last_dash = false;
+    for ch in value.trim().chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+            output.push(ch.to_ascii_lowercase());
+            last_dash = false;
+        } else if !last_dash {
+            output.push('-');
+            last_dash = true;
+        }
+    }
+    output.trim_matches('-').to_string()
 }
 
 pub(super) fn normalize_mapped_model_reasoning_suffix(

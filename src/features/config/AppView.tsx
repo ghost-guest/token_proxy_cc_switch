@@ -286,7 +286,7 @@ function ConfigSectionBody({
     case "agents":
       return (
         <div className="flex flex-col gap-4">
-          <ClientSetupCard savedAt={props.savedAt} isDirty={props.isDirty} />
+          <ClientSetupCard savedAt={props.savedAt} isDirty={props.isDirty} form={props.form} />
         </div>
       );
     default:

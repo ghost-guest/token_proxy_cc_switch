@@ -1,0 +1,47 @@
+// Token Proxy: Codex/OpenAI -> Claude/Anthropic /v1/messages relay
+// Fill YOUR_CLAUDE_RELAY_BASE_URL and YOUR_RELAY_API_KEY before real use.
+// If your relay URL is https://relay.example.com/v1/messages, set base_url to https://relay.example.com .
+// If your relay URL is https://relay.example.com/anthropic/v1/messages, set base_url to https://relay.example.com/anthropic .
+{
+  "host": "127.0.0.1",
+  "port": 9208,
+  "local_api_key": null,
+  "app_proxy_url": null,
+  "cors_enabled": false,
+  "model_list_prefix": false,
+  "log_level": "info",
+
+  "upstreams": [
+    {
+      "id": "claude-relay-deepseek-v4flash",
+      "enabled": true,
+      "priority": 0,
+
+      // This upstream speaks Anthropic Messages. Token Proxy can convert inbound
+      // OpenAI /v1/chat/completions and /v1/responses to outbound /v1/messages.
+      "providers": ["anthropic"],
+      "base_url": "https://YOUR_CLAUDE_RELAY_BASE_URL",
+      "api_keys": ["YOUR_RELAY_API_KEY"],
+
+      // Let Codex use either wire_api = "responses" or wire_api = "chat".
+      "convert_from_map": {
+        "anthropic": ["openai_responses", "openai_chat"]
+      },
+
+      // Make any inbound model name resolve to your working relay model.
+      // If you want stricter mapping, replace "*" with the exact Codex model name.
+      "model_mappings": {
+        "*": "DeepSeekv4flash"
+      },
+
+      // Upstream header overrides. These are applied after Token Proxy's own
+      // Codex/Anthropic defaults, so user-agent here wins.
+      "overrides": {
+        "header": {
+          "user-agent": "claude-cli/1.0.0 (external, cli)",
+          "anthropic-version": "2023-06-01"
+        }
+      }
+    }
+  ]
+}

@@ -16,8 +16,8 @@ pub(crate) use hot_model_mappings::expand_model_ids_with_mappings;
 pub(crate) use types::StaticApiKeyHeaders;
 pub use types::{
     ConfigResponse, HeaderOverride, InboundApiFormat, KiroPreferredEndpoint, ProviderUpstreams,
-    ProxyConfig, ProxyConfigFile, TrayTokenRateConfig, TrayTokenRateFormat, UpstreamConfig,
-    UpstreamDispatchRuntime, UpstreamDispatchStrategy, UpstreamGroup, UpstreamOrderStrategy,
+    ProxyConfig, ProxyConfigFile, TrayTokenRateConfig, TrayTokenRateFormat, UpstreamCodexCatalogConfig,
+    UpstreamConfig, UpstreamDispatchRuntime, UpstreamDispatchStrategy, UpstreamGroup, UpstreamOrderStrategy,
     UpstreamOverrides, UpstreamRuntime, UpstreamStrategy, UpstreamStrategyRuntime,
 };
 
