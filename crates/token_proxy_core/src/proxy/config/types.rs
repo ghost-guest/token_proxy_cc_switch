@@ -226,7 +226,7 @@ pub struct UpstreamConfig {
 
 
 impl UpstreamCodexCatalogConfig {
-    fn is_default(value: &Self) -> bool {
+    pub(crate) fn is_default(value: &Self) -> bool {
         !value.image_input && !value.web_search && !value.parallel_tool_calls && !value.apply_patch
     }
 }
@@ -433,6 +433,7 @@ pub struct UpstreamRuntime {
     pub(crate) model_mappings: Option<ModelMappingRules>,
     pub(crate) header_overrides: Option<Vec<HeaderOverride>>,
     pub(crate) allowed_inbound_formats: InboundApiFormatMask,
+    pub(crate) codex_catalog: UpstreamCodexCatalogConfig,
 }
 
 #[derive(Clone)]

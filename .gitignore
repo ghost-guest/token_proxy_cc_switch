@@ -39,3 +39,5 @@ target/
 findings.md
 progress.md
 task_plan.md
+
+.vite/

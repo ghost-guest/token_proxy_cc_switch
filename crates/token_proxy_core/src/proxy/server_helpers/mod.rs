@@ -224,6 +224,57 @@ fn snapshot_headers_raw(headers: &HeaderMap) -> Vec<(String, String)> {
         .collect()
 }
 
+
+/// Strip image content from request body for models that don't support images.
+/// Works with all API formats: Responses (input_image), Chat (image_url), Messages (image).
+fn strip_image_content_for_model(body: &[u8], model_hint: Option<&str>) -> Vec<u8> {
+    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(body) else { return body.to_vec() };
+    let Some(object) = value.as_object_mut() else { return body.to_vec() };
+    let model = object.get("model").and_then(serde_json::Value::as_str).or(model_hint).unwrap_or("");
+    if model.is_empty() || model_supports_image_input(model) { return body.to_vec(); }
+    let mut changed = false;
+    if let Some(input) = object.get_mut("input").and_then(serde_json::Value::as_array_mut) {
+        let before = input.len();
+        input.retain(|item| !is_image_content_item(item));
+        changed |= input.len() != before;
+    }
+    if let Some(messages) = object.get_mut("messages").and_then(serde_json::Value::as_array_mut) {
+        for message in messages.iter_mut() {
+            let Some(msg_obj) = message.as_object_mut() else { continue };
+            let Some(content) = msg_obj.get_mut("content") else { continue };
+            if let Some(content_array) = content.as_array_mut() {
+                let before = content_array.len();
+                content_array.retain(|part| !is_image_content_item(part));
+                changed |= content_array.len() != before;
+            }
+        }
+    }
+    if changed { serde_json::to_vec(&value).unwrap_or_else(|_| body.to_vec()) } else { body.to_vec() }
+}
+fn is_image_content_item(item: &serde_json::Value) -> bool {
+    let Some(obj) = item.as_object() else { return false; };
+    let Some(type_val) = obj.get("type").and_then(serde_json::Value::as_str) else { return false; };
+    matches!(type_val, "input_image" | "image_url" | "image")
+}
+fn model_supports_image_input(model: &str) -> bool {
+    let short = model.rsplit('/').next().unwrap_or(model).trim().to_ascii_lowercase();
+    if short.starts_with("gpt-") || short.starts_with("claude-") || short.starts_with("claude")
+        || short.starts_with("gemini-") || short.starts_with("gemini")
+        || short.starts_with("minimax-") || short.starts_with("minimax")
+        || short.starts_with("mimo-") || short.starts_with("mimo")
+        || short.starts_with("longcat-") || short.starts_with("longcat")
+        || short.starts_with("qwen-") || short.starts_with("qwen")
+        || short.starts_with("pixtral-") || short.starts_with("pixtral")
+    { return true; }
+    if (short.starts_with("deepseek-") || short.starts_with("deepseek")) && !short.contains("vl") && !short.contains("vision")
+    { return false; }
+    if short.starts_with("llama-") || short.starts_with("llama")
+    { return short.contains("vision") || short.contains("vl"); }
+    if short.starts_with("command-") || short.starts_with("command")
+    { return false; }
+    true
+}
+
 pub(crate) async fn maybe_transform_request_body(
     http_clients: &ProxyHttpClients,
     _provider: &str,
@@ -234,6 +285,20 @@ pub(crate) async fn maybe_transform_request_body(
     body: ReplayableBody,
 ) -> Result<ReplayableBody, RequestError> {
     if transform == FormatTransform::None {
+        // Even without format transform, strip image content for non-vision models
+        if let Some(bytes) = body
+            .read_bytes_if_small(REQUEST_TRANSFORM_LIMIT_BYTES)
+            .await
+            .map_err(|err| {
+                RequestError::new(
+                    StatusCode::BAD_REQUEST,
+                    format!("Failed to read request body: {err}"),
+                )
+            })?
+        {
+            let stripped = strip_image_content_for_model(&bytes, model_hint);
+            return Ok(ReplayableBody::from_bytes(stripped.into()));
+        }
         return Ok(body);
     }
 
@@ -282,7 +347,11 @@ pub(crate) async fn maybe_transform_request_body(
     )
     .await
     .map_err(|message| RequestError::new(StatusCode::BAD_REQUEST, message))?;
-    let outbound_body = ReplayableBody::from_bytes(outbound_bytes);
+
+    // 根据模型能力过滤图片内容
+    let outbound_bytes = strip_image_content_for_model(&outbound_bytes, model_hint);
+
+    let outbound_body = ReplayableBody::from_bytes(outbound_bytes.into());
     log_debug_headers_body(
         "transform.output",
         None,

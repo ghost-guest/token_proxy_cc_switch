@@ -20,6 +20,7 @@ fn runtime(id: &str, selector_key: &str) -> UpstreamRuntime {
         model_mappings: None,
         header_overrides: None,
         allowed_inbound_formats: Default::default(),
+        codex_catalog: Default::default(),
     }
 }
 

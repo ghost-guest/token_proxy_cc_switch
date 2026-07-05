@@ -25,6 +25,7 @@ fn test_upstream(
         model_mappings: None,
         header_overrides: None,
         allowed_inbound_formats: Default::default(),
+        codex_catalog: Default::default(),
     }
 }
 
@@ -111,6 +112,64 @@ async fn filters_safety_identifier_for_openai_responses_upstream() {
     assert!(value.get("safety_identifier").is_none());
     assert_eq!(value.get("prompt_cache_retention"), None);
     assert_eq!(value.get("model").and_then(Value::as_str), Some("gpt-4o"));
+}
+
+
+#[tokio::test]
+async fn filters_unadvertised_codex_response_tools() {
+    let mut upstream = test_upstream(false, false, false);
+    upstream.codex_catalog.image_input = true;
+    upstream.codex_catalog.web_search = false;
+    upstream.codex_catalog.parallel_tool_calls = false;
+    upstream.codex_catalog.apply_patch = false;
+    let body = ReplayableBody::from_bytes(Bytes::from_static(
+        br#"{
+            "model":"gpt-5.5",
+            "parallel_tool_calls":true,
+            "tool_choice":"auto",
+            "tools":[
+                {"type":"image_generation"},
+                {"type":"web_search_preview"},
+                {"type":"function","name":"apply_patch"},
+                {"type":"function","name":"allowed_function"}
+            ],
+            "include":["output.image_generation_call.results","web_search_call.action.sources","message.output_text"],
+            "input":[{"role":"user","content":[{"type":"input_text","text":"describe"},{"type":"input_image","image_url":"data:image/png;base64,AAAA"}]}]
+        }"#,
+    ));
+
+    let rewritten = match maybe_filter_openai_responses_request_fields(
+        "openai-response",
+        &upstream,
+        "/v1/responses",
+        &body,
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(_) => panic!("rewrite result"),
+    }
+    .expect("should rewrite");
+    let bytes = rewritten
+        .read_bytes_if_small(4096)
+        .await
+        .expect("read rewritten bytes")
+        .expect("rewritten body exists");
+    let value: Value = serde_json::from_slice(&bytes).expect("json");
+
+    let tools = value.get("tools").and_then(Value::as_array).expect("tools");
+    assert_eq!(tools.len(), 3);
+    assert_eq!(tools[0].get("type").and_then(Value::as_str), Some("web_search_preview"));
+    assert_eq!(tools[1].get("name").and_then(Value::as_str), Some("apply_patch"));
+    assert_eq!(tools[2].get("name").and_then(Value::as_str), Some("allowed_function"));
+    // image_generation was stripped
+    let include = value.get("include").and_then(Value::as_array).expect("include");
+    assert_eq!(include.len(), 2);
+    assert!(include[0].as_str().unwrap_or("").contains("web_search_call"));
+    assert_eq!(include[1].as_str(), Some("message.output_text"));
+    // image_generation call results stripped
+    let input = value.get("input").and_then(Value::as_array).expect("input");
+    assert!(serde_json::to_string(input).expect("input json").contains("input_image"));
 }
 
 #[tokio::test]

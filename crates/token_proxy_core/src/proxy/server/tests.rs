@@ -97,6 +97,7 @@ fn config_with_runtime_upstreams(
             model_mappings: None,
             header_overrides: None,
             allowed_inbound_formats: Default::default(),
+            codex_catalog: Default::default(),
         };
         runtime
             .allowed_inbound_formats

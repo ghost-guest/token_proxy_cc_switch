@@ -72,6 +72,7 @@ fn hot_model_test_upstream(model_mappings: Option<ModelMappingRules>) -> Upstrea
         model_mappings,
         header_overrides: None,
         allowed_inbound_formats: Default::default(),
+        codex_catalog: Default::default(),
     }
 }
 
@@ -154,6 +155,7 @@ fn test_upstream_url() {
         model_mappings: None,
         header_overrides: None,
         allowed_inbound_formats: Default::default(),
+        codex_catalog: Default::default(),
     };
     assert_eq!(
         upstream.upstream_url("/v1/chat/completions"),
@@ -179,6 +181,7 @@ fn test_upstream_url() {
         model_mappings: None,
         header_overrides: None,
         allowed_inbound_formats: Default::default(),
+        codex_catalog: Default::default(),
     };
     assert_eq!(
         upstream_responses.upstream_url("/v1/responses"),
@@ -203,6 +206,7 @@ fn test_upstream_url() {
         model_mappings: None,
         header_overrides: None,
         allowed_inbound_formats: Default::default(),
+        codex_catalog: Default::default(),
     };
     assert_eq!(
         coding_plan.upstream_url("/v1/chat/completions"),
@@ -228,6 +232,7 @@ fn test_upstream_url() {
         model_mappings: None,
         header_overrides: None,
         allowed_inbound_formats: Default::default(),
+        codex_catalog: Default::default(),
     };
     assert_eq!(
         upstream_no_path.upstream_url("/v1/chat/completions"),
@@ -257,6 +262,7 @@ fn test_upstream_url() {
         model_mappings: None,
         header_overrides: None,
         allowed_inbound_formats: Default::default(),
+        codex_catalog: Default::default(),
     };
     // openai: /v1/chat/completions
     assert_eq!(

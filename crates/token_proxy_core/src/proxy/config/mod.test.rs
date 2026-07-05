@@ -33,6 +33,7 @@ fn build_runtime_config_routes_openai_responses_via_chat_when_enabled() {
         model_mappings: HashMap::new(),
         convert_from_map: HashMap::new(),
         overrides: None,
+        codex_catalog: Default::default(),
     }];
 
     let runtime = build_runtime_config(config).expect("runtime config");
@@ -72,6 +73,7 @@ fn build_runtime_config_keeps_openai_responses_provider_when_chat_compat_disable
         model_mappings: HashMap::new(),
         convert_from_map: HashMap::new(),
         overrides: None,
+        codex_catalog: Default::default(),
     }];
 
     let runtime = build_runtime_config(config).expect("runtime config");
@@ -110,6 +112,7 @@ fn build_runtime_config_codex_accepts_chat_and_responses_by_default() {
         model_mappings: HashMap::new(),
         convert_from_map: HashMap::new(),
         overrides: None,
+        codex_catalog: Default::default(),
     }];
 
     let runtime = build_runtime_config(config).expect("runtime config");
@@ -316,6 +319,7 @@ fn build_runtime_config_expands_multiple_api_keys_into_multiple_runtime_upstream
         model_mappings: HashMap::new(),
         convert_from_map: HashMap::new(),
         overrides: None,
+        codex_catalog: Default::default(),
     }];
 
     let runtime = build_runtime_config(config).expect("runtime config");
@@ -353,6 +357,7 @@ fn build_runtime_config_rejects_api_key_that_cannot_be_precompiled_as_header() {
         model_mappings: HashMap::new(),
         convert_from_map: HashMap::new(),
         overrides: None,
+        codex_catalog: Default::default(),
     }];
 
     let result = build_runtime_config(config);
@@ -381,6 +386,7 @@ fn build_runtime_config_rejects_unsupported_provider() {
         model_mappings: HashMap::new(),
         convert_from_map: HashMap::new(),
         overrides: None,
+        codex_catalog: Default::default(),
     }];
 
     let result = build_runtime_config(config);
@@ -409,6 +415,7 @@ fn build_runtime_config_rejects_multiple_api_keys_for_account_based_provider() {
         model_mappings: HashMap::new(),
         convert_from_map: HashMap::new(),
         overrides: None,
+        codex_catalog: Default::default(),
     }];
 
     let result = build_runtime_config(config);
@@ -438,6 +445,7 @@ fn build_runtime_config_allows_account_based_provider_without_binding_account_id
             model_mappings: HashMap::new(),
             convert_from_map: HashMap::new(),
             overrides: None,
+            codex_catalog: Default::default(),
         },
         UpstreamConfig {
             id: "codex-default".to_string(),
@@ -457,6 +465,7 @@ fn build_runtime_config_allows_account_based_provider_without_binding_account_id
             model_mappings: HashMap::new(),
             convert_from_map: HashMap::new(),
             overrides: None,
+            codex_catalog: Default::default(),
         },
     ];
 

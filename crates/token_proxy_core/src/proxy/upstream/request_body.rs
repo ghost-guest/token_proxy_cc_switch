@@ -103,6 +103,7 @@ async fn build_json_transformed_body(
     )?;
     changed |= rewrite_developer_roles_if_needed(upstream, upstream_path, object, body_len);
     changed |= filter_anthropic_count_tokens_request(provider, upstream_path, object, body_len);
+    changed |= filter_image_content_for_model(object, body_len);
     changed |= inject_codex_installation_id(object, provider, codex_openai_device_id);
     if !changed {
         return Ok(None);
@@ -140,6 +141,8 @@ fn json_transform_read_limit(
     if should_inject_codex_installation_id(provider, codex_openai_device_id) {
         limit = limit.max(REQUEST_FILTER_LIMIT_BYTES);
     }
+    // 图片过滤始终需要读取请求体
+    limit = limit.max(REQUEST_FILTER_LIMIT_BYTES);
     limit
 }
 
@@ -157,6 +160,8 @@ fn needs_json_transform(
         || should_rewrite_developer_roles(upstream, upstream_path)
         || should_filter_anthropic_count_tokens_request(provider, upstream_path)
         || should_inject_codex_installation_id(provider, codex_openai_device_id)
+        // 始终尝试过滤图片内容（按模型能力判断）
+        || true
 }
 
 fn rewrite_model_mapping(
@@ -260,7 +265,12 @@ fn should_filter_openai_responses_fields(
 ) -> bool {
     provider == "openai-response"
         && upstream_path == OPENAI_RESPONSES_PATH
-        && (upstream.filter_prompt_cache_retention || upstream.filter_safety_identifier)
+        && (upstream.filter_prompt_cache_retention
+            || upstream.filter_safety_identifier
+            || upstream.codex_catalog.image_input
+            || upstream.codex_catalog.web_search
+            || upstream.codex_catalog.parallel_tool_calls
+            || upstream.codex_catalog.apply_patch)
 }
 
 fn filter_openai_responses_fields(
@@ -283,6 +293,179 @@ fn filter_openai_responses_fields(
     if upstream.filter_safety_identifier {
         changed |= object.remove("safety_identifier").is_some();
     }
+    changed |= filter_codex_capability_fields(upstream, object);
+    changed
+}
+
+fn filter_codex_capability_fields(upstream: &UpstreamRuntime, object: &mut Map<String, Value>) -> bool {
+    let mut changed = false;
+
+    if let Some(tools) = object.get_mut("tools").and_then(Value::as_array_mut) {
+        let before = tools.len();
+        tools.retain(|tool| should_keep_responses_tool(tool));
+        changed |= tools.len() != before;
+    }
+
+    if let Some(include) = object.get_mut("include").and_then(Value::as_array_mut) {
+        let before = include.len();
+        include.retain(|item| should_keep_responses_include(item));
+        changed |= include.len() != before;
+    }
+
+    changed
+}
+
+fn should_keep_responses_include(item: &Value) -> bool {
+    let Some(value) = item.as_str() else {
+        return true;
+    };
+    let normalized = value.to_ascii_lowercase();
+    if normalized.contains("image_generation") || normalized.contains("image_gen") {
+        return false;
+    }
+    true
+}
+
+fn should_keep_responses_tool(tool: &Value) -> bool {
+    let Some(object) = tool.as_object() else {
+        return true;
+    };
+    let tool_type = object
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let tool_name = object
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let marker = format!("{tool_type} {tool_name}");
+
+    // Image input (input_image/image_url in message content) is distinct from image generation tools.
+    // Many OpenAI-compatible gateways allow image understanding but reject image generation.
+    if marker.contains("image_generation") || marker.contains("image_gen") {
+        return false;
+    }
+    true
+}
+
+
+/// 按模型名称判断是否支持图片输入
+/// 与 client_config.rs 中 resolve_model_capabilities 逻辑一致
+fn model_supports_image_input(model: &str) -> bool {
+    let short_name = model.rsplit('/').next().unwrap_or(model).trim().to_ascii_lowercase();
+    
+    // GPT系列: 全能力
+    if short_name.starts_with("gpt-") || short_name.starts_with("chatgpt-") || short_name == "gpt-4o" || short_name == "gpt-4-turbo" {
+        return true;
+    }
+    // Claude系列: 图片+并行
+    if short_name.starts_with("claude-") || short_name.starts_with("claude") {
+        return true;
+    }
+    // DeepSeek系列: 纯文本(除VL视觉版)
+    if (short_name.starts_with("deepseek-") || short_name.starts_with("deepseek")) && !short_name.contains("vl") && !short_name.contains("vision") {
+        return false;
+    }
+    // Gemini系列: 图片+搜索+并行
+    if short_name.starts_with("gemini-") || short_name.starts_with("gemini") {
+        return true;
+    }
+    // MiniMax系列: 图片+并行
+    if short_name.starts_with("minimax-") || short_name.starts_with("minimax") {
+        return true;
+    }
+    // Mimo系列: 图片+并行
+    if short_name.starts_with("mimo-") || short_name.starts_with("mimo") {
+        return true;
+    }
+    // LongCat系列: 图片+并行
+    if short_name.starts_with("longcat-") || short_name.starts_with("longcat") {
+        return true;
+    }
+    // Qwen系列: 图片+并行
+    if short_name.starts_with("qwen-") || short_name.starts_with("qwen") {
+        return true;
+    }
+    // Llama系列: 含vision的图片+并行
+    if short_name.starts_with("llama-") || short_name.starts_with("llama") {
+        return short_name.contains("vision") || short_name.contains("vl");
+    }
+    // Mistral/Pixtral系列
+    if short_name.starts_with("pixtral-") || short_name.starts_with("pixtral") {
+        return true;
+    }
+    if short_name.starts_with("mistral-") || short_name.starts_with("mistral") {
+        return short_name.contains("vision");
+    }
+    // 默认识别为支持图片（安全保守）
+    true
+}
+
+/// 从请求体中提取 model 字段
+fn extract_model_from_body(object: &Map<String, Value>) -> Option<String> {
+    object.get("model").and_then(Value::as_str).map(|s| s.to_string())
+}
+
+/// 根据模型能力过滤请求中的图片内容
+/// 支持三种格式:
+/// - Responses API: input[].type == "input_image"
+/// - Chat API: messages[].content[].type == "image_url"  
+/// - Messages API (Anthropic): messages[].content[].type == "image"
+fn filter_image_content_for_model(object: &mut Map<String, Value>, body_len: usize) -> bool {
+    if body_len > REQUEST_FILTER_LIMIT_BYTES {
+        return false;
+    }
+    let Some(model) = extract_model_from_body(object) else {
+        return false;
+    };
+    if model_supports_image_input(&model) {
+        return false;
+    }
+    
+    let mut changed = false;
+    
+    // Responses API: input[] array with input_image items
+    if let Some(input) = object.get_mut("input").and_then(Value::as_array_mut) {
+        let before = input.len();
+        input.retain(|item| {
+            if let Some(obj) = item.as_object() {
+                let type_val = obj.get("type").and_then(Value::as_str).unwrap_or("");
+                if type_val == "input_image" || type_val == "image_url" || type_val.contains("image") {
+                    // Only keep if it's likely a text item
+                    return false;
+                }
+            }
+            true
+        });
+        changed |= input.len() != before;
+    }
+    
+    // Chat API / Messages API: messages[].content[] with image items
+    if let Some(messages) = object.get_mut("messages").and_then(Value::as_array_mut) {
+        for message in messages.iter_mut() {
+            let Some(msg_obj) = message.as_object_mut() else { continue };
+            let Some(content) = msg_obj.get_mut("content") else { continue };
+            
+            // Content could be a string (text only) or array (mixed)
+            if let Some(content_array) = content.as_array_mut() {
+                let before = content_array.len();
+                content_array.retain(|part| {
+                    if let Some(part_obj) = part.as_object() {
+                        let type_val = part_obj.get("type").and_then(Value::as_str).unwrap_or("");
+                        // image_url = OpenAI Chat, image = Anthropic Messages, input_image = Responses
+                        if type_val == "image_url" || type_val == "image" || type_val == "input_image" {
+                            return false;
+                        }
+                    }
+                    true
+                });
+                changed |= content_array.len() != before;
+            }
+        }
+    }
+    
     changed
 }
 
@@ -537,15 +720,8 @@ async fn maybe_filter_openai_responses_request_fields(
     upstream_path_with_query: &str,
     body: &ReplayableBody,
 ) -> Result<Option<ReplayableBody>, AttemptOutcome> {
-    let should_filter_prompt_cache_retention = upstream.filter_prompt_cache_retention;
-    let should_filter_safety_identifier = upstream.filter_safety_identifier;
-    if provider != "openai-response"
-        || (!should_filter_prompt_cache_retention && !should_filter_safety_identifier)
-    {
-        return Ok(None);
-    }
     let upstream_path = split_path_query(upstream_path_with_query).0;
-    if upstream_path != OPENAI_RESPONSES_PATH {
+    if !should_filter_openai_responses_fields(provider, upstream, upstream_path) {
         return Ok(None);
     }
 
@@ -569,13 +745,13 @@ async fn maybe_filter_openai_responses_request_fields(
     let Some(object) = value.as_object_mut() else {
         return Ok(None);
     };
-    let mut changed = false;
-    if should_filter_prompt_cache_retention {
-        changed = changed || object.remove("prompt_cache_retention").is_some();
-    }
-    if should_filter_safety_identifier {
-        changed = changed || object.remove("safety_identifier").is_some();
-    }
+    let changed = filter_openai_responses_fields(
+        provider,
+        upstream,
+        upstream_path,
+        object,
+        bytes.len(),
+    );
     if !changed {
         return Ok(None);
     }

@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 use super::types::InboundApiFormatMask;
 use super::{
     hot_model_mappings::merge_hot_model_mappings, model_mapping::compile_model_mappings,
-    HeaderOverride, InboundApiFormat, ProviderUpstreams, StaticApiKeyHeaders, UpstreamConfig,
-    UpstreamGroup, UpstreamOverrides, UpstreamRuntime,
+    HeaderOverride, InboundApiFormat, ProviderUpstreams, StaticApiKeyHeaders, UpstreamCodexCatalogConfig,
+    UpstreamConfig, UpstreamGroup, UpstreamOverrides, UpstreamRuntime,
 };
 use axum::http::header::{HeaderName, HeaderValue};
 
@@ -165,6 +165,7 @@ fn normalize_single_upstream(
                 model_mappings: model_mappings.clone(),
                 header_overrides: header_overrides.clone(),
                 allowed_inbound_formats,
+                codex_catalog: detect_codex_catalog(&upstream.providers, &upstream.codex_catalog),
             };
             output.push(NormalizedUpstream {
                 provider: runtime_provider.clone(),
@@ -266,6 +267,45 @@ fn is_supported_provider(provider: &str) -> bool {
         provider,
         "openai" | "openai-response" | "anthropic" | "gemini" | "kiro" | "codex"
     )
+}
+
+/// 根据 provider 自动检测模型应具备的能力
+/// 用户未手动配置 codex_catalog 时（is_default）使用此自动检测结果
+fn detect_codex_catalog(
+    providers: &[String],
+    user_config: &UpstreamCodexCatalogConfig,
+) -> UpstreamCodexCatalogConfig {
+    if !UpstreamCodexCatalogConfig::is_default(user_config) {
+        return user_config.clone();
+    }
+
+    let mut detected = UpstreamCodexCatalogConfig::default();
+    for provider in providers {
+        match provider.as_str() {
+            "openai" | "openai-response" => {
+                detected.image_input = true;
+                detected.web_search = true;
+                detected.parallel_tool_calls = true;
+                detected.apply_patch = true;
+            }
+            "anthropic" => {
+                detected.image_input = true;
+                detected.parallel_tool_calls = true;
+            }
+            "gemini" => {
+                detected.image_input = true;
+                detected.parallel_tool_calls = true;
+            }
+            "codex" => {
+                detected.image_input = true;
+                detected.web_search = true;
+                detected.parallel_tool_calls = true;
+                detected.apply_patch = true;
+            }
+            _ => {}
+        }
+    }
+    detected
 }
 
 fn normalize_providers(upstream: &UpstreamConfig) -> Result<Vec<String>, String> {

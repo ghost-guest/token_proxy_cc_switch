@@ -21,6 +21,80 @@ const CODEX_PROVIDER_NAME: &str = "token_proxy";
 const CODEX_PROVIDER_REQUIRES_OPENAI_AUTH: bool = false;
 const CODEX_PROVIDER_WIRE_API: &str = "responses";
 const CODEX_MODEL_CATALOG_JSON: &str = "token-proxy-model-catalog.json";
+/// 内置模型能力数据库，按模型名称前缀/后缀匹配
+/// 优先级: 用户配置 > 内置库 > 上游缺省
+fn resolve_model_capabilities(model: &str, upstream_default: &UpstreamCodexCatalogConfig) -> UpstreamCodexCatalogConfig {
+    // 提取短模型名（去除上游前缀）
+    let model_lower = model.to_ascii_lowercase();
+    let short_name = model_lower.rsplit('/').next().unwrap_or(&model_lower);
+    let short_name = short_name.trim();
+
+    // 模式匹配: 按prefix/suffix判定
+    // image, search, parallel, patch
+    // GPT系列: 全能力
+    if short_name.starts_with("gpt-") || short_name.starts_with("chatgpt-") || short_name == "gpt-4o" || short_name == "gpt-4-turbo" {
+        return UpstreamCodexCatalogConfig { image_input: true, web_search: true, parallel_tool_calls: true, apply_patch: true };
+    }
+    // Claude系列: 图片+并行, 无搜索和patch
+    if short_name.starts_with("claude-") || short_name.starts_with("claude") {
+        return UpstreamCodexCatalogConfig { image_input: true, web_search: false, parallel_tool_calls: true, apply_patch: false };
+    }
+    // DeepSeek系列: 纯文本(除VL视觉版)
+    if short_name.starts_with("deepseek-") && !short_name.contains("vl") && !short_name.contains("vision") {
+        return UpstreamCodexCatalogConfig { image_input: false, web_search: false, parallel_tool_calls: true, apply_patch: false };
+    }
+    if short_name.starts_with("deepseek") && !short_name.contains("vl") && !short_name.contains("vision") {
+        return UpstreamCodexCatalogConfig { image_input: false, web_search: false, parallel_tool_calls: true, apply_patch: false };
+    }
+    // Gemini系列: 图片+搜索+并行
+    if short_name.starts_with("gemini-") || short_name.starts_with("gemini") {
+        return UpstreamCodexCatalogConfig { image_input: true, web_search: true, parallel_tool_calls: true, apply_patch: false };
+    }
+    // MiniMax系列: 图片+并行
+    if short_name.starts_with("minimax-") || short_name.starts_with("minimax") {
+        return UpstreamCodexCatalogConfig { image_input: true, web_search: false, parallel_tool_calls: true, apply_patch: false };
+    }
+    // Mimo系列: 图片+并行
+    if short_name.starts_with("mimo-") || short_name.starts_with("mimo") {
+        return UpstreamCodexCatalogConfig { image_input: true, web_search: false, parallel_tool_calls: true, apply_patch: false };
+    }
+    // LongCat系列: 图片+并行
+    if short_name.starts_with("longcat-") || short_name.starts_with("longcat") {
+        return UpstreamCodexCatalogConfig { image_input: true, web_search: false, parallel_tool_calls: true, apply_patch: false };
+    }
+    // Qwen系列: 图片+并行
+    if short_name.starts_with("qwen-") || short_name.starts_with("qwen") {
+        return UpstreamCodexCatalogConfig { image_input: true, web_search: false, parallel_tool_calls: true, apply_patch: false };
+    }
+    // GLM/ChatGLM系列: 图片+并行
+    if short_name.starts_with("glm-") || short_name.starts_with("chatglm-") || short_name.starts_with("glm") {
+        return UpstreamCodexCatalogConfig { image_input: true, web_search: false, parallel_tool_calls: true, apply_patch: false };
+    }
+    // Llama系列: 含vision的图片+并行, 否则无图片
+    if short_name.starts_with("llama-") || short_name.starts_with("llama") {
+        let has_vision = short_name.contains("vision") || short_name.contains("vl") || short_name.contains("11b") || short_name.contains("90b");
+        return UpstreamCodexCatalogConfig { image_input: has_vision, web_search: false, parallel_tool_calls: true, apply_patch: false };
+    }
+    // Mistral系列: 含vision的图片+并行
+    if short_name.starts_with("mistral-") || short_name.starts_with("mistral") || short_name.starts_with("pixtral-") {
+        return UpstreamCodexCatalogConfig { image_input: short_name.contains("pixtral") || short_name.contains("vision"), web_search: false, parallel_tool_calls: true, apply_patch: false };
+    }
+    // Ernie/Baidu系列: 图片+并行
+    if short_name.starts_with("ernie-") || short_name.starts_with("ernie") {
+        return UpstreamCodexCatalogConfig { image_input: true, web_search: false, parallel_tool_calls: true, apply_patch: false };
+    }
+    // Command-R系列: 无图片
+    if short_name.starts_with("command-") || short_name.starts_with("command") {
+        return UpstreamCodexCatalogConfig { image_input: false, web_search: false, parallel_tool_calls: true, apply_patch: false };
+    }
+    // Grok系列: 图片+并行
+    if short_name.starts_with("grok-") || short_name.starts_with("grok") {
+        return UpstreamCodexCatalogConfig { image_input: true, web_search: true, parallel_tool_calls: true, apply_patch: false };
+    }
+    // 未知模型: 使用上游缺省设置
+    upstream_default.clone()
+}
+
 
 #[derive(Clone, Serialize)]
 pub(crate) struct ClientSetupInfo {
@@ -326,12 +400,12 @@ fn build_codex_model_catalog(config: &ProxyConfigFile) -> serde_json::Value {
         upstream_models.sort();
         for model in upstream_models {
             if seen.insert(model.clone()) {
-                models.push(build_codex_model_catalog_item(model, &upstream.codex_catalog));
+                models.push(build_codex_model_catalog_item(model.clone(), upstream.codex_catalog.clone(), &model));
             }
         }
     }
     if models.is_empty() {
-        models.push(build_codex_model_catalog_item(CODEX_MODEL.to_string(), &UpstreamCodexCatalogConfig::default()));
+        models.push(build_codex_model_catalog_item(CODEX_MODEL.to_string(), UpstreamCodexCatalogConfig::default(), CODEX_MODEL));
     }
     serde_json::json!({ "models": models })
 }
@@ -361,7 +435,16 @@ fn codex_safe_upstream_id(value: &str) -> String {
     if output.is_empty() { CODEX_DEFAULT_MODEL_PROVIDER.to_string() } else { output }
 }
 
-fn build_codex_model_catalog_item(model: String, capabilities: &UpstreamCodexCatalogConfig) -> serde_json::Value {
+fn build_codex_model_catalog_item(
+    model: String,
+    upstream_capabilities: UpstreamCodexCatalogConfig,
+    raw_model_id: &str,
+) -> serde_json::Value {
+    // Catalog 统一开启图片输入（让 Codex 允许粘贴），
+    // 代理层（server_helpers::strip_image_content_for_model）会根据模型实际能力自动过滤请求体中的图片内容。
+    let mut capabilities = resolve_model_capabilities(raw_model_id, &upstream_capabilities);
+    capabilities.image_input = true;
+    
     let input_modalities = if capabilities.image_input {
         serde_json::json!(["text", "image"])
     } else {

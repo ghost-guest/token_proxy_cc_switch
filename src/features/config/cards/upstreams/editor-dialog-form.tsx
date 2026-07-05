@@ -1,4 +1,4 @@
-import { CirclePlus, HelpCircle, Loader2, RefreshCw } from "lucide-react";
+import { Check, CirclePlus, HelpCircle, Loader2, RefreshCw } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -513,11 +513,16 @@ type UpstreamCodexCatalogFieldsProps = {
 
 function UpstreamCodexCatalogFields({
   draft,
-  onChangeDraft,
 }: UpstreamCodexCatalogFieldsProps) {
-  const update = (patch: Partial<UpstreamForm["codexCatalog"]>) => {
-    onChangeDraft({ codexCatalog: { ...draft.codexCatalog, ...patch } });
+  const provider = draft.providers[0]?.trim() || "";
+  const providerAuto: Record<string, string[]> = {
+    "openai": ["图片输入", "联网搜索", "并行工具调用", "文件编辑"],
+    "openai-response": ["图片输入", "联网搜索", "并行工具调用", "文件编辑"],
+    "anthropic": ["图片输入", "并行工具调用"],
+    "gemini": ["图片输入", "并行工具调用"],
+    "codex": ["图片输入", "联网搜索", "并行工具调用", "文件编辑"],
   };
+  const capabilities = providerAuto[provider] || ["基础文本"];
   return (
     <div data-slot="upstream-codex-catalog-fields" className="col-span-2 space-y-2 rounded-md border border-border/60 p-3">
       <div className="flex items-center gap-2">
@@ -533,39 +538,16 @@ function UpstreamCodexCatalogFields({
           </Tooltip>
         </Label>
       </div>
-      <div className="grid gap-2 sm:grid-cols-2">
-        <Label className="flex items-center justify-between gap-3 rounded-md border border-border/40 px-3 py-2 text-sm">
-          <span>{m.field_codex_catalog_image_input()}</span>
-          <Switch
-            checked={draft.codexCatalog.imageInput}
-            onCheckedChange={(checked) => update({ imageInput: checked })}
-            aria-label={m.field_codex_catalog_image_input()}
-          />
-        </Label>
-        <Label className="flex items-center justify-between gap-3 rounded-md border border-border/40 px-3 py-2 text-sm">
-          <span>{m.field_codex_catalog_web_search()}</span>
-          <Switch
-            checked={draft.codexCatalog.webSearch}
-            onCheckedChange={(checked) => update({ webSearch: checked })}
-            aria-label={m.field_codex_catalog_web_search()}
-          />
-        </Label>
-        <Label className="flex items-center justify-between gap-3 rounded-md border border-border/40 px-3 py-2 text-sm">
-          <span>{m.field_codex_catalog_parallel_tools()}</span>
-          <Switch
-            checked={draft.codexCatalog.parallelToolCalls}
-            onCheckedChange={(checked) => update({ parallelToolCalls: checked })}
-            aria-label={m.field_codex_catalog_parallel_tools()}
-          />
-        </Label>
-        <Label className="flex items-center justify-between gap-3 rounded-md border border-border/40 px-3 py-2 text-sm">
-          <span>{m.field_codex_catalog_apply_patch()}</span>
-          <Switch
-            checked={draft.codexCatalog.applyPatch}
-            onCheckedChange={(checked) => update({ applyPatch: checked })}
-            aria-label={m.field_codex_catalog_apply_patch()}
-          />
-        </Label>
+      <div className="text-sm text-muted-foreground">
+        根据供应商 <code className="rounded bg-muted px-1 py-0.5">{provider || "(未选择)"}</code> 自动识别能力：
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {capabilities.map((cap) => (
+          <span key={cap} className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
+            <Check className="size-3" />
+            {cap}
+          </span>
+        ))}
       </div>
     </div>
   );
